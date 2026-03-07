@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.npz
+*.vtu
+hard_axis_loop/
