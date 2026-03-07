@@ -15,6 +15,7 @@ License: MIT
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Callable, Optional, Literal
 
 import jax
@@ -140,11 +141,7 @@ def make_poisson_ops(
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
         return lax.fori_loop(0, n_chunks, body, b0)
 
-    def assemble_diag() -> Array:
-        if geom.x_nodes is not None:
-            N = int(geom.x_nodes.shape[0])
-        else:
-            N = int(jnp.max(geom.conn)) + 1
+    def assemble_diag(N: int) -> Array:
         dtype = jnp.float64
         def body(i, d_acc):
             s = i * chunk_elems
@@ -183,7 +180,7 @@ def make_poisson_ops(
         E = E + jnp.asarray(1e-18, dtype=dtype) * jnp.eye(k, dtype=dtype)
         return E
 
-    return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag), jax.jit(assemble_E)
+    return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(0,)), jax.jit(assemble_E)
 
 
 def make_pcg_solve(
@@ -265,7 +262,13 @@ def make_solve_U(
         grad_backend=grad_backend,
     )
 
-    Mdiag = assemble_diag()
+    if geom.x_nodes is not None:
+        N = int(geom.x_nodes.shape[0])
+    else:
+        import numpy as np
+        N = int(np.max(geom.conn)) + 1
+
+    Mdiag = assemble_diag(N)
 
     E_chol = None
     if (agg_id is not None) and (inv_sqrt_counts is not None):
