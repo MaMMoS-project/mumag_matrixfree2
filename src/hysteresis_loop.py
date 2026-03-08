@@ -43,7 +43,7 @@ class LoopParams:
     ls_eta2: float = 0.1
     ls_C: float = 2.0
     ls_c: float = 0.5
-    ls_s0: float = 1.0
+    ls_s0: float = 0.01
     ls_max_evals: int = 15
 
     out_dir: str = 'hyst_out'
@@ -107,7 +107,7 @@ def run_hysteresis_loop(
     V_mag: float,
     node_volumes: jnp.ndarray,
     precond_type: str = 'jacobi',
-    energy_assembly: str = 'scatter',
+    energy_assembly: str = 'segment_sum',
     grad_backend: GradBackend = 'stored_grad_phi',
     chunk_elems: int = 200_000,
     cg_maxiter: int = 400,

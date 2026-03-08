@@ -39,13 +39,14 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
 
 def armijo_weak_line_search(
     m: Array,
-    g_tan: Array,
+    pg: float,
     H_for_update: Array,
     E0: float,
     U_base: Array,
-    solve_U: Callable[[Array, Array], Array],
+    solve_U: Callable[[Array, Array, Optional[float]], Array],
     energy_only: Callable[[Array, Array, Array], Array],
     B_ext: Array,
+    phi_tol: float,
     *,
     eta1: float = 0.1,
     eta2: float = 0.1,
@@ -55,32 +56,38 @@ def armijo_weak_line_search(
     max_evals: int = 15,
 ) -> float:
 
-    pg = float(-jnp.vdot(g_tan, g_tan))
     if pg >= 0:
         return 0.0
 
     def D(s: float) -> float:
         m_trial = cayley_update(m, H_for_update, jnp.asarray(s, m.dtype))
-        U_trial = solve_U(m_trial, U_base)
+        U_trial = solve_U(m_trial, U_base, phi_tol)
         E_trial = float(energy_only(m_trial, U_trial, B_ext))
-        return (E_trial - float(E0)) / (s * pg + 1e-30)
+        val = (E_trial - float(E0)) / (float(s) * pg + 1e-30)
+        return float(val)
 
     s = float(s0)
     s_min = 0.0
-
+    
+    it_exp = 0
     for _ in range(max_evals):
         d = D(s)
         if abs(1.0 - d) < eta2:
             s_min = s
             s = C * s
+            it_exp += 1
         else:
             break
 
+    it_con = 0
+    final_d = 0.0
     for _ in range(max_evals):
         d = D(s)
+        final_d = d
         if d >= eta1:
             return s
         s = s_min + c * (s - s_min)
+        it_con += 1
 
     return s
 
@@ -150,11 +157,16 @@ def make_minimizer(
         grad_backend=grad_backend,
         enforce_zero_mean=True,
         boundary_mask=boundary_mask,
+        assembly=energy_assembly,
     )
 
-    def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float):
+    def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float, cg_tol_base: float):
         m = state.m
-        U = solve_U(m, state.U_prev)
+        # Dynamic tolerance for Poisson solver during BB steps
+        gnorm_prev = jnp.sqrt(jnp.vdot(state.g_prev, state.g_prev))
+        phi_tol = jnp.maximum(cg_tol_base, jnp.minimum(0.1 * gnorm_prev, 1e-2))
+        
+        U = solve_U(m, state.U_prev, phi_tol)
         E, g_raw = energy_and_grad(m, U, B_ext)
         
         # Apply preconditioning: g_prec is approximately the local energy density gradient
@@ -209,19 +221,36 @@ def make_minimizer(
         B_ext = jnp.asarray(B_ext, dtype=jnp.float64)
 
         U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
-        U = solve_U(m, U0)
+        # Use initial loose solve to get E for deriving cg_tol_base
+        U_init = solve_U(m, U0, 1e-4)
+        E_init, _ = energy_and_grad(m, U_init, B_ext)
+
+        # Derived Poisson base tolerance: must satisfy all stopping criteria
+        # u1: energy change ~ tau_f
+        # u3: gradient ratio ~ tau_f^(1/3) * (1 + |E|)
+        # u4: absolute gradient ~ eps_a
+        threshold_u3 = (tau_f**(1/3.0)) * (1.0 + abs(E_init))
+        cg_tol_base = float(min(tau_f, threshold_u3 * 0.1, eps_a * 0.1))
+
+        # Perform high-precision initial solve
+        U = solve_U(m, U_init, cg_tol_base)
         E_prev, g_raw = energy_and_grad(m, U, B_ext)
         g_prec = g_raw * inv_V_rel
         g_tan = tangent_grad(m, g_prec)
+        gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
 
         state = MinimState(m=m, U_prev=U, g_prev=g_tan, m_prev=m, tau=jnp.asarray(tau0, jnp.float64), it=jnp.int32(0))
         history = []
 
         for k in range(gamma):
-            U = solve_U(state.m, state.U_prev)
+            # Dynamic tolerance for Poisson solver during line search
+            phi_tol = float(max(cg_tol_base, min(0.1 * gnorm, 1e-2)))
+            
+            U = solve_U(state.m, state.U_prev, phi_tol)
             E, g_raw = energy_and_grad(state.m, U, B_ext)
             g_prec = g_raw * inv_V_rel
             g_tan = tangent_grad(state.m, g_prec)
+            pg = float(-jnp.vdot(g_raw, g_tan))
             
             # Infinity norms for convergence check
             gnorm_inf = float(jnp.max(jnp.abs(g_tan)))
@@ -245,11 +274,12 @@ def make_minimizer(
 
             H = -jnp.cross(state.m, g_prec)
             tau = armijo_weak_line_search(
-                state.m, g_tan, H, float(E),
+                state.m, pg, H, float(E),
                 U_base=U,
                 solve_U=solve_U,
                 energy_only=energy_only,
                 B_ext=B_ext,
+                phi_tol=phi_tol,
                 eta1=ls_eta1,
                 eta2=ls_eta2,
                 C=ls_C,
@@ -260,9 +290,10 @@ def make_minimizer(
             m_new = cayley_update(state.m, H, jnp.asarray(tau, jnp.float64))
             E_prev = E
             state = replace(state, m=m_new, m_prev=state.m, g_prev=g_tan, tau=jnp.asarray(tau, jnp.float64), it=state.it + jnp.int32(1), U_prev=U)
+            gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
 
         for k in range(gamma, max_iter):
-            state, E, gnorm_2 = bb_step(state, B_ext, tau_min, tau_max)
+            state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max, cg_tol_base)
             # bb_step returns 2-norm, we need inf-norm for consistent criteria
             gnorm_inf = float(jnp.max(jnp.abs(state.g_prev))) # state.g_prev is the tangent gradient of the new state m
             diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
@@ -279,12 +310,12 @@ def make_minimizer(
             if verbose and (k % 10 == 0 or converged):
                 print(f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  tau={float(state.tau):.3e}")
             if converged:
-                U = solve_U(state.m, state.U_prev)
+                U = solve_U(state.m, state.U_prev, cg_tol_base)
                 return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k + 1), "phase": 1.0, "history": history}
             
             E_prev = E
 
-        U = solve_U(state.m, state.U_prev)
+        U = solve_U(state.m, state.U_prev, cg_tol_base)
         E_end = float(energy_only(state.m, U, B_ext))
         gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
         return state.m, U, {"E": E_end, "gnorm": gnorm_inf, "iters": float(max_iter), "phase": 2.0, "history": history}

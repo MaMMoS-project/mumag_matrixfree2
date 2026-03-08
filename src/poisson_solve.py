@@ -19,11 +19,12 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from fem_utils import TetGeom, pad_geom_for_chunking, chunk_mask
+from fem_utils import TetGeom, pad_geom_for_chunking, chunk_mask, assemble_scatter, assemble_segment_sum
 
 Array = jnp.ndarray
 GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
 PrecondType = Literal['jacobi', 'chebyshev']
+Assembly = Literal['scatter', 'segment_sum']
 
 _GRAD_HAT = jnp.array([
     [-1.0, -1.0, -1.0],
@@ -79,6 +80,8 @@ def make_poisson_ops(
     chunk_elems: int = 200_000,
     reg: float = 1e-12,
     grad_backend: GradBackend = 'stored_grad_phi',
+    assembly: Assembly = 'scatter',
+    boundary_mask: Optional[Array] = None,
 ):
     """Return (apply_A, rhs_from_m, assemble_diag)."""
 
@@ -88,6 +91,12 @@ def make_poisson_ops(
 
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
+    
+    if geom_p.x_nodes is not None:
+        N = int(geom_p.x_nodes.shape[0])
+    else:
+        import numpy as np
+        N = int(np.max(geom.conn)) + 1
 
     _get_B = _make_B_getter(geom_p, chunk_elems, grad_backend)
 
@@ -98,16 +107,20 @@ def make_poisson_ops(
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
-            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-            Ve_eff = Ve_c * mask
             U_e = U[conn_c]
-            gradU = jnp.einsum('ea,eak->ek', U_e, B_c)
-            dot_term = jnp.einsum('eak,ek->ea', B_c, gradU)
-            contrib = Ve_eff[:, None] * dot_term
-            return y_acc.at[conn_c].add(contrib)
+            # Fused einsum to compute node contributions in one step
+            dot_term = jnp.einsum('eak,ebk,eb->ea', B_c, B_c, U_e)
+            contrib = Ve_c[:, None] * dot_term
+            if assembly == 'scatter':
+                return assemble_scatter(y_acc, conn_c, contrib)
+            else:
+                return y_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
         y0 = jnp.zeros_like(U)
         y = lax.fori_loop(0, n_chunks, body, y0)
-        return y + jnp.asarray(reg, dtype=dtype) * U
+        y = y + jnp.asarray(reg, dtype=dtype) * U
+        if boundary_mask is not None:
+            y = y * boundary_mask
+        return y
 
     def rhs_from_m(m: Array) -> Array:
         dtype = m.dtype
@@ -117,14 +130,15 @@ def make_poisson_ops(
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
-            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-            Ve_eff = Ve_c * mask
             Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
-            j_avg = Js_c[:, None] * jnp.mean(m_e, axis=1)
-            dot_term = jnp.einsum('eak,ek->ea', B_c, j_avg)
-            contrib = Ve_eff[:, None] * dot_term
-            return b_acc.at[conn_c].add(contrib)
+            # Fused einsum for RHS assembly
+            dot_term = 0.25 * jnp.einsum('eak,ebk->ea', B_c, m_e)
+            contrib = (Ve_c * Js_c)[:, None] * dot_term
+            if assembly == 'scatter':
+                return assemble_scatter(b_acc, conn_c, contrib)
+            else:
+                return b_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
         return lax.fori_loop(0, n_chunks, body, b0)
 
@@ -135,10 +149,11 @@ def make_poisson_ops(
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
-            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-            Ve_eff = Ve_c * mask
-            local = Ve_eff[:, None] * jnp.sum(B_c * B_c, axis=2)
-            return d_acc.at[conn_c].add(local)
+            local = Ve_c[:, None] * jnp.sum(B_c * B_c, axis=2)
+            if assembly == 'scatter':
+                return assemble_scatter(d_acc, conn_c, local)
+            else:
+                return d_acc + assemble_segment_sum(N, conn_c, local, dtype)
         d0 = jnp.zeros((N,), dtype=dtype)
         d = lax.fori_loop(0, n_chunks, body, d0)
         return d + jnp.asarray(reg, dtype=dtype)
@@ -174,7 +189,7 @@ def make_pcg_solve(
     boundary_mask: Optional[Array] = None,
     l_max: float = 2.0,
 ):
-    tol = float(tol)
+    default_tol = float(tol)
 
     def apply_Minv(r: Array) -> Array:
         dtype = r.dtype
@@ -189,17 +204,17 @@ def make_pcg_solve(
             omega = jnp.asarray(2.0 / (l_max + 1.0), dtype=dtype)
             for _ in range(3):
                 res = r - apply_A(z)
-                if boundary_mask is not None:
-                    res = res * boundary_mask
                 z = z + (res / (Mdiag.astype(dtype) + eps)) * omega
         
         if boundary_mask is not None:
             z = z * boundary_mask
         return z
 
-    def solve(b: Array, x0: Array) -> Array:
+    def solve(b: Array, x0: Array, tol: Optional[float] = None) -> Array:
         dtype = b.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
+        # Use provided tol or fallback to default
+        current_tol = jnp.asarray(tol if tol is not None else default_tol, dtype=dtype)
         
         if boundary_mask is not None:
             b = b * boundary_mask
@@ -208,9 +223,6 @@ def make_pcg_solve(
             x = x0
 
         r = b - apply_A(x)
-        if boundary_mask is not None:
-            r = r * boundary_mask
-            
         z = apply_Minv(r)
         p = z
         rz = jnp.dot(r, z)
@@ -218,22 +230,24 @@ def make_pcg_solve(
 
         def cond_fun(state):
             it, x, r, z, p, rz = state
-            return jnp.logical_and(it < maxiter, rz > (tol * tol) * bnorm2 + jnp.asarray(0.0, dtype))
+            return jnp.logical_and(it < maxiter, rz > (current_tol * current_tol) * bnorm2 + jnp.asarray(0.0, dtype))
 
         def body_fun(state):
             it, x, r, z, p, rz = state
             Ap = apply_A(p)
-            if boundary_mask is not None:
-                Ap = Ap * boundary_mask
-                
             alpha = rz / (jnp.dot(p, Ap) + eps)
-            x = x + alpha * p
-            r = r - alpha * Ap
-            z = apply_Minv(r)
-            rz_new = jnp.dot(r, z)
+            
+            # Fuse x and r updates
+            x_new = x + alpha * p
+            r_new = r - alpha * Ap
+            
+            z_new = apply_Minv(r_new)
+            rz_new = jnp.dot(r_new, z_new)
             beta = rz_new / (rz + eps)
-            p = z + beta * p
-            return (it + 1, x, r, z, p, rz_new)
+            
+            # Fuse p update
+            p_new = z_new + beta * p
+            return (it + 1, x_new, r_new, z_new, p_new, rz_new)
 
         init = (jnp.int32(0), x, r, z, p, rz)
         _, x, _, _, _, _ = lax.while_loop(cond_fun, body_fun, init)
@@ -254,6 +268,7 @@ def make_solve_U(
     grad_backend: GradBackend = 'stored_grad_phi',
     enforce_zero_mean: bool = True,
     boundary_mask: Optional[Array] = None,
+    assembly: Assembly = 'scatter',
 ):
     apply_A, rhs_from_m, assemble_diag = make_poisson_ops(
         geom,
@@ -261,6 +276,8 @@ def make_solve_U(
         chunk_elems=chunk_elems,
         reg=poisson_reg,
         grad_backend=grad_backend,
+        assembly=assembly,
+        boundary_mask=boundary_mask,
     )
 
     if geom.x_nodes is not None:
@@ -286,12 +303,12 @@ def make_solve_U(
     )
 
     @jax.jit
-    def solve_U(m: Array, x0: Array) -> Array:
+    def solve_U(m: Array, x0: Array, tol: Optional[float] = None) -> Array:
         b = rhs_from_m(m)
         if enforce_zero_mean:
             b = b - jnp.mean(b)
             x0 = x0 - jnp.mean(x0)
-        U = solve_linear(b, x0)
+        U = solve_linear(b, x0, tol=tol)
         if enforce_zero_mean:
             U = U - jnp.mean(U)
         return U

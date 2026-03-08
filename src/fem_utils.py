@@ -70,7 +70,8 @@ def assemble_scatter(g_acc: Array, conn_c: Array, contrib: Array) -> Array:
 
 def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype) -> Array:
     idx = conn_c.reshape(-1)
-    val = contrib.reshape(-1, 3)
+    # Automatically handle (E, 4) vs (E, 4, 3)
+    val = contrib.reshape(-1, *contrib.shape[2:])
     return jax.ops.segment_sum(val, idx, N).astype(dtype)
 
 
@@ -91,10 +92,10 @@ def compute_node_volumes(geom: TetGeom, chunk_elems: int) -> Array:
         s = i * chunk_elems
         conn_c = jax.lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
         Ve_c = jax.lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-        mask = chunk_mask(E_orig, s, chunk_elems, Ve.dtype)
-        contrib = (Ve_c * mask * 0.25)[:, None]
+        contrib = (Ve_c * 0.25)[:, None]
         contrib4 = jnp.broadcast_to(contrib, (chunk_elems, 4))
-        return vol_acc.at[conn_c].add(contrib4)
+        # Use segment_sum for better compiler compatibility
+        return vol_acc + assemble_segment_sum(N, conn_c, contrib4, Ve.dtype)
 
     vol0 = jnp.zeros((N,), dtype=Ve.dtype)
     return jax.jit(lambda: jax.lax.fori_loop(0, n_chunks, body, vol0))()
