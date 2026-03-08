@@ -85,6 +85,7 @@ def armijo_weak_line_search(
     return s
 
 
+@jax.tree_util.register_pytree_node_class
 @dataclass
 class MinimState:
     m: Array
@@ -93,6 +94,15 @@ class MinimState:
     m_prev: Array
     tau: Array
     it: Array
+
+    def tree_flatten(self):
+        children = (self.m, self.U_prev, self.g_prev, self.m_prev, self.tau, self.it)
+        aux_data = None
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
 
 
 def make_minimizer(
