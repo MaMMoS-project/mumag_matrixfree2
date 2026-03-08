@@ -134,10 +134,13 @@ def make_poisson_ops(
             Ve_eff = Ve_c * mask
             Ms_c = Ms_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
-            M_e = Ms_c[:, None, None] * m_e
-            divM = jnp.einsum('eak,eak->e', M_e, B_c)
-            contrib = (Ve_eff * 0.25 * divM)[:, None]
-            return b_acc.at[conn_c].add(jnp.broadcast_to(contrib, (chunk_elems,4)))
+            # M is assumed uniform per element (P0) or averaged from nodes
+            M_avg = Ms_c[:, None] * jnp.mean(m_e, axis=1)
+            # RHS contribution: integral( grad(phi_i) . M ) dV
+            # This corresponds to the weak form of div(H) = -div(M)
+            dot_term = jnp.einsum('eak,ek->ea', B_c, M_avg)
+            contrib = Ve_eff[:, None] * dot_term
+            return b_acc.at[conn_c].add(contrib)
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
         return lax.fori_loop(0, n_chunks, body, b0)
 

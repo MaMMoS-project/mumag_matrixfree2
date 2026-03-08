@@ -72,28 +72,67 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
     return np.einsum('eij,aj->eai', JinvT, _GRAD_HAT)
 
 
-def load_materials(mat_npz: str | None, G: int):
-    if mat_npz is None:
-        A = np.ones((G,), dtype=np.float64)
-        K1 = np.zeros((G,), dtype=np.float64)
-        Ms = np.ones((G,), dtype=np.float64)
-        k_easy = np.zeros((G, 3), dtype=np.float64)
-        k_easy[:, 2] = 1.0
+def load_materials_krn(krn_path: str, G: int):
+    """
+    Read intrinsic properties from a .krn file.
+    Columns (1-based):
+      1: theta (rad), 2: phi (rad), 3: K1 (J/m^3), 4: K2, 5: Js (T), 6: A (exchange)
+    """
+    data = np.loadtxt(krn_path)
+    if data.ndim == 1:
+        data = data[None, :]
+
+    if data.shape[0] < G:
+        raise ValueError(f"KRN file {krn_path} has {data.shape[0]} rows, but mesh has {G} material groups.")
+
+    theta = data[:G, 0]
+    phi   = data[:G, 1]
+    K1    = data[:G, 2]
+    Js    = data[:G, 4]
+    A     = data[:G, 5]
+
+    MU0 = 4e-7 * np.pi
+    Ms = Js / MU0
+
+    kx = np.sin(theta) * np.cos(phi)
+    ky = np.sin(theta) * np.sin(phi)
+    kz = np.cos(theta)
+    k_easy = np.column_stack([kx, ky, kz])
+
+    return A, K1, Ms, k_easy
+
+
+def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
+    # Priority 1: Explicitly provided materials NPZ
+    if mat_npz is not None:
+        data = np.load(mat_npz)
+        def get(name, shape=None):
+            if name not in data:
+                raise KeyError(f"materials NPZ missing '{name}'")
+            arr = np.asarray(data[name], dtype=np.float64)
+            if shape is not None and tuple(arr.shape) != tuple(shape):
+                raise ValueError(f"{name} has shape {arr.shape}, expected {shape}")
+            return arr
+
+        A = get('A_lookup', (G,))
+        K1 = get('K1_lookup', (G,))
+        Ms = get('Ms_lookup', (G,))
+        k_easy = get('k_easy_lookup', (G, 3))
         return A, K1, Ms, k_easy
 
-    data = np.load(mat_npz)
-    def get(name, shape=None):
-        if name not in data:
-            raise KeyError(f"materials NPZ missing '{name}'")
-        arr = np.asarray(data[name], dtype=np.float64)
-        if shape is not None and tuple(arr.shape) != tuple(shape):
-            raise ValueError(f"{name} has shape {arr.shape}, expected {shape}")
-        return arr
+    # Priority 2: Automatic .krn discovery based on mesh name
+    if mesh_path is not None:
+        krn_path = Path(mesh_path).with_suffix('.krn')
+        if krn_path.exists():
+            print(f"[materials] Found auto-krn: {krn_path}")
+            return load_materials_krn(str(krn_path), G)
 
-    A = get('A_lookup', (G,))
-    K1 = get('K1_lookup', (G,))
-    Ms = get('Ms_lookup', (G,))
-    k_easy = get('k_easy_lookup', (G, 3))
+    # Priority 3: Default (NdFeB-like)
+    A = np.ones((G,), dtype=np.float64) * 1e-11 # some default
+    K1 = np.zeros((G,), dtype=np.float64)
+    Ms = np.ones((G,), dtype=np.float64)
+    k_easy = np.zeros((G, 3), dtype=np.float64)
+    k_easy[:, 2] = 1.0
     return A, K1, Ms, k_easy
 
 
@@ -138,6 +177,7 @@ def main():
 
     ap.add_argument('--out-dir', type=str, default='hyst_out')
     ap.add_argument('--snapshot-every', type=int, default=1)
+    ap.add_argument('--m0-dir', type=str, default=None, help='Initial magnetization direction "x,y,z". Defaults to h-dir.')
 
     args = ap.parse_args()
 
@@ -179,7 +219,7 @@ def main():
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
-    A_lookup, K1_lookup, Ms_lookup, k_easy_lookup = load_materials(args.materials, G)
+    A_lookup, K1_lookup, Ms_lookup, k_easy_lookup = load_materials(args.materials, G, mesh_path=args.mesh)
 
     # Aggregates on CPU (optional)
     agg_id = None
@@ -234,9 +274,17 @@ def main():
             )
 
     # initial magnetisation
+    if args.m0_dir:
+        m0_vec = np.array([float(x) for x in args.m0_dir.split(',')], dtype=np.float64)
+    else:
+        # Default to field direction if not provided
+        m0_vec = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
+
+    m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
+    m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
+
     h_dir = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
-    m0 = np.tile(h_dir[None, :], (knt.shape[0], 1))
 
     params = LoopParams(
         h_dir=h_dir,
