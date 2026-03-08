@@ -22,7 +22,7 @@ def ensure_dir(path: str | Path) -> Path:
 
 def write_hysteresis_header(csv_path: str | Path, extra_cols: Sequence[str] = ("E", "gnorm")) -> None:
     csv_path = Path(csv_path)
-    cols = ["H", "M_parallel"] + list(extra_cols)
+    cols = ["B_ext_T", "J_par_T"] + list(extra_cols)
     csv_path.write_text(",".join(cols) + "\n", encoding="utf-8")
 
 
@@ -52,8 +52,9 @@ def compute_volume_averaged_J_parallel(m_nodes: np.ndarray, conn: np.ndarray, vo
     Js_e = Js_lookup[mat_id - 1]
     J_e = Js_e[:, None] * m_avg
 
-    Vsum = volume.sum() + 1e-30
-    J_avg = (volume[:, None] * J_e).sum(axis=0) / Vsum
+    # Normalize by magnetic volume
+    Vmag = volume[Js_e > 0].sum() + 1e-30
+    J_avg = (volume[:, None] * J_e).sum(axis=0) / Vmag
     return float(J_avg.dot(h))
 
 

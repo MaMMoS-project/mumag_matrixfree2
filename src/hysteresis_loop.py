@@ -46,6 +46,8 @@ class LoopParams:
     out_dir: str = 'hyst_out'
     csv_name: str = 'hysteresis.csv'
     snapshot_every: int = 1
+    verbose: bool = False
+    Js_ref: float = 1.0
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -131,7 +133,7 @@ def run_hysteresis_loop(
             ls_c=params.ls_c,
             ls_s0=params.ls_s0,
             ls_max_evals=params.ls_max_evals,
-            verbose=False,
+            verbose=params.verbose,
         )
 
         m_np = np.array(m)
@@ -144,7 +146,10 @@ def run_hysteresis_loop(
             h,
         )
 
-        append_hysteresis_row(csv_path, float(Bmag), float(Jpar), float(info.get('E', np.nan)) / 1e27, float(info.get('gnorm', np.nan)))
+        B_tesla = float(Bmag) * params.Js_ref
+        J_tesla = float(Jpar) * params.Js_ref
+
+        append_hysteresis_row(csv_path, B_tesla, J_tesla, float(info.get('E', np.nan)), float(info.get('gnorm', np.nan)))
 
         if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
             vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
@@ -156,6 +161,6 @@ def run_hysteresis_loop(
                 cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  B={Bmag:+.6e}  J_par={Jpar:+.6e}  E={info.get('E', float('nan')) / 1e27:.6e}")
+        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}")
 
     return {'out_dir': str(out_dir), 'csv_path': str(csv_path), 'last_m': np.array(m), 'last_U': np.array(U)}

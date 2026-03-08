@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import numpy as np
+import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from fem_utils import TetGeom
@@ -183,6 +185,7 @@ def main():
     ap.add_argument('--out-dir', type=str, default='hyst_out')
     ap.add_argument('--snapshot-every', type=int, default=1)
     ap.add_argument('--m0-dir', type=str, default=None, help='Initial magnetization direction "x,y,z". Defaults to h-dir.')
+    ap.add_argument('--verbose', action='store_true', help='Show minimizer iterations.')
 
     args = ap.parse_args()
 
@@ -231,8 +234,8 @@ def main():
     conn32, volume, JinvT = compute_volume_JinvT(knt, conn)
 
     # Calculate magnetic volume (V_mag)
-    # Grains (1..G) are assumed magnetic.
-    is_mag = (mat_id <= G)
+    # Only groups with Js > 0 are considered magnetic.
+    is_mag = np.isin(mat_id, np.where(Js_lookup > 0)[0] + 1)
     V_mag = np.sum(volume[is_mag])
     if V_mag == 0: V_mag = 1.0
 
@@ -306,6 +309,8 @@ def main():
         loop=True,
         out_dir=args.out_dir,
         snapshot_every=int(args.snapshot_every),
+        verbose=args.verbose,
+        Js_ref=float(Js_ref),
     )
 
     run_hysteresis_loop(

@@ -117,6 +117,15 @@ def test_relaxation():
     print(f"Final Energy: {info['E']:.6e}")
     print(f"Iterations: {info['iters']}")
     
+    if 'history' in info:
+        print(f"History recorded: {len(info['history'])} steps")
+        # Check first and last energy
+        e_start = info['history'][0]['E']
+        e_end = info['history'][-1]['E']
+        print(f"Energy: {e_start:.6e} -> {e_end:.6e}")
+    else:
+        print("[FAILURE] History not found in info dictionary.")
+    
     # Check if we are close to the easy axis [0, 0, 1]
     dot_z = abs(m_avg[2])
     if dot_z > 0.99:

@@ -214,6 +214,7 @@ def make_minimizer(
         g_tan = tangent_grad(m, g_prec)
 
         state = MinimState(m=m, U_prev=U, g_prev=g_tan, m_prev=m, tau=jnp.asarray(tau0, jnp.float64), it=jnp.int32(0))
+        history = []
 
         for k in range(gamma):
             U = solve_U(state.m, state.U_prev)
@@ -221,10 +222,13 @@ def make_minimizer(
             g_prec = g_raw * inv_V_rel
             g_tan = tangent_grad(state.m, g_prec)
             gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
+            
+            history.append({"E": float(E), "gnorm": gnorm, "phase": 0.0})
+
             if verbose:
                 print(f"[LS {k:03d}] E={float(E):.6e}  |g|={gnorm:.3e}")
             if gnorm <= tol_grad:
-                return state.m, U, {"E": float(E), "gnorm": gnorm, "iters": float(k), "phase": 0.0}
+                return state.m, U, {"E": float(E), "gnorm": gnorm, "iters": float(k), "phase": 0.0, "history": history}
 
             H = -jnp.cross(state.m, g_prec)
             tau = armijo_weak_line_search(
@@ -246,14 +250,17 @@ def make_minimizer(
         for k in range(gamma, max_iter):
             state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max)
             gnorm_f = float(gnorm)
+            
+            history.append({"E": float(E), "gnorm": gnorm_f, "phase": 1.0})
+
             if verbose and (k % 10 == 0 or gnorm_f <= tol_grad):
                 print(f"[BB {k:03d}] E={float(E):.6e}  |g|={gnorm_f:.3e}  tau={float(state.tau):.3e}")
             if gnorm_f <= tol_grad:
                 U = solve_U(state.m, state.U_prev)
-                return state.m, U, {"E": float(E), "gnorm": gnorm_f, "iters": float(k + 1), "phase": 1.0}
+                return state.m, U, {"E": float(E), "gnorm": gnorm_f, "iters": float(k + 1), "phase": 1.0, "history": history}
 
         U = solve_U(state.m, state.U_prev)
         E_end = float(energy_only(state.m, U, B_ext))
-        return state.m, U, {"E": E_end, "gnorm": float(gnorm), "iters": float(max_iter), "phase": 2.0}
+        return state.m, U, {"E": E_end, "gnorm": float(gnorm), "iters": float(max_iter), "phase": 2.0, "history": history}
 
     return minimize
