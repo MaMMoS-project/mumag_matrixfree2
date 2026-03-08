@@ -4,8 +4,7 @@ Main driver script:
   1) Read a FEM mesh (.npz with knt, ijk)
   2) Optionally add a shell / airbox (using add_shell.py)
   3) Precompute geometry for FEM kernels (volume + JinvT or grad_phi) and build TetGeom
-  4) Optional: build CPU aggregates for coarse correction (default k_target=256)
-  5) Run hysteresis loop
+  4) Run hysteresis loop
 
 Key option
 ----------
@@ -74,26 +73,34 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
 def load_materials_krn(krn_path: str, G: int):
     """
     Read intrinsic properties from a .krn file.
-    Columns (1-based):
-      1: theta (rad), 2: phi (rad), 3: K1 (J/m^3), 4: K2, 5: Js (T), 6: A (exchange)
+    If mesh has more groups than rows, the rest are assumed to be air (Js=0).
     """
     data = np.loadtxt(krn_path)
     if data.ndim == 1:
         data = data[None, :]
 
-    if data.shape[0] < G:
-        raise ValueError(f"KRN file {krn_path} has {data.shape[0]} rows, but mesh has {G} material groups.")
+    n_rows = data.shape[0]
+    
+    # Initialize arrays for G material groups
+    A = np.zeros(G, dtype=np.float64)
+    K1 = np.zeros(G, dtype=np.float64)
+    Js = np.zeros(G, dtype=np.float64)
+    k_easy = np.zeros((G, 3), dtype=np.float64)
+    k_easy[:, 2] = 1.0 # default easy axis along z
 
-    theta = data[:G, 0]
-    phi   = data[:G, 1]
-    K1    = data[:G, 2]
-    Js    = data[:G, 4]
-    A     = data[:G, 5] * 1e18 # Scale for nm mesh units
+    # Only fill up to what we have in the file
+    n_fill = min(G, n_rows)
+    
+    theta = data[:n_fill, 0]
+    phi   = data[:n_fill, 1]
+    K1[:n_fill]    = data[:n_fill, 2]
+    Js[:n_fill]    = data[:n_fill, 4]
+    A[:n_fill]     = data[:n_fill, 5] * 1e18 # Scale for nm mesh units
 
     kx = np.sin(theta) * np.cos(phi)
     ky = np.sin(theta) * np.sin(phi)
     kz = np.cos(theta)
-    k_easy = np.column_stack([kx, ky, kz])
+    k_easy[:n_fill] = np.column_stack([kx, ky, kz])
 
     return A, K1, Js, k_easy
 
