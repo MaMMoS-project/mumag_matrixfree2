@@ -31,7 +31,8 @@ class LoopParams:
 
     gamma: int = 5
     max_iter: int = 200
-    tol_grad: float = 1e-6
+    tau_f: float = 1e-6
+    eps_a: float = 1e-12
     tau0: float = 1e-2
     tau_min: float = 1e-6
     tau_max: float = 1.0
@@ -123,7 +124,8 @@ def run_hysteresis_loop(
             B_ext,
             gamma=params.gamma,
             max_iter=params.max_iter,
-            tol_grad=params.tol_grad,
+            tau_f=params.tau_f,
+            eps_a=params.eps_a,
             tau0=params.tau0,
             tau_min=params.tau_min,
             tau_max=params.tau_max,

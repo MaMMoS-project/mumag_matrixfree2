@@ -191,7 +191,8 @@ def make_minimizer(
         *,
         gamma: int = 5,
         max_iter: int = 200,
-        tol_grad: float = 1e-6,
+        tau_f: float = 1e-6,
+        eps_a: float = 1e-12,
         tau0: float = 1e-2,
         tau_min: float = 1e-6,
         tau_max: float = 1.0,
@@ -209,7 +210,7 @@ def make_minimizer(
 
         U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
         U = solve_U(m, U0)
-        E0, g_raw = energy_and_grad(m, U, B_ext)
+        E_prev, g_raw = energy_and_grad(m, U, B_ext)
         g_prec = g_raw * inv_V_rel
         g_tan = tangent_grad(m, g_prec)
 
@@ -221,14 +222,26 @@ def make_minimizer(
             E, g_raw = energy_and_grad(state.m, U, B_ext)
             g_prec = g_raw * inv_V_rel
             g_tan = tangent_grad(state.m, g_prec)
-            gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
             
-            history.append({"E": float(E), "gnorm": gnorm, "phase": 0.0})
+            # Infinity norms for convergence check
+            gnorm_inf = float(jnp.max(jnp.abs(g_tan)))
+            m_norm_inf = 1.0 # Nodes are normalized to unit length
+            diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
+            
+            # U1, U2, U3, U4 criteria
+            u1 = (E_prev - E) < tau_f * (1.0 + abs(E))
+            u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
+            u3 = gnorm_inf <= (tau_f**(1/3.0)) * (1.0 + abs(E))
+            u4 = gnorm_inf < eps_a
+            
+            converged = (u1 and u2 and u3) or u4
+            
+            history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 0.0})
 
             if verbose:
-                print(f"[LS {k:03d}] E={float(E):.6e}  |g|={gnorm:.3e}")
-            if gnorm <= tol_grad:
-                return state.m, U, {"E": float(E), "gnorm": gnorm, "iters": float(k), "phase": 0.0, "history": history}
+                print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}")
+            if converged:
+                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k), "phase": 0.0, "history": history}
 
             H = -jnp.cross(state.m, g_prec)
             tau = armijo_weak_line_search(
@@ -245,22 +258,36 @@ def make_minimizer(
                 max_evals=ls_max_evals,
             )
             m_new = cayley_update(state.m, H, jnp.asarray(tau, jnp.float64))
+            E_prev = E
             state = replace(state, m=m_new, m_prev=state.m, g_prev=g_tan, tau=jnp.asarray(tau, jnp.float64), it=state.it + jnp.int32(1), U_prev=U)
 
         for k in range(gamma, max_iter):
-            state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max)
-            gnorm_f = float(gnorm)
+            state, E, gnorm_2 = bb_step(state, B_ext, tau_min, tau_max)
+            # bb_step returns 2-norm, we need inf-norm for consistent criteria
+            gnorm_inf = float(jnp.max(jnp.abs(state.g_prev))) # state.g_prev is the tangent gradient of the new state m
+            diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
             
-            history.append({"E": float(E), "gnorm": gnorm_f, "phase": 1.0})
+            u1 = (E_prev - E) < tau_f * (1.0 + abs(E))
+            u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
+            u3 = gnorm_inf <= (tau_f**(1/3.0)) * (1.0 + abs(E))
+            u4 = gnorm_inf < eps_a
+            
+            converged = (u1 and u2 and u3) or u4
+            
+            history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 1.0})
 
-            if verbose and (k % 10 == 0 or gnorm_f <= tol_grad):
-                print(f"[BB {k:03d}] E={float(E):.6e}  |g|={gnorm_f:.3e}  tau={float(state.tau):.3e}")
-            if gnorm_f <= tol_grad:
+            if verbose and (k % 10 == 0 or converged):
+                print(f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  tau={float(state.tau):.3e}")
+            if converged:
                 U = solve_U(state.m, state.U_prev)
-                return state.m, U, {"E": float(E), "gnorm": gnorm_f, "iters": float(k + 1), "phase": 1.0, "history": history}
+                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k + 1), "phase": 1.0, "history": history}
+            
+            E_prev = E
 
         U = solve_U(state.m, state.U_prev)
         E_end = float(energy_only(state.m, U, B_ext))
-        return state.m, U, {"E": E_end, "gnorm": float(gnorm), "iters": float(max_iter), "phase": 2.0, "history": history}
+        gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
+        return state.m, U, {"E": E_end, "gnorm": gnorm_inf, "iters": float(max_iter), "phase": 2.0, "history": history}
+
 
     return minimize

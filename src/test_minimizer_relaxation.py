@@ -98,7 +98,8 @@ def test_relaxation():
     m_final, U_final, info = minimize(
         m0, B_ext, 
         max_iter=300, 
-        tol_grad=1e-7, 
+        tau_f=1e-6,
+        eps_a=1e-10, 
         verbose=True
     )
     

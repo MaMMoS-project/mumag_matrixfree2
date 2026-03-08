@@ -181,6 +181,8 @@ def main():
     ap.add_argument('--B-start', type=float, default=-1.0)
     ap.add_argument('--B-end', type=float, default=1.0)
     ap.add_argument('--dB', type=float, default=0.05)
+    ap.add_argument('--tau-f', type=float, default=1e-6)
+    ap.add_argument('--eps-a', type=float, default=1e-12)
 
     ap.add_argument('--out-dir', type=str, default='hyst_out')
     ap.add_argument('--snapshot-every', type=int, default=1)
@@ -306,6 +308,8 @@ def main():
         B_start=float(args.B_start) / Js_ref,
         B_end=float(args.B_end) / Js_ref,
         dB=float(args.dB) / Js_ref,
+        tau_f=float(args.tau_f),
+        eps_a=float(args.eps_a),
         loop=True,
         out_dir=args.out_dir,
         snapshot_every=int(args.snapshot_every),
