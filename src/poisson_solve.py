@@ -134,12 +134,11 @@ def make_poisson_ops(
             Ve_eff = Ve_c * mask
             Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
-            # M is assumed uniform per element (P0) or averaged from nodes
-            # Polarization J = Js * m
-            J_avg = Js_c[:, None] * jnp.mean(m_e, axis=1)
-            # RHS contribution: integral( grad(phi_i) . J ) dV
-            # This corresponds to the potential U where B_dem = -grad(U)
-            dot_term = jnp.einsum('eak,ek->ea', B_c, J_avg)
+            # Reduced polarization j = (Js/Js_ref) * m
+            j_avg = Js_c[:, None] * jnp.mean(m_e, axis=1)
+            # RHS contribution: integral( grad(phi_i) . j ) dV
+            # Potential U is now such that b_dem = -grad(U) is reduced field
+            dot_term = jnp.einsum('eak,ek->ea', B_c, j_avg)
             contrib = Ve_eff[:, None] * dot_term
             return b_acc.at[conn_c].add(contrib)
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)

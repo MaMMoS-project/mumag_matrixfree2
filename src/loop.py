@@ -216,7 +216,28 @@ def main():
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
-    A_lookup, K1_lookup, Ms_lookup, k_easy_lookup = load_materials(args.materials, G, mesh_path=args.mesh)
+    A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(args.materials, G, mesh_path=args.mesh)
+
+    # Use volume from compute_volume_JinvT later, but we need V_mag now or soon.
+    # Let's compute volume and JinvT now.
+    conn32, volume, JinvT = compute_volume_JinvT(knt, conn)
+
+    # Calculate magnetic volume (V_mag)
+    # Grains (1..G) are assumed magnetic.
+    is_mag = (mat_id <= G)
+    V_mag = np.sum(volume[is_mag])
+    if V_mag == 0: V_mag = 1.0
+
+    # Normalization: Kd = Js^2 / (2 * mu0)
+    Js_ref = np.max(Js_lookup)
+    if Js_ref == 0: Js_ref = 1.0
+    MU0_SI = 4e-7 * np.pi
+    Kd_ref = (Js_ref**2) / (2.0 * MU0_SI)
+
+    # Reduced properties:
+    A_red = A_lookup / Kd_ref
+    K1_red = K1_lookup / Kd_ref
+    Js_red = Js_lookup / Js_ref
 
     # Aggregates on CPU (optional)
     agg_id = None
@@ -229,27 +250,13 @@ def main():
     grad_backend = args.geom_backend
 
     if grad_backend == 'on_the_fly':
-        # store x_nodes on device
-        geom = TetGeom(
-            conn=jnp.asarray(conn.astype(np.int32), dtype=jnp.int32),
-            volume=jnp.ones((conn.shape[0],), dtype=jnp.float64),  # dummy, not used in on_the_fly kernels here
-            mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-            x_nodes=jnp.asarray(knt, dtype=jnp.float64),
-            grad_phi=None,
-            JinvT=None,
-        )
-        # NOTE: on_the_fly backend in kernels requires volume too; for correct physics you should compute volume.
-        # We still compute volume below for correctness.
-        conn32, volume, JinvT = compute_volume_JinvT(knt, conn)
         geom = TetGeom(
             conn=jnp.asarray(conn32, dtype=jnp.int32),
             volume=jnp.asarray(volume, dtype=jnp.float64),
             mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
             x_nodes=jnp.asarray(knt, dtype=jnp.float64),
         )
-
     else:
-        conn32, volume, JinvT = compute_volume_JinvT(knt, conn)
         if grad_backend == 'stored_grad_phi':
             grad_phi = compute_grad_phi_from_JinvT(JinvT)
             geom = TetGeom(
@@ -274,7 +281,6 @@ def main():
     if args.m0_dir:
         m0_vec = np.array([float(x) for x in args.m0_dir.split(',')], dtype=np.float64)
     else:
-        # Default to field direction if not provided
         m0_vec = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
 
     m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
@@ -285,9 +291,9 @@ def main():
 
     params = LoopParams(
         h_dir=h_dir,
-        B_start=float(args.B_start),
-        B_end=float(args.B_end),
-        dB=float(args.dB),
+        B_start=float(args.B_start) / Js_ref,
+        B_end=float(args.B_end) / Js_ref,
+        dB=float(args.dB) / Js_ref,
         loop=True,
         out_dir=args.out_dir,
         snapshot_every=int(args.snapshot_every),
@@ -296,12 +302,13 @@ def main():
     run_hysteresis_loop(
         points=knt,
         geom=geom,
-        A_lookup=A_lookup,
-        K1_lookup=K1_lookup,
-        Js_lookup=Js_lookup,
+        A_lookup=A_red,
+        K1_lookup=K1_red,
+        Js_lookup=Js_red,
         k_easy_lookup=k_easy_lookup,
         m0=m0,
         params=params,
+        V_mag=float(V_mag),
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
         cg_maxiter=int(args.cg_maxiter),

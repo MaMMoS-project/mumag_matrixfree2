@@ -54,6 +54,7 @@ def make_energy_kernels(
     K1_lookup: Array,
     Js_lookup: Array,
     k_easy_lookup: Array,
+    V_mag: float,
     *,
     chunk_elems: int = 200_000,
     assembly: Assembly = 'scatter',
@@ -66,6 +67,9 @@ def make_energy_kernels(
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
+
+    # Inverse volume normalization
+    inv_Vmag = 1.0 / V_mag
 
     if grad_backend == 'stored_grad_phi':
         if geom_p.grad_phi is None:
@@ -108,6 +112,7 @@ def make_energy_kernels(
     def energy_and_grad(m: Array, U: Array, B_ext: Array) -> Tuple[Array, Array]:
         N = m.shape[0]
         dtype = m.dtype
+        # B_ext is expected to be reduced: b_ext = B_ext / Js_ref
         B_ext = jnp.asarray(B_ext, dtype=dtype)
 
         def body(i, carry):
@@ -122,9 +127,11 @@ def make_energy_kernels(
             Ve_eff = Ve_c * mask
 
             g_ids = mat_c - 1
-            A_c = A_lookup[g_ids].astype(dtype)
-            K1_c = K1_lookup[g_ids].astype(dtype)
-            Js_c = Js_lookup[g_ids].astype(dtype)
+            # Reduced properties (from loop.py):
+            # a_c = A / Kd,  q_c = K1 / Kd,  j_c = Js / Js_ref
+            a_c = A_lookup[g_ids].astype(dtype)
+            q_c = K1_lookup[g_ids].astype(dtype)
+            j_c = Js_lookup[g_ids].astype(dtype)
             k_c = k_easy_lookup[g_ids].astype(dtype)
 
             m_e = m[conn_c]
@@ -132,33 +139,32 @@ def make_energy_kernels(
 
             # Exchange
             G = jnp.einsum('eal,eak->elk', m_e, B_c)
-            E_ex = jnp.sum(A_c * Ve_eff * jnp.sum(G * G, axis=(1, 2)))
+            E_ex = jnp.sum(a_c * Ve_eff * jnp.sum(G * G, axis=(1, 2)))
             Km = jnp.einsum('elk,egk->egl', G, B_c)
-            contrib = (2.0 * A_c * Ve_eff)[:, None, None] * Km
+            contrib = (2.0 * a_c * Ve_eff)[:, None, None] * Km
 
             # Uniaxial anisotropy
             v_e = jnp.einsum('eac,ec->ea', m_e, k_c)
             sum_v = jnp.sum(v_e, axis=1)
             sum_v2 = jnp.sum(v_e * v_e, axis=1)
             quad = (sum_v * sum_v + sum_v2) * (Ve_eff / 20.0)
-            E_an = jnp.sum(-K1_c * quad)
+            E_an = jnp.sum(-q_c * quad)
             Mv = (Ve_eff / 20.0)[:, None] * (sum_v[:, None] + v_e)
-            factor = (-2.0 * K1_c)[:, None] * Mv
+            factor = (-2.0 * q_c)[:, None] * Mv
             contrib = contrib + factor[..., None] * k_c[:, None, :]
 
-            # Zeeman: E_z = -1/mu0 * integral( Js * m.B_ext ) dV
+            # Zeeman: E_z = -2 * integral( j_c * m . b_ext ) dV
             sum_m = jnp.sum(m_e, axis=1)
             sum_m_dot_B = jnp.einsum('ec,c->e', sum_m, B_ext)
-            E_z = jnp.sum(-(1.0/MU0) * Js_c * Ve_eff * 0.25 * sum_m_dot_B)
-            scale_z = (-(1.0/MU0) * Js_c * Ve_eff / 4.0)[:, None, None]
+            E_z = jnp.sum(-2.0 * j_c * Ve_eff * 0.25 * sum_m_dot_B)
+            scale_z = (-2.0 * j_c * Ve_eff / 4.0)[:, None, None]
             contrib = contrib + jnp.broadcast_to(scale_z * B_ext[None, None, :], (chunk_elems, 4, 3))
 
-            # Demag: E_dem = -0.5/mu0 * integral( Js * m.B_dem ) dV, where B_dem = -grad(U)
-            # U is potential from Js*m
+            # Demag: E_dem = - integral( j_c * m . b_dem ) dV, b_dem = -grad(U)
             B_dem = -jnp.einsum('ea,eak->ek', U_e, B_c)
             m_avg = 0.25 * sum_m
-            E_dem = jnp.sum(-0.5 * (1.0/MU0) * Js_c * Ve_eff * jnp.einsum('ec,ec->e', m_avg, B_dem))
-            scale_dem = (-(1.0/MU0) * Js_c * Ve_eff / 4.0)[:, None, None]
+            E_dem = jnp.sum(-1.0 * j_c * Ve_eff * jnp.einsum('ec,ec->e', m_avg, B_dem))
+            scale_dem = (-1.0 * j_c * Ve_eff / 4.0)[:, None, None]
             contrib = contrib + jnp.broadcast_to(scale_dem * B_dem[:, None, :], (chunk_elems, 4, 3))
 
             if assembly == 'scatter':
@@ -170,7 +176,8 @@ def make_energy_kernels(
 
         E0 = jnp.array(0.0, dtype=dtype)
         g0 = jnp.zeros((N, 3), dtype=dtype)
-        return lax.fori_loop(0, n_chunks, body, (E0, g0))
+        E_total, g_total = lax.fori_loop(0, n_chunks, body, (E0, g0))
+        return E_total * inv_Vmag, g_total * inv_Vmag
 
     def energy_only(m: Array, U: Array, B_ext: Array) -> Array:
         dtype = m.dtype
@@ -187,35 +194,35 @@ def make_energy_kernels(
             Ve_eff = Ve_c * mask
 
             g_ids = mat_c - 1
-            A_c = A_lookup[g_ids].astype(dtype)
-            K1_c = K1_lookup[g_ids].astype(dtype)
-            Js_c = Js_lookup[g_ids].astype(dtype)
+            a_c = A_lookup[g_ids].astype(dtype)
+            q_c = K1_lookup[g_ids].astype(dtype)
+            j_c = Js_lookup[g_ids].astype(dtype)
             k_c = k_easy_lookup[g_ids].astype(dtype)
 
             m_e = m[conn_c]
             U_e = U[conn_c]
 
             G = jnp.einsum('eal,eak->elk', m_e, B_c)
-            E_ex = jnp.sum(A_c * Ve_eff * jnp.sum(G * G, axis=(1, 2)))
+            E_ex = jnp.sum(a_c * Ve_eff * jnp.sum(G * G, axis=(1, 2)))
 
             v_e = jnp.einsum('eac,ec->ea', m_e, k_c)
             sum_v = jnp.sum(v_e, axis=1)
             sum_v2 = jnp.sum(v_e * v_e, axis=1)
             quad = (sum_v * sum_v + sum_v2) * (Ve_eff / 20.0)
-            E_an = jnp.sum(-K1_c * quad)
+            E_an = jnp.sum(-q_c * quad)
 
             sum_m = jnp.sum(m_e, axis=1)
             sum_m_dot_B = jnp.einsum('ec,c->e', sum_m, B_ext)
-            E_z = jnp.sum(-(1.0/MU0) * Js_c * Ve_eff * 0.25 * sum_m_dot_B)
+            E_z = jnp.sum(-2.0 * j_c * Ve_eff * 0.25 * sum_m_dot_B)
 
             B_dem = -jnp.einsum('ea,eak->ek', U_e, B_c)
             m_avg = 0.25 * sum_m
-            E_dem = jnp.sum(-0.5 * (1.0/MU0) * Js_c * Ve_eff * jnp.einsum('ec,ec->e', m_avg, B_dem))
+            E_dem = jnp.sum(-1.0 * j_c * Ve_eff * jnp.einsum('ec,ec->e', m_avg, B_dem))
 
             return E_acc + (E_ex + E_an + E_z + E_dem)
 
         E0 = jnp.array(0.0, dtype=m.dtype)
-        return lax.fori_loop(0, n_chunks, body, E0)
+        return lax.fori_loop(0, n_chunks, body, E0) * inv_Vmag
 
     def grad_only(m: Array, U: Array, B_ext: Array) -> Array:
         N = m.shape[0]
@@ -233,9 +240,9 @@ def make_energy_kernels(
             Ve_eff = Ve_c * mask
 
             g_ids = mat_c - 1
-            A_c = A_lookup[g_ids].astype(dtype)
-            K1_c = K1_lookup[g_ids].astype(dtype)
-            Js_c = Js_lookup[g_ids].astype(dtype)
+            a_c = A_lookup[g_ids].astype(dtype)
+            q_c = K1_lookup[g_ids].astype(dtype)
+            j_c = Js_lookup[g_ids].astype(dtype)
             k_c = k_easy_lookup[g_ids].astype(dtype)
 
             m_e = m[conn_c]
@@ -243,19 +250,19 @@ def make_energy_kernels(
 
             G = jnp.einsum('eal,eak->elk', m_e, B_c)
             Km = jnp.einsum('elk,egk->egl', G, B_c)
-            contrib = (2.0 * A_c * Ve_eff)[:, None, None] * Km
+            contrib = (2.0 * a_c * Ve_eff)[:, None, None] * Km
 
             v_e = jnp.einsum('eac,ec->ea', m_e, k_c)
             sum_v = jnp.sum(v_e, axis=1)
             Mv = (Ve_eff / 20.0)[:, None] * (sum_v[:, None] + v_e)
-            factor = (-2.0 * K1_c)[:, None] * Mv
+            factor = (-2.0 * q_c)[:, None] * Mv
             contrib = contrib + factor[..., None] * k_c[:, None, :]
 
-            scale_z = (-(1.0/MU0) * Js_c * Ve_eff / 4.0)[:, None, None]
+            scale_z = (-2.0 * j_c * Ve_eff / 4.0)[:, None, None]
             contrib = contrib + jnp.broadcast_to(scale_z * B_ext[None, None, :], (chunk_elems, 4, 3))
 
             B_dem = -jnp.einsum('ea,eak->ek', U_e, B_c)
-            scale_dem = (-(1.0/MU0) * Js_c * Ve_eff / 4.0)[:, None, None]
+            scale_dem = (-1.0 * j_c * Ve_eff / 4.0)[:, None, None]
             contrib = contrib + jnp.broadcast_to(scale_dem * B_dem[:, None, :], (chunk_elems, 4, 3))
 
             if assembly == 'scatter':
@@ -266,6 +273,6 @@ def make_energy_kernels(
             return g_acc
 
         g0 = jnp.zeros((N, 3), dtype=dtype)
-        return lax.fori_loop(0, n_chunks, body, g0)
+        return lax.fori_loop(0, n_chunks, body, g0) * inv_Vmag
 
     return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only)

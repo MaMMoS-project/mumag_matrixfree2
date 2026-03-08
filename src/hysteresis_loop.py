@@ -16,7 +16,7 @@ import jax.numpy as jnp
 
 from fem_utils import TetGeom
 from curvilinear_bb_minimizer import make_minimizer
-from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row, compute_volume_averaged_M_parallel, write_vtu_tetra
+from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row, compute_volume_averaged_J_parallel, write_vtu_tetra
 
 GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
 
@@ -134,7 +134,7 @@ def run_hysteresis_loop(
         )
 
         m_np = np.array(m)
-        Jpar = compute_volume_averaged_M_parallel(
+        Jpar = compute_volume_averaged_J_parallel(
             m_np,
             np.array(geom.conn),
             np.array(geom.volume),

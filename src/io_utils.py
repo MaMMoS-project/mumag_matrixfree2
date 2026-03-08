@@ -37,7 +37,7 @@ def append_hysteresis_row(csv_path: str | Path, H: float, M_parallel: float, E: 
         f.write(",".join(parts) + "\n")
 
 
-def compute_volume_averaged_M_parallel(m_nodes: np.ndarray, conn: np.ndarray, volume: np.ndarray, mat_id: np.ndarray, Ms_lookup: np.ndarray, h_dir: np.ndarray) -> float:
+def compute_volume_averaged_J_parallel(m_nodes: np.ndarray, conn: np.ndarray, volume: np.ndarray, mat_id: np.ndarray, Js_lookup: np.ndarray, h_dir: np.ndarray) -> float:
     h = np.asarray(h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
@@ -45,16 +45,16 @@ def compute_volume_averaged_M_parallel(m_nodes: np.ndarray, conn: np.ndarray, vo
     conn = np.asarray(conn, dtype=np.int64)
     volume = np.asarray(volume, dtype=np.float64)
     mat_id = np.asarray(mat_id, dtype=np.int64)
-    Ms_lookup = np.asarray(Ms_lookup, dtype=np.float64)
+    Js_lookup = np.asarray(Js_lookup, dtype=np.float64)
 
     m_e = m_nodes[conn]
     m_avg = m_e.mean(axis=1)
-    Ms_e = Ms_lookup[mat_id - 1]
-    M_e = Ms_e[:, None] * m_avg
+    Js_e = Js_lookup[mat_id - 1]
+    J_e = Js_e[:, None] * m_avg
 
     Vsum = volume.sum() + 1e-30
-    M_avg = (volume[:, None] * M_e).sum(axis=0) / Vsum
-    return float(M_avg.dot(h))
+    J_avg = (volume[:, None] * J_e).sum(axis=0) / Vsum
+    return float(J_avg.dot(h))
 
 
 def _vtk_type(arr: np.ndarray) -> str:
