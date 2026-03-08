@@ -11,12 +11,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional
 
+import time
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from fem_utils import TetGeom
 from curvilinear_bb_minimizer import make_minimizer
-from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row, compute_volume_averaged_J_parallel, write_vtu_tetra
+from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row, write_vtu_tetra
 
 GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
 
@@ -63,6 +65,33 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
     if not loop:
         return vals_up
     return np.concatenate([vals_up, vals_up[-2::-1]])
+
+
+@jax.jit
+def jax_compute_volume_averaged_J_parallel(
+    m_nodes: jnp.ndarray,
+    conn: jnp.ndarray,
+    volume: jnp.ndarray,
+    mat_id: jnp.ndarray,
+    Js_lookup: jnp.ndarray,
+    h_dir: jnp.ndarray
+) -> jnp.ndarray:
+    h = h_dir / (jnp.linalg.norm(h_dir) + 1e-30)
+
+    # Average m over tets
+    m_e = m_nodes[conn] # (E, 4, 3)
+    m_avg = jnp.mean(m_e, axis=1) # (E, 3)
+
+    # Material properties
+    Js_e = Js_lookup[mat_id - 1] # (E,)
+    J_e = Js_e[:, None] * m_avg # (E, 3)
+
+    # Magnetic volume (only where Js > 0)
+    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+
+    # Volume average
+    J_avg = jnp.sum(volume[:, None] * J_e, axis=0) / Vmag
+    return jnp.dot(J_avg, h)
 
 
 def run_hysteresis_loop(
@@ -117,8 +146,11 @@ def run_hysteresis_loop(
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
+    total_time = 0.0
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
+        
+        start_step = time.time()
         m, U, info = minimize(
             m,
             B_ext,
@@ -137,15 +169,19 @@ def run_hysteresis_loop(
             ls_max_evals=params.ls_max_evals,
             verbose=params.verbose,
         )
+        # Accurate timing: wait for GPU to finish
+        m.block_until_ready()
+        U.block_until_ready()
+        step_duration = time.time() - start_step
+        total_time += step_duration
 
-        m_np = np.array(m)
-        Jpar = compute_volume_averaged_J_parallel(
-            m_np,
-            np.array(geom.conn),
-            np.array(geom.volume),
-            np.array(geom.mat_id),
-            np.array(Js_lookup),
-            h,
+        Jpar = jax_compute_volume_averaged_J_parallel(
+            m,
+            geom.conn,
+            geom.volume,
+            geom.mat_id,
+            jnp.asarray(Js_lookup),
+            jnp.asarray(h),
         )
 
         B_tesla = float(Bmag) * params.Js_ref
@@ -155,14 +191,17 @@ def run_hysteresis_loop(
 
         if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
             vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
+            # m_np is only needed for VTU, we move it inside the if
+            m_np = np.array(m)
             write_vtu_tetra(
                 vtu_path,
                 points,
                 np.array(geom.conn),
-                point_data={'m': np.array(m).astype(np.float32), 'U': np.array(U).astype(np.float32)},
+                point_data={'m': m_np.astype(np.float32), 'U': np.array(U).astype(np.float32)},
                 cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}")
+        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s")
 
+    print(f"\nHysteresis loop finished in {total_time:.3f} s.")
     return {'out_dir': str(out_dir), 'csv_path': str(csv_path), 'last_m': np.array(m), 'last_U': np.array(U)}

@@ -107,23 +107,10 @@ def load_materials_krn(krn_path: str, G: int):
     return A, K1, Js, k_easy
 
 
-def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
-    # Priority 1: Explicitly provided materials NPZ
-    if mat_npz is not None:
-        data = np.load(mat_npz)
-        def get(name, shape=None):
-            if name not in data:
-                raise KeyError(f"materials NPZ missing '{name}'")
-            arr = np.asarray(data[name], dtype=np.float64)
-            if shape is not None and tuple(arr.shape) != tuple(shape):
-                raise ValueError(f"{name} has shape {arr.shape}, expected {shape}")
-            return arr
-
-        A = get('A_lookup', (G,))
-        K1 = get('K1_lookup', (G,))
-        Js = get('Js_lookup', (G,))
-        k_easy = get('k_easy_lookup', (G, 3))
-        return A, K1, Js, k_easy
+def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None):
+    # Priority 1: Explicitly provided materials KRN
+    if mat_path is not None:
+        return load_materials_krn(mat_path, G)
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
@@ -159,7 +146,7 @@ def main():
     ap.add_argument('--shell-verbose', action='store_true')
 
     # materials
-    ap.add_argument('--materials', type=str, default=None, help='NPZ with A_lookup,K1_lookup,Js_lookup,k_easy_lookup')
+    ap.add_argument('--materials', type=str, default=None, help='KRN file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per line.')
 
     # preconditioning
     ap.add_argument('--precond-type', type=str, default='jacobi', choices=['jacobi', 'chebyshev'],
