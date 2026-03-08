@@ -72,14 +72,14 @@ def run_hysteresis_loop(
     k_easy_lookup: np.ndarray,
     m0: np.ndarray,
     params: LoopParams,
+    V_mag: float,
+    precond_type: str = 'jacobi',
     energy_assembly: str = 'scatter',
     grad_backend: GradBackend = 'stored_grad_phi',
     chunk_elems: int = 200_000,
     cg_maxiter: int = 400,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
-    agg_id: Optional[np.ndarray] = None,
-    inv_sqrt_counts: Optional[np.ndarray] = None,
     boundary_mask: Optional[jnp.ndarray] = None,
 ) -> Dict[str, object]:
 
@@ -90,23 +90,20 @@ def run_hysteresis_loop(
     h = np.asarray(params.h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
-    agg_id_j = None if agg_id is None else jnp.asarray(agg_id, dtype=jnp.int32)
-    inv_sqrt_j = None if inv_sqrt_counts is None else jnp.asarray(inv_sqrt_counts, dtype=jnp.float64)
-
     minimize = make_minimizer(
         geom,
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
         Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        V_mag=V_mag,
+        precond_type=precond_type,
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
         cg_maxiter=cg_maxiter,
         cg_tol=cg_tol,
         poisson_reg=poisson_reg,
         grad_backend=grad_backend,
-        agg_id=agg_id_j,
-        inv_sqrt_counts=inv_sqrt_j,
         boundary_mask=boundary_mask,
     )
 

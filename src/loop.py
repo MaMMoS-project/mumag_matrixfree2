@@ -28,7 +28,6 @@ import jax.numpy as jnp
 
 from fem_utils import TetGeom
 import add_shell
-from aggregation_utils import build_aggregates_by_binning
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 
 # Reference tetra gradients
@@ -151,12 +150,14 @@ def main():
     ap.add_argument('--shell-verbose', action='store_true')
 
     # materials
-    ap.add_argument('--materials', type=str, default=None, help='NPZ with A_lookup,K1_lookup,Ms_lookup,k_easy_lookup')
+    ap.add_argument('--materials', type=str, default=None, help='NPZ with A_lookup,K1_lookup,Js_lookup,k_easy_lookup')
 
-    # coarse correction
-    ap.add_argument('--k-coarse', type=int, default=256, help='Target number of aggregates for coarse correction (0 disables).')
+    # preconditioning
+    ap.add_argument('--precond-type', type=str, default='jacobi', choices=['jacobi', 'chebyshev'],
+                    help='Poisson solver preconditioning: jacobi (default) or chebyshev.')
 
     # gradient backend selection
+
     ap.add_argument('--geom-backend', type=str, default='stored_JinvT', choices=['stored_JinvT', 'stored_grad_phi', 'on_the_fly'],
                     help='How to provide grad information: stored_JinvT, stored_grad_phi, or on_the_fly (stores x_nodes on device).')
 
@@ -239,13 +240,6 @@ def main():
     K1_red = K1_lookup / Kd_ref
     Js_red = Js_lookup / Js_ref
 
-    # Aggregates on CPU (optional)
-    agg_id = None
-    inv_sqrt_counts = None
-    if args.k_coarse and args.k_coarse > 0:
-        agg_id, inv_sqrt_counts, k = build_aggregates_by_binning(knt, k_target=args.k_coarse)
-        print(f"[coarse] built k={k} aggregates")
-
     # Build TetGeom depending on backend
     grad_backend = args.geom_backend
 
@@ -313,13 +307,12 @@ def main():
         m0=m0,
         params=params,
         V_mag=float(V_mag),
+        precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
         cg_maxiter=int(args.cg_maxiter),
         cg_tol=float(args.cg_tol),
         poisson_reg=float(args.poisson_reg),
-        agg_id=agg_id,
-        inv_sqrt_counts=inv_sqrt_counts,
         boundary_mask=boundary_mask,
     )
 
