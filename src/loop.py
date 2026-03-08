@@ -89,7 +89,7 @@ def load_materials_krn(krn_path: str, G: int):
     phi   = data[:G, 1]
     K1    = data[:G, 2]
     Js    = data[:G, 4]
-    A     = data[:G, 5]
+    A     = data[:G, 5] * 1e18 # Scale for nm mesh units
 
     MU0 = 4e-7 * np.pi
     Ms = Js / MU0
@@ -128,7 +128,7 @@ def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
             return load_materials_krn(str(krn_path), G)
 
     # Priority 3: Default (NdFeB-like)
-    A = np.ones((G,), dtype=np.float64) * 1e-11 # some default
+    A = np.ones((G,), dtype=np.float64) * 1e-11 * 1e18 # some default, scaled for nm mesh
     K1 = np.zeros((G,), dtype=np.float64)
     Ms = np.ones((G,), dtype=np.float64)
     k_easy = np.zeros((G, 3), dtype=np.float64)

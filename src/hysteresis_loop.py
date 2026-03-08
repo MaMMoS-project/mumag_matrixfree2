@@ -143,7 +143,7 @@ def run_hysteresis_loop(
             h,
         )
 
-        append_hysteresis_row(csv_path, float(Hmag), float(Mpar), float(info.get('E', np.nan)), float(info.get('gnorm', np.nan)))
+        append_hysteresis_row(csv_path, float(Hmag), float(Mpar), float(info.get('E', np.nan)) / 1e27, float(info.get('gnorm', np.nan)))
 
         if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
             vtu_path = out_dir / f"state_{step_idx:05d}_H{Hmag:+.6e}.vtu"
@@ -155,6 +155,6 @@ def run_hysteresis_loop(
                 cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  H={Hmag:+.6e}  M_par={Mpar:+.6e}  E={info.get('E', float('nan')):.6e}")
+        print(f"step {step_idx:05d}  H={Hmag:+.6e}  M_par={Mpar:+.6e}  E={info.get('E', float('nan')) / 1e27:.6e}")
 
     return {'out_dir': str(out_dir), 'csv_path': str(csv_path), 'last_m': np.array(m), 'last_U': np.array(U)}
