@@ -91,15 +91,12 @@ def load_materials_krn(krn_path: str, G: int):
     Js    = data[:G, 4]
     A     = data[:G, 5] * 1e18 # Scale for nm mesh units
 
-    MU0 = 4e-7 * np.pi
-    Ms = Js / MU0
-
     kx = np.sin(theta) * np.cos(phi)
     ky = np.sin(theta) * np.sin(phi)
     kz = np.cos(theta)
     k_easy = np.column_stack([kx, ky, kz])
 
-    return A, K1, Ms, k_easy
+    return A, K1, Js, k_easy
 
 
 def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
@@ -116,9 +113,9 @@ def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
 
         A = get('A_lookup', (G,))
         K1 = get('K1_lookup', (G,))
-        Ms = get('Ms_lookup', (G,))
+        Js = get('Js_lookup', (G,))
         k_easy = get('k_easy_lookup', (G, 3))
-        return A, K1, Ms, k_easy
+        return A, K1, Js, k_easy
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
@@ -130,10 +127,10 @@ def load_materials(mat_npz: str | None, G: int, mesh_path: str | None = None):
     # Priority 3: Default (NdFeB-like)
     A = np.ones((G,), dtype=np.float64) * 1e-11 * 1e18 # some default, scaled for nm mesh
     K1 = np.zeros((G,), dtype=np.float64)
-    Ms = np.ones((G,), dtype=np.float64)
+    Js = np.ones((G,), dtype=np.float64) # 1.0 Tesla
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0
-    return A, K1, Ms, k_easy
+    return A, K1, Js, k_easy
 
 
 def main():
@@ -171,9 +168,9 @@ def main():
 
     # loop settings
     ap.add_argument('--h-dir', type=str, default='0,0,1')
-    ap.add_argument('--H-start', type=float, default=-1e6)
-    ap.add_argument('--H-end', type=float, default=1e6)
-    ap.add_argument('--dH', type=float, default=5e4)
+    ap.add_argument('--B-start', type=float, default=-1.0)
+    ap.add_argument('--B-end', type=float, default=1.0)
+    ap.add_argument('--dB', type=float, default=0.05)
 
     ap.add_argument('--out-dir', type=str, default='hyst_out')
     ap.add_argument('--snapshot-every', type=int, default=1)
@@ -288,9 +285,9 @@ def main():
 
     params = LoopParams(
         h_dir=h_dir,
-        H_start=float(args.H_start),
-        H_end=float(args.H_end),
-        dH=float(args.dH),
+        B_start=float(args.B_start),
+        B_end=float(args.B_end),
+        dB=float(args.dB),
         loop=True,
         out_dir=args.out_dir,
         snapshot_every=int(args.snapshot_every),
@@ -301,7 +298,7 @@ def main():
         geom=geom,
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
-        Ms_lookup=Ms_lookup,
+        Js_lookup=Js_lookup,
         k_easy_lookup=k_easy_lookup,
         m0=m0,
         params=params,

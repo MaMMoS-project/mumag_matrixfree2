@@ -24,9 +24,9 @@ GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
 @dataclass
 class LoopParams:
     h_dir: np.ndarray
-    H_start: float
-    H_end: float
-    dH: float
+    B_start: float
+    B_end: float
+    dB: float
     loop: bool = True
 
     gamma: int = 5
@@ -68,7 +68,7 @@ def run_hysteresis_loop(
     geom: TetGeom,
     A_lookup: np.ndarray,
     K1_lookup: np.ndarray,
-    Ms_lookup: np.ndarray,
+    Js_lookup: np.ndarray,
     k_easy_lookup: np.ndarray,
     m0: np.ndarray,
     params: LoopParams,
@@ -96,7 +96,7 @@ def run_hysteresis_loop(
         geom,
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
-        Ms_lookup=jnp.asarray(Ms_lookup, dtype=jnp.float64),
+        Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
@@ -111,13 +111,13 @@ def run_hysteresis_loop(
     m = jnp.asarray(m0, dtype=jnp.float64)
     m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
 
-    H_vals = _field_values(params.H_start, params.H_end, params.dH, params.loop)
+    B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
-    for step_idx, Hmag in enumerate(H_vals):
-        H_ext = jnp.asarray(Hmag * h, dtype=jnp.float64)
+    for step_idx, Bmag in enumerate(B_vals):
+        B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
         m, U, info = minimize(
             m,
-            H_ext,
+            B_ext,
             gamma=params.gamma,
             max_iter=params.max_iter,
             tol_grad=params.tol_grad,
@@ -134,19 +134,19 @@ def run_hysteresis_loop(
         )
 
         m_np = np.array(m)
-        Mpar = compute_volume_averaged_M_parallel(
+        Jpar = compute_volume_averaged_M_parallel(
             m_np,
             np.array(geom.conn),
             np.array(geom.volume),
             np.array(geom.mat_id),
-            np.array(Ms_lookup),
+            np.array(Js_lookup),
             h,
         )
 
-        append_hysteresis_row(csv_path, float(Hmag), float(Mpar), float(info.get('E', np.nan)) / 1e27, float(info.get('gnorm', np.nan)))
+        append_hysteresis_row(csv_path, float(Bmag), float(Jpar), float(info.get('E', np.nan)) / 1e27, float(info.get('gnorm', np.nan)))
 
         if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
-            vtu_path = out_dir / f"state_{step_idx:05d}_H{Hmag:+.6e}.vtu"
+            vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
             write_vtu_tetra(
                 vtu_path,
                 points,
@@ -155,6 +155,6 @@ def run_hysteresis_loop(
                 cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  H={Hmag:+.6e}  M_par={Mpar:+.6e}  E={info.get('E', float('nan')) / 1e27:.6e}")
+        print(f"step {step_idx:05d}  B={Bmag:+.6e}  J_par={Jpar:+.6e}  E={info.get('E', float('nan')) / 1e27:.6e}")
 
     return {'out_dir': str(out_dir), 'csv_path': str(csv_path), 'last_m': np.array(m), 'last_U': np.array(U)}

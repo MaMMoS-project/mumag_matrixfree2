@@ -52,7 +52,7 @@ def test_micromagnetic_energies():
     )
     
     # 2. Material Properties (SI units)
-    Ms = 1.27e6
+    Js = 1.6 # Tesla
     K1 = 4.3e6
     A_si = 7.7e-12
     k_easy = np.array([0.0, 0.0, 1.0])
@@ -63,7 +63,7 @@ def test_micromagnetic_energies():
     # mat_id 1 = cube, mat_id 2 = air
     A_lookup = np.array([A_nm, 0.0])
     K1_lookup = np.array([K1, 0.0])
-    Ms_lookup = np.array([Ms, 0.0])
+    Js_lookup = np.array([Js, 0.0])
     k_easy_lookup = np.array([k_easy, k_easy])
     
     # 3. Analytic Setup (SI units)
@@ -84,20 +84,20 @@ def test_micromagnetic_energies():
     
     # --- Other States ---
     m_unif_z = np.tile(np.array([0.0, 0.0, 1.0]), (knt.shape[0], 1))
-    H_ext = 1e5 * np.array([0.0, 0.0, 1.0])
-    E_z_analytic = -MU0 * Ms * V_cube_si * 1e5
+    B_ext = 0.1 * np.array([0.0, 0.0, 1.0]) # 0.1 Tesla
+    E_z_analytic = -(1.0/MU0) * Js * V_cube_si * 0.1
     
     m_aniso_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (knt.shape[0], 1))
     E_an_expected = -K1 * V_cube_si * 0.5 
     
-    E_d_analytic = (1.0/6.0) * MU0 * (Ms**2) * V_cube_si 
+    E_d_analytic = (1.0/(6.0*MU0)) * (Js**2) * V_cube_si 
     
     # 4. Numerical Calculation
-    solve_U = make_solve_U(geom, Ms_lookup, grad_backend='stored_grad_phi', cg_maxiter=2000, cg_tol=1e-10)
+    solve_U = make_solve_U(geom, Js_lookup, grad_backend='stored_grad_phi', cg_maxiter=2000, cg_tol=1e-10)
     
-    def compute_energies(m_nodes, h_ext_vec):
+    def compute_energies(m_nodes, b_ext_vec):
         m_jax = jnp.asarray(m_nodes)
-        h_jax = jnp.asarray(h_ext_vec)
+        b_jax = jnp.asarray(b_ext_vec)
         U_jax = solve_U(m_jax, jnp.zeros(knt.shape[0]))
         
         # Scale for output: divide by 1e27
@@ -108,34 +108,35 @@ def test_micromagnetic_energies():
         e_ex = float(E_only_ex(m_jax, jnp.zeros_like(U_jax), jnp.zeros(3))) / SCALE
         
         # Zeeman only
-        _, E_only_z, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Ms_lookup, k_easy_lookup, grad_backend='stored_grad_phi')
-        e_z = float(E_only_z(m_jax, jnp.zeros_like(U_jax), h_jax)) / SCALE
+        _, E_only_z, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Js_lookup, k_easy_lookup, grad_backend='stored_grad_phi')
+        e_z = float(E_only_z(m_jax, jnp.zeros_like(U_jax), b_jax)) / SCALE
         
         # Aniso only
         _, E_only_an, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), K1_lookup, np.array([0.0, 0.0]), k_easy_lookup, grad_backend='stored_grad_phi')
         e_an = float(E_only_an(m_jax, jnp.zeros_like(U_jax), jnp.zeros(3))) / SCALE
         
         # Demag only
-        _, E_only_d, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Ms_lookup, k_easy_lookup, grad_backend='stored_grad_phi')
+        _, E_only_d, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Js_lookup, k_easy_lookup, grad_backend='stored_grad_phi')
         e_d = float(E_only_d(m_jax, U_jax, jnp.zeros(3))) / SCALE
         
         return e_ex, e_z, e_an, e_d
 
     print(f"Cube Volume (SI): {V_cube_si:.3e} m^3")
-    
+    # Run tests
     ex_n, _, _, _ = compute_energies(m_hel, np.zeros(3))
     print(f"Exchange Analytic:  {E_ex_analytic:.6e}")
     print(f"Exchange Numerical: {ex_n:.6e} (Err: {abs(ex_n-E_ex_analytic)/E_ex_analytic:.2%})")
-    
-    _, ez_n, _, ed_n = compute_energies(m_unif_z, H_ext)
+
+    _, ez_n, _, ed_n = compute_energies(m_unif_z, B_ext)
     print(f"Zeeman Analytic:    {E_z_analytic:.6e}")
     print(f"Zeeman Numerical:   {ez_n:.6e} (Err: {abs(ez_n-E_z_analytic)/abs(E_z_analytic):.2%})")
     print(f"Demag Analytic:     {E_d_analytic:.6e}")
     print(f"Demag Numerical:    {ed_n:.6e} (Err: {abs(ed_n-E_d_analytic)/abs(E_d_analytic):.2%})")
-    
+
     _, _, ea_n, _ = compute_energies(m_aniso_45, np.zeros(3))
     print(f"Aniso Expected:     {E_an_expected:.6e}")
     print(f"Aniso Numerical:    {ea_n:.6e} (Err: {abs(ea_n-E_an_expected)/abs(E_an_expected):.2%})")
+
 
 if __name__ == "__main__":
     test_micromagnetic_energies()

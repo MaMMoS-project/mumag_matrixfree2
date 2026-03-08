@@ -87,7 +87,7 @@ def _prolong(y: Array, agg_id: Array, inv_sqrt_counts: Array) -> Array:
 
 def make_poisson_ops(
     geom: TetGeom,
-    Ms_lookup: Array,
+    Js_lookup: Array,
     *,
     chunk_elems: int = 200_000,
     reg: float = 1e-12,
@@ -97,7 +97,7 @@ def make_poisson_ops(
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
-    Ms_lookup = jnp.asarray(Ms_lookup)
+    Js_lookup = jnp.asarray(Js_lookup)
 
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
@@ -132,13 +132,14 @@ def make_poisson_ops(
             B_c = _get_B(conn_c, s, dtype)
             mask = chunk_mask(E_orig, s, chunk_elems, dtype)
             Ve_eff = Ve_c * mask
-            Ms_c = Ms_lookup[mat_c - 1].astype(dtype)
+            Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
             # M is assumed uniform per element (P0) or averaged from nodes
-            M_avg = Ms_c[:, None] * jnp.mean(m_e, axis=1)
-            # RHS contribution: integral( grad(phi_i) . M ) dV
-            # This corresponds to the weak form of div(H) = -div(M)
-            dot_term = jnp.einsum('eak,ek->ea', B_c, M_avg)
+            # Polarization J = Js * m
+            J_avg = Js_c[:, None] * jnp.mean(m_e, axis=1)
+            # RHS contribution: integral( grad(phi_i) . J ) dV
+            # This corresponds to the potential U where B_dem = -grad(U)
+            dot_term = jnp.einsum('eak,ek->ea', B_c, J_avg)
             contrib = Ve_eff[:, None] * dot_term
             return b_acc.at[conn_c].add(contrib)
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
@@ -246,7 +247,7 @@ def make_pcg_solve(
 
 def make_solve_U(
     geom: TetGeom,
-    Ms_lookup: Array,
+    Js_lookup: Array,
     *,
     chunk_elems: int = 200_000,
     cg_maxiter: int = 400,
@@ -259,7 +260,7 @@ def make_solve_U(
 ):
     apply_A, rhs_from_m, assemble_diag, assemble_E = make_poisson_ops(
         geom,
-        Ms_lookup,
+        Js_lookup,
         chunk_elems=chunk_elems,
         reg=poisson_reg,
         grad_backend=grad_backend,

@@ -100,7 +100,7 @@ def make_minimizer(
     geom: TetGeom,
     A_lookup: Array,
     K1_lookup: Array,
-    Ms_lookup: Array,
+    Js_lookup: Array,
     k_easy_lookup: Array,
     *,
     chunk_elems: int = 200_000,
@@ -117,7 +117,7 @@ def make_minimizer(
         geom,
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
-        Ms_lookup=Ms_lookup,
+        Js_lookup=Js_lookup,
         k_easy_lookup=k_easy_lookup,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
@@ -126,7 +126,7 @@ def make_minimizer(
 
     solve_U = make_solve_U(
         geom,
-        Ms_lookup,
+        Js_lookup,
         chunk_elems=chunk_elems,
         cg_maxiter=cg_maxiter,
         cg_tol=cg_tol,
@@ -137,10 +137,10 @@ def make_minimizer(
         inv_sqrt_counts=inv_sqrt_counts,
     )
 
-    def _bb_step(state: MinimState, H_ext: Array, tau_min: float, tau_max: float):
+    def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float):
         m = state.m
         U = solve_U(m, state.U_prev)
-        E, g_raw = energy_and_grad(m, U, H_ext)
+        E, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw)
         gnorm = jnp.sqrt(jnp.vdot(g_tan, g_tan))
 
@@ -169,7 +169,7 @@ def make_minimizer(
 
     def minimize(
         m0: Array,
-        H_ext: Array,
+        B_ext: Array,
         *,
         gamma: int = 5,
         max_iter: int = 200,
@@ -187,18 +187,18 @@ def make_minimizer(
     ):
         m = jnp.asarray(m0, dtype=jnp.float64)
         m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
-        H_ext = jnp.asarray(H_ext, dtype=jnp.float64)
+        B_ext = jnp.asarray(B_ext, dtype=jnp.float64)
 
         U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
         U = solve_U(m, U0)
-        E0, g_raw = energy_and_grad(m, U, H_ext)
+        E0, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw)
 
         state = MinimState(m=m, U_prev=U, g_prev=g_tan, m_prev=m, tau=jnp.asarray(tau0, jnp.float64), it=jnp.int32(0))
 
         for k in range(gamma):
             U = solve_U(state.m, state.U_prev)
-            E, g_raw = energy_and_grad(state.m, U, H_ext)
+            E, g_raw = energy_and_grad(state.m, U, B_ext)
             g_tan = tangent_grad(state.m, g_raw)
             gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
             if verbose:
@@ -212,7 +212,7 @@ def make_minimizer(
                 U_base=U,
                 solve_U=solve_U,
                 energy_only=energy_only,
-                H_ext=H_ext,
+                B_ext=B_ext,
                 eta1=ls_eta1,
                 eta2=ls_eta2,
                 C=ls_C,
@@ -224,7 +224,7 @@ def make_minimizer(
             state = replace(state, m=m_new, m_prev=state.m, g_prev=g_tan, tau=jnp.asarray(tau, jnp.float64), it=state.it + jnp.int32(1), U_prev=U)
 
         for k in range(gamma, max_iter):
-            state, E, gnorm = bb_step(state, H_ext, tau_min, tau_max)
+            state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max)
             gnorm_f = float(gnorm)
             if verbose and (k % 10 == 0 or gnorm_f <= tol_grad):
                 print(f"[BB {k:03d}] E={float(E):.6e}  |g|={gnorm_f:.3e}  tau={float(state.tau):.3e}")
@@ -233,7 +233,7 @@ def make_minimizer(
                 return state.m, U, {"E": float(E), "gnorm": gnorm_f, "iters": float(k + 1), "phase": 1.0}
 
         U = solve_U(state.m, state.U_prev)
-        E_end = float(energy_only(state.m, U, H_ext))
+        E_end = float(energy_only(state.m, U, B_ext))
         return state.m, U, {"E": E_end, "gnorm": float(gnorm), "iters": float(max_iter), "phase": 2.0}
 
     return minimize
