@@ -294,6 +294,10 @@ def main():
     mask_np = add_shell.find_outer_boundary_mask(conn, knt.shape[0])
     boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
 
+    # Preconditioning: compute lumped node volumes
+    from fem_utils import compute_node_volumes
+    node_vols = compute_node_volumes(geom, chunk_elems=int(args.chunk_elems))
+
     params = LoopParams(
         h_dir=h_dir,
         B_start=float(args.B_start) / Js_ref,
@@ -314,6 +318,7 @@ def main():
         m0=m0,
         params=params,
         V_mag=float(V_mag),
+        node_volumes=node_vols,
         precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),

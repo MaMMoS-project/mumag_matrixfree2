@@ -112,6 +112,7 @@ def make_minimizer(
     Js_lookup: Array,
     k_easy_lookup: Array,
     V_mag: float,
+    node_volumes: Array,
     *,
     precond_type: str = 'jacobi',
     chunk_elems: int = 200_000,
@@ -122,6 +123,9 @@ def make_minimizer(
     grad_backend: GradBackend = 'stored_grad_phi',
     boundary_mask: Optional[Array] = None,
 ):
+    # inv_V_rel: node-wise scaling to go from (total_energy_grad / V_mag)
+    # to (local_energy_density_grad). This is a diagonal preconditioner.
+    inv_V_rel = jnp.where(node_volumes > 0, V_mag / node_volumes, 0.0)[:, None]
 
     energy_and_grad, energy_only, _ = make_energy_kernels(
         geom,
@@ -152,7 +156,10 @@ def make_minimizer(
         m = state.m
         U = solve_U(m, state.U_prev)
         E, g_raw = energy_and_grad(m, U, B_ext)
-        g_tan = tangent_grad(m, g_raw)
+        
+        # Apply preconditioning: g_prec is approximately the local energy density gradient
+        g_prec = g_raw * inv_V_rel
+        g_tan = tangent_grad(m, g_prec)
         gnorm = jnp.sqrt(jnp.vdot(g_tan, g_tan))
 
         def compute_tau(_):
@@ -170,7 +177,7 @@ def make_minimizer(
 
         tau = lax.cond(state.it > 0, compute_tau, lambda _: jnp.clip(state.tau, tau_min, tau_max), operand=None)
 
-        H = -jnp.cross(m, g_raw)
+        H = -jnp.cross(m, g_prec)
         m_new = cayley_update(m, H, tau)
 
         new_state = MinimState(m=m_new, U_prev=U, g_prev=g_tan, m_prev=m, tau=tau, it=state.it + jnp.int32(1))
@@ -203,21 +210,23 @@ def make_minimizer(
         U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
         U = solve_U(m, U0)
         E0, g_raw = energy_and_grad(m, U, B_ext)
-        g_tan = tangent_grad(m, g_raw)
+        g_prec = g_raw * inv_V_rel
+        g_tan = tangent_grad(m, g_prec)
 
         state = MinimState(m=m, U_prev=U, g_prev=g_tan, m_prev=m, tau=jnp.asarray(tau0, jnp.float64), it=jnp.int32(0))
 
         for k in range(gamma):
             U = solve_U(state.m, state.U_prev)
             E, g_raw = energy_and_grad(state.m, U, B_ext)
-            g_tan = tangent_grad(state.m, g_raw)
+            g_prec = g_raw * inv_V_rel
+            g_tan = tangent_grad(state.m, g_prec)
             gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
             if verbose:
                 print(f"[LS {k:03d}] E={float(E):.6e}  |g|={gnorm:.3e}")
             if gnorm <= tol_grad:
                 return state.m, U, {"E": float(E), "gnorm": gnorm, "iters": float(k), "phase": 0.0}
 
-            H = -jnp.cross(state.m, g_raw)
+            H = -jnp.cross(state.m, g_prec)
             tau = armijo_weak_line_search(
                 state.m, g_tan, H, float(E),
                 U_base=U,

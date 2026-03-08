@@ -70,6 +70,9 @@ def test_relaxation():
     V_mag_nm = np.sum(volume[is_mag])
     
     # 3. Initialize Minimizer
+    from fem_utils import compute_node_volumes
+    node_vols = compute_node_volumes(geom, chunk_elems=100000)
+
     minimize = make_minimizer(
         geom,
         A_lookup=A_lookup,
@@ -77,6 +80,7 @@ def test_relaxation():
         Js_lookup=Js_lookup,
         k_easy_lookup=k_easy_lookup,
         V_mag=float(V_mag_nm),
+        node_volumes=node_vols,
         grad_backend='stored_grad_phi',
         boundary_mask=boundary_mask,
         cg_maxiter=1000,
