@@ -80,6 +80,15 @@ def find_outer_surface_tris(ijk: np.ndarray) -> np.ndarray:
     return faces[cnt[inv] == 1]
 
 
+def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
+    """Return a boolean mask (N,) where 0.0 means the node is on the outer boundary."""
+    tris = find_outer_surface_tris(ijk)
+    boundary_vids = np.unique(tris)
+    mask = np.ones(num_nodes, dtype=np.float64)
+    mask[boundary_vids] = 0.0
+    return mask
+
+
 def weld_points(
     knt: np.ndarray,
     ijk: np.ndarray,

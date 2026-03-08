@@ -111,6 +111,7 @@ def make_minimizer(
     grad_backend: GradBackend = 'stored_grad_phi',
     agg_id: Optional[Array] = None,
     inv_sqrt_counts: Optional[Array] = None,
+    boundary_mask: Optional[Array] = None,
 ):
 
     energy_and_grad, energy_only, _ = make_energy_kernels(
@@ -135,6 +136,7 @@ def make_minimizer(
         enforce_zero_mean=True,
         agg_id=agg_id,
         inv_sqrt_counts=inv_sqrt_counts,
+        boundary_mask=boundary_mask,
     )
 
     def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float):

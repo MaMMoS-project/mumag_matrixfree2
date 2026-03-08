@@ -195,6 +195,7 @@ def make_pcg_solve(
     agg_id: Optional[Array] = None,
     inv_sqrt_counts: Optional[Array] = None,
     E_chol: Optional[Array] = None,
+    boundary_mask: Optional[Array] = None,
 ):
     tol = float(tol)
     use_coarse = (agg_id is not None) and (inv_sqrt_counts is not None) and (E_chol is not None)
@@ -209,13 +210,25 @@ def make_pcg_solve(
             y = jsp.solve_triangular(E_chol.astype(dtype), rc, lower=True)
             y = jsp.solve_triangular(E_chol.astype(dtype), y, lower=True, trans='T')
             z = z + _prolong(y, agg_id, inv_sqrt_counts.astype(dtype))
+        
+        if boundary_mask is not None:
+            z = z * boundary_mask
         return z
 
     def solve(b: Array, x0: Array) -> Array:
         dtype = b.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
-        x = x0
+        
+        if boundary_mask is not None:
+            b = b * boundary_mask
+            x = x0 * boundary_mask
+        else:
+            x = x0
+
         r = b - apply_A(x)
+        if boundary_mask is not None:
+            r = r * boundary_mask
+            
         z = apply_Minv(r)
         p = z
         rz = jnp.dot(r, z)
@@ -228,6 +241,9 @@ def make_pcg_solve(
         def body_fun(state):
             it, x, r, z, p, rz = state
             Ap = apply_A(p)
+            if boundary_mask is not None:
+                Ap = Ap * boundary_mask
+                
             alpha = rz / (jnp.dot(p, Ap) + eps)
             x = x + alpha * p
             r = r - alpha * Ap
@@ -256,6 +272,7 @@ def make_solve_U(
     enforce_zero_mean: bool = True,
     agg_id: Optional[Array] = None,
     inv_sqrt_counts: Optional[Array] = None,
+    boundary_mask: Optional[Array] = None,
 ):
     apply_A, rhs_from_m, assemble_diag, assemble_E = make_poisson_ops(
         geom,
@@ -286,6 +303,7 @@ def make_solve_U(
         agg_id=agg_id,
         inv_sqrt_counts=inv_sqrt_counts,
         E_chol=E_chol,
+        boundary_mask=boundary_mask,
     )
 
     @jax.jit

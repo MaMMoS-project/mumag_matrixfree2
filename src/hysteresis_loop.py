@@ -80,6 +80,7 @@ def run_hysteresis_loop(
     poisson_reg: float = 1e-12,
     agg_id: Optional[np.ndarray] = None,
     inv_sqrt_counts: Optional[np.ndarray] = None,
+    boundary_mask: Optional[jnp.ndarray] = None,
 ) -> Dict[str, object]:
 
     out_dir = ensure_dir(params.out_dir)
@@ -106,6 +107,7 @@ def run_hysteresis_loop(
         grad_backend=grad_backend,
         agg_id=agg_id_j,
         inv_sqrt_counts=inv_sqrt_j,
+        boundary_mask=boundary_mask,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)

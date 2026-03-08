@@ -2,6 +2,7 @@
 
 Verification script for micromagnetic energy terms with dimensionless scaling.
 Compares numerical energy with analytic solutions.
+Uses add_shell pipeline for airbox.
 """
 
 from __future__ import annotations
@@ -16,34 +17,49 @@ from fem_utils import TetGeom
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
 from energy_kernels import make_energy_kernels, MU0
 from poisson_solve import make_solve_U
+import add_shell
 
 def test_micromagnetic_energies():
-    # 1. Setup Geometry (20 nm cube inside 60 nm airbox)
+    # 1. Setup Geometry (20 nm cube + added shell)
     L_cube = 20.0  # units: nm
-    L_air = 60.0   # units: nm
-    h = 2.5        # units: nm
+    h = 2.0        # units: nm
     
     import mesh
-    # Create the large airbox first (coordinates in nm)
-    knt, ijk, _, _ = mesh.run_single_solid_mesher(
-        geom='box', extent=f"{L_air},{L_air},{L_air}", h=h, 
+    # Create the cube (coordinates in nm)
+    knt0, ijk0, _, _ = mesh.run_single_solid_mesher(
+        geom='box', extent=f"{L_cube},{L_cube},{L_cube}", h=h, 
         backend='grid', no_vis=True, return_arrays=True
     )
     
-    # Manually assign mat_id: 1 for cube, 2 for air
+    # Temporarily save to NPZ because add_shell_pipeline expects a path
+    tmp_path = "tmp_cube_for_test.npz"
+    np.savez(tmp_path, knt=knt0, ijk=ijk0)
+    
+    # Add shell (airbox)
+    knt, ijk = add_shell.run_add_shell_pipeline(
+        in_npz=tmp_path,
+        layers=8,
+        K=1.4,
+        h0=h,
+        verbose=False
+    )
+    
+    # Cleanup tmp file
+    if Path(tmp_path).exists():
+        Path(tmp_path).unlink()
+
+    # Split ijk and mat_id
     tets = ijk[:, :4].astype(np.int64)
-    centers = knt[tets].mean(axis=1)
-    
-    half = L_cube / 2.0
-    is_cube_tet = (np.abs(centers[:, 0]) <= half + 1e-15) & \
-                  (np.abs(centers[:, 1]) <= half + 1e-15) & \
-                  (np.abs(centers[:, 2]) <= half + 1e-15)
-    
-    mat_id = np.where(is_cube_tet, 1, 2).astype(np.int32)
+    mat_id = ijk[:, 4].astype(np.int32)
+    G = 1 # One magnetic material
     
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
     
+    # Dirichlet boundary mask (U=0 at outer boundary)
+    mask_np = add_shell.find_outer_boundary_mask(tets, knt.shape[0])
+    boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
+
     geom = TetGeom(
         conn=jnp.asarray(conn32, dtype=jnp.int32),
         volume=jnp.asarray(volume, dtype=jnp.float64),
@@ -66,18 +82,20 @@ def test_micromagnetic_energies():
     K1_red = K1 / Kd
     Js_red = 1.0 # Js / Js_ref
     
-    # mat_id 1 = cube, mat_id 2 = air
+    # mat_id 1 = cube, mat_id 2 = air (shell)
+    # The pipeline assigns mat_id = max(body_mat) + 1 to shell
     A_lookup = np.array([A_red, 0.0])
     K1_lookup = np.array([K1_red, 0.0])
     Js_lookup = np.array([Js_red, 0.0])
     k_easy_lookup = np.array([k_easy, k_easy])
     
     # Volume of magnet in nm^3
-    V_mag_nm = L_cube**3
+    is_mag = (mat_id <= G)
+    V_mag_nm = np.sum(volume[is_mag])
     
     # 3. Analytic Setup (SI units)
     L_si = L_cube * 1e-9
-    V_cube_si = L_si**3
+    V_cube_si = V_mag_nm * 1e-27 # Use actual mesh volume
     
     # --- Exchange ---
     k_wave_nm = np.pi / L_cube
@@ -94,13 +112,10 @@ def test_micromagnetic_energies():
     E_d_analytic_si = (1.0/(6.0*MU0_SI)) * (Js**2) * V_cube_si 
     
     m_aniso_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (knt.shape[0], 1))
-    E_an_analytic_si = K1 * V_cube_si * 0.5 
-    # Our internal aniso is -K1 * cos^2(theta).
-    # SI: E_an = -K1 * integral( (m.k)^2 ) dV
     E_an_expected_si = -K1 * V_cube_si * 0.5
     
     # 4. Numerical Calculation (Dimensionless)
-    solve_U = make_solve_U(geom, Js_lookup, grad_backend='stored_grad_phi', cg_maxiter=2000, cg_tol=1e-10)
+    solve_U = make_solve_U(geom, Js_lookup, grad_backend='stored_grad_phi', cg_maxiter=2000, cg_tol=1e-10, boundary_mask=boundary_mask)
     
     def compute_energies(m_nodes, b_ext_si):
         m_jax = jnp.asarray(m_nodes)

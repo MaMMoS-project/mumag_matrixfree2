@@ -289,6 +289,10 @@ def main():
     h_dir = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
 
+    # Dirichlet boundary mask (U=0 at outer boundary)
+    mask_np = add_shell.find_outer_boundary_mask(conn, knt.shape[0])
+    boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
+
     params = LoopParams(
         h_dir=h_dir,
         B_start=float(args.B_start) / Js_ref,
@@ -316,6 +320,7 @@ def main():
         poisson_reg=float(args.poisson_reg),
         agg_id=agg_id,
         inv_sqrt_counts=inv_sqrt_counts,
+        boundary_mask=boundary_mask,
     )
 
 
