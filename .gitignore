@@ -1,5 +1,23 @@
+# C++ build artifacts
+build/
+deps/
+bin/
+
+# Python artifacts
 __pycache__/
-*.pyc
-*.npz
+*.py[cod]
+*$py.class
+
+# Temporary/Output files
 *.vtu
-hard_axis_loop/
+*.npz
+*.csv
+*.png
+*.pdf
+*.log
+*.tmp
+*.trace.json.gz
+
+# IDEs
+.vscode/
+.idea/
