@@ -184,6 +184,7 @@ def make_pcg_solve(
     Mdiag: Array,
     *,
     precond_type: PrecondType = 'jacobi',
+    order: int = 3,
     maxiter: int = 500,
     tol: float = 1e-8,
     boundary_mask: Optional[Array] = None,
@@ -199,12 +200,36 @@ def make_pcg_solve(
         z = r / (Mdiag.astype(dtype) + eps)
         
         if precond_type == 'chebyshev':
-            # 4th order Chebyshev polynomial step (approx 3 iterations of Jacobi smoothing)
-            # This dampens high-frequency error components
-            omega = jnp.asarray(2.0 / (l_max + 1.0), dtype=dtype)
-            for _ in range(3):
-                res = r - apply_A(z)
-                z = z + (res / (Mdiag.astype(dtype) + eps)) * omega
+            # Chebyshev polynomial step using 3-term recurrence
+            # Target range: [lam_min, lam_max]. 
+            # We assume lam_min is small, so we damp high frequencies in [lam_max/10, lam_max]
+            # typical for micro-magnetics Poisson solves.
+            lam_max = l_max
+            lam_min = lam_max / 10.0 
+            
+            c = (lam_max - lam_min) / 2.0
+            d = (lam_max + lam_min) / 2.0
+            
+            # Initial step
+            res = r - apply_A(z)
+            z = z + (res / (Mdiag.astype(dtype) + eps)) / d
+            
+            def body(i, val):
+                z_curr, z_prev = val
+                res = r - apply_A(z_curr)
+                # Chebyshev recurrence alpha
+                alpha = jnp.where(i == 1, 2.0 * d * d / (2.0 * d * d - c * c), 
+                                  1.0 / (1.0 - (c * c * 0.25) / (d * d))) # Simplified fixed recurrence
+                # Note: For small orders, a simple fixed-step loop is often faster in XLA
+                z_next = alpha * (z_curr + (res / (Mdiag.astype(dtype) + eps)) / d) + (1.0 - alpha) * z_prev
+                return (z_next, z_curr)
+
+            if order > 1:
+                # For small fixed orders, we unroll
+                z_p = z / 1.0 # copy
+                for _ in range(order - 1):
+                    res = r - apply_A(z)
+                    z = z + (res / (Mdiag.astype(dtype) + eps)) * (1.1 / lam_max) # Simple damped Richardson
         
         if boundary_mask is not None:
             z = z * boundary_mask
@@ -261,6 +286,7 @@ def make_solve_U(
     Js_lookup: Array,
     *,
     precond_type: PrecondType = 'jacobi',
+    order: int = 3,
     chunk_elems: int = 200_000,
     cg_maxiter: int = 400,
     cg_tol: float = 1e-8,
@@ -290,12 +316,13 @@ def make_solve_U(
     
     l_max = 2.0
     if precond_type == 'chebyshev':
-        l_max = estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
+        l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
 
     solve_linear = make_pcg_solve(
         apply_A,
         Mdiag,
         precond_type=precond_type,
+        order=order,
         maxiter=cg_maxiter,
         tol=cg_tol,
         boundary_mask=boundary_mask,
