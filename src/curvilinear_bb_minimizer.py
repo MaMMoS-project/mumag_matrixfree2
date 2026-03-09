@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Callable, Dict, Literal, Optional
+import time
 
 import jax
 import jax.numpy as jnp
@@ -160,6 +161,65 @@ def make_minimizer(
         assembly=energy_assembly,
     )
 
+    def jax_armijo_line_search(
+        m: Array,
+        pg: Array,
+        H_for_update: Array,
+        E0: Array,
+        U_base: Array,
+        B_ext: Array,
+        phi_tol: Array,
+        eta1: float,
+        eta2: float,
+        C: float,
+        c: float,
+        s0: float,
+        max_evals: int,
+    ) -> Array:
+        # pg is expected to be < 0 for descent
+        
+        def D(s):
+            m_trial = cayley_update(m, H_for_update, s)
+            U_trial = solve_U(m_trial, U_base, phi_tol)
+            E_trial = energy_only(m_trial, U_trial, B_ext)
+            return (E_trial - E0) / (s * pg + 1e-30)
+
+        # Expansion phase
+        def exp_cond(state):
+            s, s_min, it, done = state
+            return (it < max_evals) & (~done)
+
+        def exp_body(state):
+            s, s_min, it, done = state
+            d = D(s)
+            stop = jnp.abs(1.0 - d) >= eta2
+            s_next = jnp.where(stop, s, C * s)
+            s_min_next = jnp.where(stop, s_min, s)
+            return (s_next, s_min_next, it + 1, stop)
+
+        s_start = jnp.asarray(s0, dtype=m.dtype)
+        init_exp = (s_start, jnp.zeros_like(s_start), jnp.int32(0), jnp.array(False))
+        s_exp, s_min_exp, _, _ = lax.while_loop(exp_cond, exp_body, init_exp)
+
+        # Contraction phase
+        def con_cond(state):
+            s, it, done = state
+            return (it < max_evals) & (~done)
+
+        def con_body(state):
+            s, it, done = state
+            d = D(s)
+            stop = d >= eta1
+            s_next = jnp.where(stop, s, s_min_exp + c * (s - s_min_exp))
+            return (s_next, it + 1, stop)
+
+        init_con = (s_exp, jnp.int32(0), jnp.array(False))
+        s_final, _, _ = lax.while_loop(con_cond, con_body, init_con)
+        
+        return jnp.where(pg >= 0, 0.0, s_final)
+
+    jit_ls = jax.jit(jax_armijo_line_search, static_argnums=(7, 8, 9, 10, 11, 12))
+
     def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float, cg_tol_base: float):
         m = state.m
         # Dynamic tolerance for Poisson solver during BB steps
@@ -201,6 +261,7 @@ def make_minimizer(
         m0: Array,
         B_ext: Array,
         *,
+        U0: Optional[Array] = None,
         gamma: int = 5,
         max_iter: int = 200,
         tau_f: float = 1e-6,
@@ -220,20 +281,15 @@ def make_minimizer(
         m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
         B_ext = jnp.asarray(B_ext, dtype=jnp.float64)
 
-        U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
-        # Use initial loose solve to get E for deriving cg_tol_base
-        U_init = solve_U(m, U0, 1e-4)
-        E_init, _ = energy_and_grad(m, U_init, B_ext)
-
         # Derived Poisson base tolerance: must satisfy all stopping criteria
-        # u1: energy change ~ tau_f
-        # u3: gradient ratio ~ tau_f^(1/3) * (1 + |E|)
-        # u4: absolute gradient ~ eps_a
-        threshold_u3 = (tau_f**(1/3.0)) * (1.0 + abs(E_init))
-        cg_tol_base = float(min(tau_f, threshold_u3 * 0.1, eps_a * 0.1))
+        # We simplify the u3 criterion by assuming energy is O(1) or higher
+        # (which is typical for these units) or just using a safe tight bound.
+        cg_tol_base = float(min(tau_f * 0.1, eps_a * 0.1))
 
-        # Perform high-precision initial solve
-        U = solve_U(m, U_init, cg_tol_base)
+        # Perform initial tight solve using provided U0 or zeros
+        if U0 is None:
+            U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
+        U = solve_U(m, U0, cg_tol_base)
         E_prev, g_raw = energy_and_grad(m, U, B_ext)
         g_prec = g_raw * inv_V_rel
         g_tan = tangent_grad(m, g_prec)
@@ -242,7 +298,11 @@ def make_minimizer(
         state = MinimState(m=m, U_prev=U, g_prev=g_tan, m_prev=m, tau=jnp.asarray(tau0, jnp.float64), it=jnp.int32(0))
         history = []
 
+        t_ls_total = 0.0
+        t_bb_total = 0.0
+
         for k in range(gamma):
+            start_ls = time.time()
             # Dynamic tolerance for Poisson solver during line search
             phi_tol = float(max(cg_tol_base, min(0.1 * gnorm, 1e-2)))
             
@@ -270,29 +330,29 @@ def make_minimizer(
             if verbose:
                 print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}")
             if converged:
-                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k), "phase": 0.0, "history": history}
+                t_ls_total += time.time() - start_ls
+                if verbose: print(f"  Line Search Total Time: {t_ls_total:.3f}s")
+                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k), "phase": 0.0, "history": history, "t_ls": t_ls_total, "t_bb": t_bb_total}
 
             H = -jnp.cross(state.m, g_prec)
-            tau = armijo_weak_line_search(
-                state.m, pg, H, float(E),
-                U_base=U,
-                solve_U=solve_U,
-                energy_only=energy_only,
-                B_ext=B_ext,
-                phi_tol=phi_tol,
-                eta1=ls_eta1,
-                eta2=ls_eta2,
-                C=ls_C,
-                c=ls_c,
-                s0=ls_s0,
-                max_evals=ls_max_evals,
+            
+            # Using the JIT line search to avoid CPU sync
+            tau = jit_ls(
+                state.m, jnp.asarray(pg), H, jnp.asarray(E),
+                U, B_ext, jnp.asarray(phi_tol),
+                ls_eta1, ls_eta2, ls_C, ls_c, ls_s0, ls_max_evals
             )
-            m_new = cayley_update(state.m, H, jnp.asarray(tau, jnp.float64))
+
+            m_new = cayley_update(state.m, H, tau)
             E_prev = E
-            state = replace(state, m=m_new, m_prev=state.m, g_prev=g_tan, tau=jnp.asarray(tau, jnp.float64), it=state.it + jnp.int32(1), U_prev=U)
+            state = replace(state, m=m_new, m_prev=state.m, g_prev=g_tan, tau=tau, it=state.it + jnp.int32(1), U_prev=U)
             gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
+            t_ls_total += time.time() - start_ls
+
+        if verbose: print(f"  Line Search Total Time: {t_ls_total:.3f}s")
 
         for k in range(gamma, max_iter):
+            start_bb = time.time()
             state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max, cg_tol_base)
             # bb_step returns 2-norm, we need inf-norm for consistent criteria
             gnorm_inf = float(jnp.max(jnp.abs(state.g_prev))) # state.g_prev is the tangent gradient of the new state m
@@ -309,16 +369,20 @@ def make_minimizer(
 
             if verbose and (k % 10 == 0 or converged):
                 print(f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  tau={float(state.tau):.3e}")
+            
+            t_bb_total += time.time() - start_bb
             if converged:
                 U = solve_U(state.m, state.U_prev, cg_tol_base)
-                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k + 1), "phase": 1.0, "history": history}
+                if verbose: print(f"  BB Phase Total Time: {t_bb_total:.3f}s")
+                return state.m, U, {"E": float(E), "gnorm": gnorm_inf, "iters": float(k + 1), "phase": 1.0, "history": history, "t_ls": t_ls_total, "t_bb": t_bb_total}
             
             E_prev = E
 
         U = solve_U(state.m, state.U_prev, cg_tol_base)
         E_end = float(energy_only(state.m, U, B_ext))
         gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
-        return state.m, U, {"E": E_end, "gnorm": gnorm_inf, "iters": float(max_iter), "phase": 2.0, "history": history}
+        if verbose: print(f"  BB Phase Total Time: {t_bb_total:.3f}s")
+        return state.m, U, {"E": E_end, "gnorm": gnorm_inf, "iters": float(max_iter), "phase": 2.0, "history": history, "t_ls": t_ls_total, "t_bb": t_bb_total}
 
 
     return minimize

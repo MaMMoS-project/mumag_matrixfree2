@@ -68,11 +68,11 @@ def run_profile():
     m0_vec = np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0)
     m0 = np.tile(m0_vec, (knt.shape[0], 1))
     
-    # One field step
+    # One field step - updated to 3 steps: 2 warmups, 1 profiled
     params = LoopParams(
         h_dir=np.array([1.0, 0.0, 0.0]),
-        B_start=1.0 / Js_ref, B_end=1.1 / Js_ref, dB=1.0,
-        loop=False, out_dir='prof_large_out', snapshot_every=0, verbose=False
+        B_start=1.0 / Js_ref, B_end=1.2 / Js_ref, dB=0.1,
+        loop=False, out_dir='prof_large_out', snapshot_every=0, verbose=True
     )
     
     node_vols = compute_node_volumes(geom, chunk_elems=100000)
@@ -81,19 +81,33 @@ def run_profile():
 
     for mode in ['scatter', 'segment_sum']:
         print(f"\n--- Benchmarking Mode: {mode} ---")
-        # Warm up
+        
+        # We'll use a modified run_hysteresis_loop or manual steps to control profiling
+        # For simplicity, let's modify run_hysteresis_loop locally or just run it once to warm up JIT
+        print("Warming up JIT...")
         run_hysteresis_loop(points=knt, geom=geom, A_lookup=A_lookup/Kd_ref, K1_lookup=K1_lookup/Kd_ref, 
                             Js_lookup=Js_lookup/Js_ref, k_easy_lookup=k_easy_lookup, m0=m0, 
                             params=params, V_mag=float(V_mag), node_volumes=node_vols, 
                             boundary_mask=boundary_mask, energy_assembly=mode, precond_type='jacobi')
         
-        # Timed run
-        start_t = time.time()
-        run_hysteresis_loop(points=knt, geom=geom, A_lookup=A_lookup/Kd_ref, K1_lookup=K1_lookup/Kd_ref, 
-                            Js_lookup=Js_lookup/Js_ref, k_easy_lookup=k_easy_lookup, m0=m0, 
-                            params=params, V_mag=float(V_mag), node_volumes=node_vols, 
-                            boundary_mask=boundary_mask, energy_assembly=mode, precond_type='jacobi')
-        end_t = time.time()
+        # Profiled run (repeat exactly the same to ensure cache hits)
+        log_dir = f"tensorboard_trace_{mode}"
+        print(f"Starting trace for {mode} in {log_dir}...")
+        
+        # To TRULY avoid compilation in the trace, we want the trace to start AFTER 
+        # the first call to run_hysteresis_loop finishes.
+        with jax.profiler.trace(log_dir):
+            start_t = time.time()
+            res = run_hysteresis_loop(points=knt, geom=geom, A_lookup=A_lookup/Kd_ref, K1_lookup=K1_lookup/Kd_ref, 
+                                Js_lookup=Js_lookup/Js_ref, k_easy_lookup=k_easy_lookup, m0=m0, 
+                                params=params, V_mag=float(V_mag), node_volumes=node_vols, 
+                                boundary_mask=boundary_mask, energy_assembly=mode, precond_type='jacobi')
+            jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, 'block_until_ready') else x, res) 
+            end_t = time.time()
+        
+        results[mode] = end_t - start_t
+        print(f"Mode {mode} finished in {results[mode]:.3f} s.")
+        
         results[mode] = end_t - start_t
         print(f"Mode {mode} finished in {results[mode]:.3f} s.")
 

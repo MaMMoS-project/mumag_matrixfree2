@@ -147,6 +147,7 @@ def run_hysteresis_loop(
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
     total_time = 0.0
+    U = None
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
         
@@ -154,6 +155,7 @@ def run_hysteresis_loop(
         m, U, info = minimize(
             m,
             B_ext,
+            U0=U,
             gamma=params.gamma,
             max_iter=params.max_iter,
             tau_f=params.tau_f,

@@ -19,6 +19,8 @@ from hysteresis_loop import LoopParams, run_hysteresis_loop
 import add_shell
 import mesh
 
+import time
+
 def test_hysteresis_x_axis():
     # 1. Setup Geometry (20 nm cube + 6 layer shell)
     L_cube = 20.0  # nm
@@ -116,22 +118,29 @@ def test_hysteresis_x_axis():
     
     node_vols = compute_node_volumes(geom, chunk_elems=100000)
     
-    # 5. Run Loop
-    print("\nStarting field sweep along X-axis...")
-    res = run_hysteresis_loop(
-        points=knt,
-        geom=geom,
-        A_lookup=A_red,
-        K1_lookup=K1_red,
-        Js_lookup=Js_red,
-        k_easy_lookup=k_easy_lookup,
-        m0=m0,
-        params=params,
-        V_mag=float(V_mag),
-        node_volumes=node_vols,
-        grad_backend='stored_grad_phi',
-        boundary_mask=boundary_mask
-    )
+    # 5. Run Loop with Profiling
+    log_dir = "tensorboard_trace_test_x"
+    print(f"\nStarting Profiled Run (log_dir={log_dir})...")
+    with jax.profiler.trace(log_dir):
+        start_t = time.time()
+        res = run_hysteresis_loop(
+            points=knt,
+            geom=geom,
+            A_lookup=A_red,
+            K1_lookup=K1_red,
+            Js_lookup=Js_red,
+            k_easy_lookup=k_easy_lookup,
+            m0=m0,
+            params=params,
+            V_mag=float(V_mag),
+            node_volumes=node_vols,
+            grad_backend='stored_grad_phi',
+            boundary_mask=boundary_mask
+        )
+        jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, 'block_until_ready') else x, res)
+        end_t = time.time()
+    
+    print(f"Profiled run finished in {end_t - start_t:.3f} s.")
     
     # 6. Analysis
     csv_path = Path(res['csv_path'])
