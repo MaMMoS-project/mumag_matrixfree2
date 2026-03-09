@@ -23,8 +23,8 @@ import add_shell
 import mesh
 
 def benchmark_poisson():
-    # 1. Setup Geometry (20 nm cube + 8 layer shell)
-    L_cube = 20.0
+    # 1. Setup Geometry (60 nm cube + 8 layer shell)
+    L_cube = 60.0
     h = 2.0
     
     print(f"Creating mesh: cube={L_cube}nm, h={h}nm...")
@@ -67,10 +67,44 @@ def benchmark_poisson():
     # 4. PCG Benchmark Loop
     def solve_reporting(precond_type="jacobi"):
         order = 3
+        apply_Minv_amg = None
         
+        if precond_type == "amg":
+            print("Setting up AMG hierarchy on CPU (PyAMG)...")
+            from amg_utils import assemble_poisson_matrix_cpu, setup_amg_hierarchy, csr_to_jax_bCOO, make_jax_amg_vcycle
+            A_cpu = assemble_poisson_matrix_cpu(
+                np.array(geom.conn), 
+                np.array(geom.volume), 
+                np.array(geom.grad_phi), 
+                boundary_mask=np.array(boundary_mask),
+                reg=1e-12
+            )
+            hierarchy_cpu = setup_amg_hierarchy(A_cpu)
+            hierarchy_jax = []
+            for i, level in enumerate(hierarchy_cpu):
+                level_dict = {
+                    'P': csr_to_jax_bCOO(level['P']),
+                    'R': csr_to_jax_bCOO(level['R']),
+                    'A_sparse': csr_to_jax_bCOO(level['A']),
+                    'Mdiag': jnp.asarray(level['A'].diagonal())
+                }
+                if i == len(hierarchy_cpu) - 1:
+                    level_dict['A_dense'] = jnp.asarray(level['A'].todense())
+                hierarchy_jax.append(level_dict)
+            
+            # Simple wrapper for matrix-free apply_A that handles boundary_mask
+            def apply_A_masked(v):
+                return apply_A(v) * boundary_mask
+                
+            vcycle = make_jax_amg_vcycle(apply_A_masked, Mdiag, hierarchy_jax)
+            apply_Minv_amg = vcycle
+
         def apply_Minv(r):
             if precond_type == "none":
                 return r * boundary_mask
+            
+            if precond_type == "amg":
+                return apply_Minv_amg(r)
             
             # Base Jacobi
             z0 = (r / (Mdiag + 1e-30)) * boundary_mask
@@ -132,7 +166,7 @@ def benchmark_poisson():
     print("\nStarting Poisson Benchmarks (Tolerance 1e-10):")
     print("-" * 60)
     
-    for pt in ["none", "jacobi", "chebyshev"]:
+    for pt in ["none", "jacobi", "chebyshev", "amg"]:
         it, duration = solve_reporting(pt)
         name = pt.capitalize()
         print(f"{name:<12}: {it:4d} iterations, {duration:.3f} s")

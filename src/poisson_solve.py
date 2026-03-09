@@ -23,7 +23,7 @@ from fem_utils import TetGeom, pad_geom_for_chunking, chunk_mask, assemble_scatt
 
 Array = jnp.ndarray
 GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
-PrecondType = Literal['jacobi', 'chebyshev']
+PrecondType = Literal['jacobi', 'chebyshev', 'amg']
 Assembly = Literal['scatter', 'segment_sum']
 
 _GRAD_HAT = jnp.array([
@@ -184,6 +184,7 @@ def make_pcg_solve(
     Mdiag: Array,
     *,
     precond_type: PrecondType = 'jacobi',
+    apply_Minv_amg: Optional[Callable[[Array], Array]] = None,
     order: int = 3,
     maxiter: int = 500,
     tol: float = 1e-8,
@@ -193,6 +194,9 @@ def make_pcg_solve(
     default_tol = float(tol)
 
     def apply_Minv(r: Array) -> Array:
+        if precond_type == 'amg' and apply_Minv_amg is not None:
+            return apply_Minv_amg(r)
+            
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
         
@@ -315,13 +319,51 @@ def make_solve_U(
     Mdiag = assemble_diag(N)
     
     l_max = 2.0
+    apply_Minv_amg = None
+    
     if precond_type == 'chebyshev':
         l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
+    
+    elif precond_type == 'amg':
+        # Setup AMG on CPU
+        print("Setting up AMG hierarchy on CPU (PyAMG)...")
+        from amg_utils import assemble_poisson_matrix_cpu, setup_amg_hierarchy, csr_to_jax_bCOO, make_jax_amg_vcycle
+        import numpy as np
+        
+        # We need the full grad_phi for assembly. If it's padded, we slice it.
+        # For simplicity, we assume grad_phi is available in geom.
+        A_cpu = assemble_poisson_matrix_cpu(
+            np.array(geom.conn), 
+            np.array(geom.volume), 
+            np.array(geom.grad_phi), 
+            boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
+            reg=poisson_reg
+        )
+        
+        hierarchy_cpu = setup_amg_hierarchy(A_cpu)
+        
+        # Move hierarchy to JAX
+        hierarchy_jax = []
+        for i, level in enumerate(hierarchy_cpu):
+            level_dict = {
+                'P': csr_to_jax_bCOO(level['P']),
+                'R': csr_to_jax_bCOO(level['R']),
+                'A_sparse': csr_to_jax_bCOO(level['A']),
+                'Mdiag': jnp.asarray(level['A'].diagonal())
+            }
+            # For the coarsest level, also store as dense matrix for exact solve
+            if i == len(hierarchy_cpu) - 1:
+                level_dict['A_dense'] = jnp.asarray(level['A'].todense())
+            
+            hierarchy_jax.append(level_dict)
+            
+        apply_Minv_amg = make_jax_amg_vcycle(apply_A, Mdiag, hierarchy_jax)
 
     solve_linear = make_pcg_solve(
         apply_A,
         Mdiag,
         precond_type=precond_type,
+        apply_Minv_amg=apply_Minv_amg,
         order=order,
         maxiter=cg_maxiter,
         tol=cg_tol,

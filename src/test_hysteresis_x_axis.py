@@ -22,8 +22,8 @@ import mesh
 import time
 
 def test_hysteresis_x_axis():
-    # 1. Setup Geometry (20 nm cube + 6 layer shell)
-    L_cube = 20.0  # nm
+    # 1. Setup Geometry (40 nm cube + 6 layer shell)
+    L_cube = 40.0  # nm
     h = 2.0        # nm
     
     print(f"Creating mesh: {L_cube}nm cube, h={h}nm...")
@@ -136,7 +136,7 @@ def test_hysteresis_x_axis():
             node_volumes=node_vols,
             grad_backend='stored_grad_phi',
             boundary_mask=boundary_mask,
-            precond_type='chebyshev',
+            precond_type='amg',
             order=3
         )
         jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, 'block_until_ready') else x, res)
