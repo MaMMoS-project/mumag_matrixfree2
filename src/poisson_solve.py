@@ -276,6 +276,7 @@ def make_pcg_solve(
             
             # Fuse p update
             p_new = z_new + beta * p
+            
             return (it + 1, x_new, r_new, z_new, p_new, rz_new)
 
         init = (jnp.int32(0), x, r, z, p, rz)
@@ -296,10 +297,14 @@ def make_solve_U(
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = 'stored_grad_phi',
-    enforce_zero_mean: bool = True,
+    enforce_zero_mean: Optional[bool] = None,
     boundary_mask: Optional[Array] = None,
     assembly: Assembly = 'scatter',
 ):
+    if enforce_zero_mean is None:
+        # Disable by default for Dirichlet problems
+        enforce_zero_mean = (boundary_mask is None)
+        
     apply_A, rhs_from_m, assemble_diag = make_poisson_ops(
         geom,
         Js_lookup,

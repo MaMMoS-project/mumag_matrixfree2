@@ -224,11 +224,7 @@ def make_minimizer(
 
     def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float, cg_tol_base: float):
         m = state.m
-        # Dynamic tolerance for Poisson solver during BB steps
-        gnorm_prev = jnp.sqrt(jnp.vdot(state.g_prev, state.g_prev))
-        phi_tol = jnp.maximum(cg_tol_base, jnp.minimum(0.1 * gnorm_prev, 1e-2))
-        
-        U = solve_U(m, state.U_prev, phi_tol)
+        U = solve_U(m, state.U_prev, cg_tol_base)
         E, g_raw = energy_and_grad(m, U, B_ext)
         
         # Apply preconditioning: g_prec is approximately the local energy density gradient
@@ -284,9 +280,7 @@ def make_minimizer(
         B_ext = jnp.asarray(B_ext, dtype=jnp.float64)
 
         # Derived Poisson base tolerance: must satisfy all stopping criteria
-        # We simplify the u3 criterion by assuming energy is O(1) or higher
-        # (which is typical for these units) or just using a safe tight bound.
-        cg_tol_base = float(min(tau_f * 0.1, eps_a * 0.1))
+        cg_tol_base = float(min(cg_tol, tau_f * 0.1, eps_a * 0.1))
 
         # Perform initial tight solve using provided U0 or zeros
         if U0 is None:
@@ -305,10 +299,7 @@ def make_minimizer(
 
         for k in range(gamma):
             start_ls = time.time()
-            # Dynamic tolerance for Poisson solver during line search
-            phi_tol = float(max(cg_tol_base, min(0.1 * gnorm, 1e-2)))
-            
-            U = solve_U(state.m, state.U_prev, phi_tol)
+            U = solve_U(state.m, state.U_prev, cg_tol_base)
             E, g_raw = energy_and_grad(state.m, U, B_ext)
             g_prec = g_raw * inv_V_rel
             g_tan = tangent_grad(state.m, g_prec)
@@ -341,7 +332,7 @@ def make_minimizer(
             # Using the JIT line search to avoid CPU sync
             tau = jit_ls(
                 state.m, jnp.asarray(pg), H, jnp.asarray(E),
-                U, B_ext, jnp.asarray(phi_tol),
+                U, B_ext, jnp.asarray(cg_tol_base),
                 ls_eta1, ls_eta2, ls_C, ls_c, ls_s0, ls_max_evals
             )
 
