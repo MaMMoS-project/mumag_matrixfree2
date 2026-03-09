@@ -196,40 +196,40 @@ def make_pcg_solve(
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
         
-        # Base Jacobi
-        z = r / (Mdiag.astype(dtype) + eps)
+        # Initial Jacobi guess
+        z0 = r / (Mdiag.astype(dtype) + eps)
         
-        if precond_type == 'chebyshev':
+        if precond_type == 'chebyshev' and order > 0:
             # Chebyshev polynomial step using 3-term recurrence
-            # Target range: [lam_min, lam_max]. 
-            # We assume lam_min is small, so we damp high frequencies in [lam_max/10, lam_max]
-            # typical for micro-magnetics Poisson solves.
+            # Target range: [lam_min, lam_max]
             lam_max = l_max
             lam_min = lam_max / 10.0 
             
-            c = (lam_max - lam_min) / 2.0
             d = (lam_max + lam_min) / 2.0
+            c = (lam_max - lam_min) / 2.0
             
-            # Initial step
-            res = r - apply_A(z)
-            z = z + (res / (Mdiag.astype(dtype) + eps)) / d
+            # k = 0
+            alpha = 1.0 / d
+            y = alpha * z0
+            y_prev = jnp.zeros_like(y)
             
-            def body(i, val):
-                z_curr, z_prev = val
-                res = r - apply_A(z_curr)
-                # Chebyshev recurrence alpha
-                alpha = jnp.where(i == 1, 2.0 * d * d / (2.0 * d * d - c * c), 
-                                  1.0 / (1.0 - (c * c * 0.25) / (d * d))) # Simplified fixed recurrence
-                # Note: For small orders, a simple fixed-step loop is often faster in XLA
-                z_next = alpha * (z_curr + (res / (Mdiag.astype(dtype) + eps)) / d) + (1.0 - alpha) * z_prev
-                return (z_next, z_curr)
-
-            if order > 1:
-                # For small fixed orders, we unroll
-                z_p = z / 1.0 # copy
-                for _ in range(order - 1):
-                    res = r - apply_A(z)
-                    z = z + (res / (Mdiag.astype(dtype) + eps)) * (1.1 / lam_max) # Simple damped Richardson
+            # We use a Python loop for the recurrence to allow unrolling/JIT optimization
+            # for small fixed orders.
+            curr_alpha = alpha
+            for k in range(1, order):
+                res = r - apply_A(y)
+                z = res / (Mdiag.astype(dtype) + eps)
+                
+                beta = (c * curr_alpha / 2.0)**2
+                curr_alpha = 1.0 / (d - beta)
+                
+                y_next = y + curr_alpha * z + curr_alpha * beta * (y - y_prev)
+                y_prev = y
+                y = y_next
+            
+            z = y
+        else:
+            z = z0
         
         if boundary_mask is not None:
             z = z * boundary_mask

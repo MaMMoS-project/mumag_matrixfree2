@@ -61,24 +61,43 @@ def benchmark_poisson():
     
     # 3. Spectral Estimation
     print("Estimating spectral radius for Chebyshev...")
-    l_max = estimate_spectral_radius(apply_A, Mdiag, boundary_mask, knt.shape[0])
-    print(f"Estimated lambda_max: {l_max:.4f}")
+    l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, knt.shape[0])
+    print(f"Estimated lambda_max (with buffer): {l_max:.4f}")
 
     # 4. PCG Benchmark Loop
     def solve_reporting(precond_type="jacobi"):
+        order = 3
         
         def apply_Minv(r):
             if precond_type == "none":
                 return r * boundary_mask
             
             # Base Jacobi
-            z = (r / (Mdiag + 1e-30)) * boundary_mask
+            z0 = (r / (Mdiag + 1e-30)) * boundary_mask
             
             if precond_type == "chebyshev":
-                omega = 2.0 / (l_max + 1.0)
-                for _ in range(3):
-                    res = r - apply_A(z) * boundary_mask
-                    z = z + (res / (Mdiag + 1e-30)) * omega
+                lam_max = l_max
+                lam_min = lam_max / 10.0
+                d = (lam_max + lam_min) / 2.0
+                c = (lam_max - lam_min) / 2.0
+                
+                # k=0
+                alpha = 1.0 / d
+                y = alpha * z0
+                y_prev = jnp.zeros_like(y)
+                
+                curr_alpha = alpha
+                for _ in range(1, order):
+                    res = r - apply_A(y) * boundary_mask
+                    z_j = (res / (Mdiag + 1e-30)) * boundary_mask
+                    beta = (c * curr_alpha / 2.0)**2
+                    curr_alpha = 1.0 / (d - beta)
+                    y_next = y + curr_alpha * z_j + curr_alpha * beta * (y - y_prev)
+                    y_prev = y
+                    y = y_next
+                z = y
+            else:
+                z = z0
             
             return z * boundary_mask
 

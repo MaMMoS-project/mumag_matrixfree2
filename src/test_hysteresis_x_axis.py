@@ -136,7 +136,8 @@ def test_hysteresis_x_axis():
             node_volumes=node_vols,
             grad_backend='stored_grad_phi',
             boundary_mask=boundary_mask,
-            precond_type='jacobi'
+            precond_type='chebyshev',
+            order=3
         )
         jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, 'block_until_ready') else x, res)
         end_t = time.time()
