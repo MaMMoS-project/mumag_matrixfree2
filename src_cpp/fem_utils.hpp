@@ -69,4 +69,25 @@ void assemble_matrices(
     SparseMatrixCSR& G_grad
 );
 
+/**
+ * @brief Only assemble matrices required for Poisson solve: L and G_div.
+ */
+void assemble_poisson_matrices(
+    const Mesh& mesh,
+    const MaterialProperties& props,
+    SparseMatrixCSR& L,
+    SparseMatrixCSR& G_div
+);
+
+
+/**
+ * @brief Compute lumped nodal volumes weighted by Js: Js_node_vols[i] = sum_{e in i} Js_e * Ve / 4
+ */
+std::vector<double> compute_js_node_volumes(const Mesh& mesh, const MaterialProperties& props);
+
+/**
+ * @brief Compute total magnetic volume: Vmag = sum_{e where Js > 0} Ve
+ */
+double compute_vmag(const Mesh& mesh, const MaterialProperties& props);
+
 #endif // FEM_UTILS_HPP

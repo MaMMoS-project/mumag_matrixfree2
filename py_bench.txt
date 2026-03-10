@@ -1,0 +1,28 @@
+Creating mesh: cube=60.0nm, h=2.0nm...
+[ok] Wrote data: single_solid.npz (nodes=29791, tets=162000)
+Layer |         sx |         sy |         sz
+------+------------+------------+-----------
+    1 |   1.050000 |   1.050000 |   1.050000
+    2 |   1.240000 |   1.240000 |   1.240000
+    3 |   1.654000 |   1.654000 |   1.654000
+    4 |   2.420800 |   2.420800 |   2.420800
+    5 |   3.736400 |   3.736400 |   3.736400
+    6 |   5.897152 |   5.897152 |   5.897152
+    7 |   9.348682 |   9.348682 |   9.348682
+    8 |  14.757891 |  14.757891 |  14.757891
+[validate] welded duplicate nodes: 5402
+layers =  8  nodes =  361812  elements =  2304342
+Final mesh saved to cube_60nm_shell.npz. Total elements: 2304342
+
+Starting Poisson Benchmarks (Tolerance 1e-10):
+---------------------------------------------------------------------------
+None        : 1446 iterations, 5.037 s, rel_res: 9.60e-11
+Jacobi      :  494 iterations, 1.727 s, rel_res: 9.55e-11
+Chebyshev   :  220 iterations, 2.304 s, rel_res: 9.08e-11
+Setting up AMG hierarchy on CPU (PyAMG, mode=amg)...
+AMG hierarchy has 4 levels.
+Amg         :   22 iterations, 0.341 s, rel_res: 6.25e-11
+Setting up AMG hierarchy on CPU (PyAMG, mode=amgcl)...
+AMG hierarchy has 4 levels.
+Amgcl       :   19 iterations, 0.299 s, rel_res: 6.63e-11
+---------------------------------------------------------------------------

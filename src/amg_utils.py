@@ -36,7 +36,8 @@ def assemble_poisson_matrix_cpu(conn, volume, grad_phi, boundary_mask=None, reg=
     
     # Create sparse matrix
     A = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
-    
+    A.sum_duplicates()
+
     if boundary_mask is not None:
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
         mask = np.array(boundary_mask)
@@ -68,27 +69,61 @@ def assemble_poisson_matrix_cpu(conn, volume, grad_phi, boundary_mask=None, reg=
 
     return A
 
-def setup_amg_hierarchy(A_cpu, max_levels=5):
+def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
+    """
+    Computes the SPAI0 diagonal preconditioner: M_ii = A_ii / sum_j (A_ij^2).
+    """
+    N = A.shape[0]
+    m_diag = np.zeros(N)
+    
+    # Square of each element
+    A_data_sq = A.data ** 2
+    
+    for i in range(N):
+        row_start = A.indptr[i]
+        row_end = A.indptr[i+1]
+        
+        row_sum_sq = np.sum(A_data_sq[row_start:row_end])
+        
+        # Find diagonal element A_ii
+        a_ii = 0.0
+        for j in range(row_start, row_end):
+            if A.indices[j] == i:
+                a_ii = A.data[j]
+                break
+        
+        m_diag[i] = a_ii / (row_sum_sq + 1e-30)
+        
+    return m_diag
+
+
+def setup_amg_hierarchy(A_cpu, max_levels=10):
     """
     Uses PyAMG to compute the AMG hierarchy on CPU.
-    Returns a list of restriction/prolongation matrices and coarse operators.
+    Returns a list of dictionaries, one per level of the hierarchy.
     """
     ml = pyamg.smoothed_aggregation_solver(A_cpu, max_levels=max_levels)
     
     hierarchy = []
-    for i in range(len(ml.levels) - 1):
+    for i in range(len(ml.levels)):
         level = ml.levels[i]
-        # P is prolongation, R is restriction (usually P.T)
-        P = level.P.tocsr()
-        R = level.R.tocsr()
-        # Coarse operator
-        A_coarse = ml.levels[i+1].A.tocsr()
+        d = {}
+        # Matrix A is present on all levels
+        csr_A = level.A.tocsr()
+        d['A'] = csr_A
+        d['Mdiag'] = csr_A.diagonal()
+        d['Mdiag_spai0'] = compute_spai0_diagonal(csr_A)
         
-        hierarchy.append({
-            'P': P,
-            'R': R,
-            'A': A_coarse
-        })
+        # P and R are only present on levels that have a coarser level below them
+        if i < len(ml.levels) - 1:
+            d['P'] = level.P.tocsr()
+            d['R'] = level.R.tocsr()
+        
+        # Store dense A for the coarsest level for exact solve
+        if i == len(ml.levels) - 1:
+            d['A_dense'] = csr_A.todense()
+            
+        hierarchy.append(d)
         
     return hierarchy
 
@@ -96,7 +131,7 @@ def csr_to_jax_bCOO(mat):
     """Converts a SciPy CSR matrix to a JAX BCOO format."""
     from jax.experimental import sparse
     coo = mat.tocoo()
-    indices = jnp.stack([coo.row, coo.col], axis=1)
+    indices = jnp.stack([jnp.asarray(coo.row), jnp.asarray(coo.col)], axis=1)
     return sparse.BCOO((jnp.asarray(coo.data), jnp.asarray(indices)), shape=coo.shape)
 
 @partial(jax.jit, static_argnums=(0,))
@@ -110,57 +145,132 @@ def jacobi_smooth(apply_A, b, x, Mdiag, iterations=1, omega=0.6667):
         return x_curr + omega * (res / (Mdiag + 1e-30))
     return jax.lax.fori_loop(0, iterations, body, x)
 
-def make_jax_amg_vcycle(apply_A_fine, Mdiag_fine, hierarchy_jax):
+@partial(jax.jit, static_argnums=(0,))
+def spai0_smooth(apply_A, b, x, Mdiag_spai0, iterations=1):
+    """
+    SPAI0 smoothing: x = x + M (b - Ax)
+    """
+    def body(i, x_curr):
+        res = b - apply_A(x_curr)
+        return x_curr + Mdiag_spai0 * res
+    return jax.lax.fori_loop(0, iterations, body, x)
+
+@jax.tree_util.register_pytree_node_class
+class AMGHierarchy:
+    def __init__(self, levels):
+        self.levels = levels
+    def tree_flatten(self):
+        return (tuple(self.levels), None)
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(list(children))
+    def __len__(self):
+        return len(self.levels)
+    def __getitem__(self, i):
+        return self.levels[i]
+
+def make_jax_amg_vcycle(apply_A_fine):
     """
     Returns a function that performs one AMG V-cycle in JAX.
     Matches PyAMG's MultilevelSolver._solve logic.
     """
-    num_levels = len(hierarchy_jax) + 1
+    def vcycle(r, hierarchy):
+        num_levels = len(hierarchy)
 
-    def vcycle_recursive(level_idx, b_curr, x_curr):
-        # Base case: Coarsest level
-        if level_idx == num_levels - 1:
-            # Solve exactly with dense solve if small
-            A_dict = hierarchy_jax[-1]
-            if 'A_dense' in A_dict:
-                return jnp.linalg.solve(A_dict['A_dense'], b_curr)
+        def vcycle_recursive(level_idx, b_curr, x_curr):
+            lvl = hierarchy[level_idx]
+            # Base case: Coarsest level
+            if level_idx == num_levels - 1:
+                if 'A_dense' in lvl:
+                    return jnp.linalg.solve(lvl['A_dense'], b_curr)
+                
+                # Fallback
+                def apply_A_coarse(v): return lvl['A_sparse'] @ v
+                return jacobi_smooth(apply_A_coarse, b_curr, x_curr, lvl['Mdiag'], iterations=10)
+
+            # 1. Setup operator for CURRENT level
+            if level_idx == 0:
+                def apply_A_curr(v): return apply_A_fine(v)
+            else:
+                def apply_A_curr(v): return lvl['A_sparse'] @ v
             
-            # Fallback for Jacobi iterations on coarsest
-            A_coarse = A_dict['A_sparse']
-            M_coarse = A_dict['Mdiag']
-            def apply_A_coarse(v): return A_coarse @ v
-            return jacobi_smooth(apply_A_coarse, b_curr, x_curr, M_coarse, iterations=10)
+            M_curr = lvl['Mdiag']
 
-        # 1. Setup operator for CURRENT level
-        if level_idx == 0:
-            def apply_A_curr(v): return apply_A_fine(v)
-            M_curr = Mdiag_fine
-        else:
-            # The operator for level i is stored in hierarchy_jax[i-1]
-            A_sparse = hierarchy_jax[level_idx-1]['A_sparse']
-            def apply_A_curr(v): return A_sparse @ v
-            M_curr = hierarchy_jax[level_idx-1]['Mdiag']
+            # 2. Pre-smooth
+            x_curr = jacobi_smooth(apply_A_curr, b_curr, x_curr, M_curr, iterations=1)
+            
+            # 3. Residual calculation
+            r_res = b_curr - apply_A_curr(x_curr)
+            
+            # 4. Restriction to level_idx + 1
+            b_coarse = lvl['R'] @ r_res
+            
+            # 5. Recurse (Initial guess for error is zero)
+            x_coarse = jnp.zeros_like(b_coarse)
+            e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
+            
+            # 6. Prolongation and Correction (x = x + P * e_coarse)
+            x_curr = x_curr + lvl['P'] @ e_coarse
+            
+            # 7. Post-smooth
+            x_curr = jacobi_smooth(apply_A_curr, b_curr, x_curr, M_curr, iterations=1)
+            
+            return x_curr
 
-        # 2. Pre-smooth (x = x + relax(A, x, b))
-        x_curr = jacobi_smooth(apply_A_curr, b_curr, x_curr, M_curr, iterations=1)
-        
-        # 3. Residual calculation
-        r_res = b_curr - apply_A_curr(x_curr)
-        
-        # 4. Restriction to level_idx + 1
-        # b_coarse = R * r_res
-        b_coarse = hierarchy_jax[level_idx]['R'] @ r_res
-        
-        # 5. Recurse (Initial guess for error is zero)
-        x_coarse = jnp.zeros_like(b_coarse)
-        e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
-        
-        # 6. Prolongation and Correction (x = x + P * e_coarse)
-        x_curr = x_curr + hierarchy_jax[level_idx]['P'] @ e_coarse
-        
-        # 7. Post-smooth
-        x_curr = jacobi_smooth(apply_A_curr, b_curr, x_curr, M_curr, iterations=1)
-        
-        return x_curr
+        return vcycle_recursive(0, r, jnp.zeros_like(r))
 
-    return jax.jit(lambda r: vcycle_recursive(0, r, jnp.zeros_like(r)))
+    return jax.jit(vcycle)
+
+
+
+def make_jax_amgcl_vcycle(apply_A_fine):
+    """
+    Returns a function that performs one AMG V-cycle in JAX using SPAI0 smoothing.
+    """
+    def vcycle(r, hierarchy):
+        num_levels = len(hierarchy)
+
+        def vcycle_recursive(level_idx, b_curr, x_curr):
+            lvl = hierarchy[level_idx]
+            
+            # Base case: Coarsest level
+            if level_idx == num_levels - 1:
+                if 'A_dense' in lvl:
+                    return jnp.linalg.solve(lvl['A_dense'], b_curr)
+                def apply_A_coarse(v): return lvl['A_sparse'] @ v
+                return spai0_smooth(apply_A_coarse, b_curr, x_curr, lvl['Mdiag_spai0'], iterations=10)
+
+            # Operator for current level
+            if level_idx == 0:
+                def apply_A_curr(v): return apply_A_fine(v)
+            else:
+                def apply_A_curr(v): return lvl['A_sparse'] @ v
+            
+            M_spai0 = lvl['Mdiag_spai0']
+
+            # 1. Pre-smooth
+            x_curr = spai0_smooth(apply_A_curr, b_curr, x_curr, M_spai0, iterations=1)
+            
+            # 2. Residual calculation
+            r_res = b_curr - apply_A_curr(x_curr)
+            
+            # 3. Restriction
+            b_coarse = lvl['R'] @ r_res
+            
+            # 4. Recurse
+            x_coarse = jnp.zeros_like(b_coarse)
+            e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
+            
+            # 5. Prolongation and Correction
+            x_curr = x_curr + lvl['P'] @ e_coarse
+            
+            # 6. Post-smooth
+            x_curr = spai0_smooth(apply_A_curr, b_curr, x_curr, M_spai0, iterations=1)
+            
+            return x_curr
+
+        return vcycle_recursive(0, r, jnp.zeros_like(r))
+
+    return jax.jit(vcycle, static_argnums=(1,))
+
+

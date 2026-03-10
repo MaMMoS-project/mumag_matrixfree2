@@ -33,3 +33,8 @@ set(SOURCES
 # Poisson test
 add_executable(test_poisson_convergence src_cpp/test_poisson_convergence.cpp ${SOURCES})
 target_link_libraries(test_poisson_convergence ${OpenCL_LIBRARIES} ${Boost_LIBRARIES} cnpy z)
+
+# Energy test
+add_executable(test_energy src_cpp/test_energy.cpp ${SOURCES})
+target_link_libraries(test_energy ${OpenCL_LIBRARIES} ${Boost_LIBRARIES} cnpy z)
+

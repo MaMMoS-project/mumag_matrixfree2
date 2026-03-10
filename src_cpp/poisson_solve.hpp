@@ -8,7 +8,9 @@
 #include <amgcl/amg.hpp>
 #include <amgcl/coarsening/smoothed_aggregation.hpp>
 #include <amgcl/relaxation/spai0.hpp>
-#include <amgcl/adapter/vexcl.hpp>
+#include <amgcl/backend/vexcl.hpp>
+#include <amgcl/adapter/crs_tuple.hpp>
+
 
 #include "fem_utils.hpp"
 
@@ -33,10 +35,13 @@ public:
      * @brief Solves L * U = b.
      * @param b_gpu RHS vector on GPU.
      * @param U_gpu Initial guess/Output vector on GPU.
+     * @return std::pair<int, double> Iterations and duration in seconds.
      */
-    void solve(const vex::vector<double>& b_gpu, vex::vector<double>& U_gpu);
+    std::pair<int, double> solve(const vex::vector<double>& b_gpu, vex::vector<double>& U_gpu);
+
 
 private:
+    vex::Context& ctx;
     std::unique_ptr<Solver> solver;
     std::vector<double> mask_cpu;
 };

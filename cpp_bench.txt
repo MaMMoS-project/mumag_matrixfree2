@@ -1,0 +1,10 @@
+Using device: NVIDIA GeForce RTX 4060 Laptop GPU
+Mesh: 361812 nodes, 2304342 elements.
+Assembling matrices (L, G_div)...
+Assembly took 63.8042 s.
+Building AMG solver...
+
+Starting Poisson Benchmarks (Tolerance 1e-10):
+------------------------------------------------------------
+Amg         : 22 iterations, 0.291617 s, rel_res: 4.74641e-11
+------------------------------------------------------------

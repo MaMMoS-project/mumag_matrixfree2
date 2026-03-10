@@ -19,7 +19,59 @@ static SparseMatrixCSR triplets_to_csr(int rows, int cols, std::vector<Eigen::Tr
     return csr;
 }
 
+void assemble_poisson_matrices(
+    const Mesh& mesh,
+    const MaterialProperties& props,
+    SparseMatrixCSR& L_csr,
+    SparseMatrixCSR& G_div_csr
+) {
+    int N = mesh.N;
+    int E = mesh.E;
+
+    std::vector<Eigen::Triplet<double>> L_triplets;
+    std::vector<Eigen::Triplet<double>> G_div_triplets;
+
+    Eigen::Matrix<double, 4, 3> grad_hat;
+    grad_hat << -1, -1, -1,
+                 1,  0,  0,
+                 0,  1,  0,
+                 0,  0,  1;
+
+    for (int e = 0; e < E; ++e) {
+        Eigen::Vector4i nodes = mesh.conn.row(e);
+        int mid = mesh.mat_id(e) - 1;
+        
+        Eigen::Vector3d v0 = mesh.points.row(nodes(0));
+        Eigen::Matrix3d J;
+        J.col(0) = mesh.points.row(nodes(1)) - v0.transpose();
+        J.col(1) = mesh.points.row(nodes(2)) - v0.transpose();
+        J.col(2) = mesh.points.row(nodes(3)) - v0.transpose();
+
+        double volume = std::abs(J.determinant()) / 6.0;
+        Eigen::Matrix3d JinvT = J.inverse().transpose();
+        Eigen::Matrix<double, 4, 3> grad_phi = grad_hat * JinvT.transpose();
+
+        double Js_red = props.Js[mid];
+
+        for (int a = 0; a < 4; ++a) {
+            for (int b = 0; b < 4; ++b) {
+                double val = volume * grad_phi.row(a).dot(grad_phi.row(b));
+                L_triplets.emplace_back(nodes(a), nodes(b), val);
+                
+                for (int c = 0; c < 3; ++c) {
+                    double g_val = Js_red * (volume / 4.0) * grad_phi(a, c);
+                    G_div_triplets.emplace_back(nodes(a), 3 * nodes(b) + c, g_val);
+                }
+            }
+        }
+    }
+
+    L_csr = triplets_to_csr(N, N, L_triplets);
+    G_div_csr = triplets_to_csr(N, 3 * N, G_div_triplets);
+}
+
 void assemble_matrices(
+
     const Mesh& mesh,
     const MaterialProperties& props,
     SparseMatrixCSR& L_csr,
@@ -45,7 +97,7 @@ void assemble_matrices(
         Eigen::Vector4i nodes = mesh.conn.row(e);
         int mid = mesh.mat_id(e) - 1; // 0-based
         
-        // Element Jacobian and Volume
+        // Element Jacobian and Volume (mesh units nm)
         Eigen::Vector3d v0 = mesh.points.row(nodes(0));
         Eigen::Matrix3d J;
         J.col(0) = mesh.points.row(nodes(1)) - v0.transpose();
@@ -66,66 +118,43 @@ void assemble_matrices(
                 L_triplets.emplace_back(nodes(a), nodes(b), val);
                 
                 // 2. Exchange part of K_int (3N x 3N)
-                // E_ex = \int A (\nabla m)^2 dV => g_i = 2 \int A \nabla m \cdot \nabla \phi_i dV
-                // Matrix entry is 2 * A * L_ab
-                double A_val = props.A[mid];
-                double ex_val = 2.0 * A_val * val;
+                // g_i = 2 \int A_red \nabla m \cdot \nabla \phi_i dV
+                double A_red = props.A[mid];
+                double ex_val = 2.0 * A_red * val;
                 for (int c = 0; c < 3; ++c) {
                     K_int_triplets.emplace_back(3 * nodes(a) + c, 3 * nodes(b) + c, ex_val);
                 }
             }
         }
 
-        // 3. Divergence Matrix G_div (N x 3N)
-        // b_a = \int \nabla \cdot (Js m) \phi_a dV = Js (\sum_b m_b \cdot \nabla \phi_b) (V/4)
-        double Js_val = props.Js[mid];
+        // 3. Analytic Uniaxial Anisotropy part of K_int (3N x 3N)
+        // E_an = -q_c * (V/20) * [(\sum v_i)^2 + \sum v_i^2] where v_i = m_i . k
+        // g_i = -2 q_c (V/20) (\sum_j v_j + v_i) k
+        // Contribution to K_ij (block i,j): -2 q_c (V/20) (k k^T) * (1 + delta_ij)
+        double q_c = props.K1[mid];
+        Eigen::Vector3d k = props.k_easy[mid];
+        Eigen::Matrix3d K_base = -2.0 * q_c * (volume / 20.0) * (k * k.transpose());
         for (int a = 0; a < 4; ++a) {
             for (int b = 0; b < 4; ++b) {
-                for (int c = 0; c < 3; ++c) {
-                    double val = Js_val * (volume / 4.0) * grad_phi(b, c);
-                    G_div_triplets.emplace_back(nodes(a), 3 * nodes(b) + c, val);
+                double factor = (a == b) ? 2.0 : 1.0;
+                Eigen::Matrix3d Akk = factor * K_base;
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) {
+                        K_int_triplets.emplace_back(3 * nodes(a) + r, 3 * nodes(b) + c, Akk(r, c));
+                    }
                 }
             }
         }
-    }
 
-    // 4. Anisotropy part of K_int (Node-wise)
-    // E_an = \int -K1 (m \cdot k)^2 dV => g_i = -2 K1 V_i (k k^T) m_i
-    for (int i = 0; i < N; ++i) {
-        // Find material at node i (heuristic: use first element containing node)
-        // For simplicity, we assume we have a way to get node properties or they are uniform per grain
-        // In this implementation, we'll need to know which material node i belongs to.
-        // Let's assume we pre-calculated node_material or props are global.
-        // For now, let's skip or assume props are indexed by node.
-        // Actually, let's use the lumped volume calculation to distribute properties.
-    }
-    
-    // To handle node-wise properties accurately, we should iterate elements and 
-    // add 1/4 of element anisotropy contribution to each of its nodes.
-    for (int e = 0; e < E; ++e) {
-        Eigen::Vector4i nodes = mesh.conn.row(e);
-        int mid = mesh.mat_id(e) - 1;
-        double K1_val = props.K1[mid];
-        Eigen::Vector3d k = props.k_easy[mid];
-        double vol4 = 0.25 * 0.0; // Wait, we need volume again
-
-        // Recalculate or store volume
-        Eigen::Vector3d v0 = mesh.points.row(nodes(0));
-        Eigen::Matrix3d J;
-        J.col(0) = mesh.points.row(nodes(1)) - v0.transpose();
-        J.col(1) = mesh.points.row(nodes(2)) - v0.transpose();
-        J.col(2) = mesh.points.row(nodes(3)) - v0.transpose();
-        double volume = std::abs(J.determinant()) / 6.0;
-
-        // Contribution: -2 * K1 * (V/4) * (k k^T)
-        // Note: The paper might use a more sophisticated integration for anisotropy
-        // but lumped (P0 property on P1 mesh) is standard.
-        Eigen::Matrix3d Akk = -2.0 * K1_val * (volume / 4.0) * (k * k.transpose());
+        // 4. Divergence Matrix G_div (N x 3N)
+        // b_a = \int j_c m . \nabla \phi_a dV = j_c (V/4) (\sum m_b) . \nabla \phi_a
+        // (G_div)_{a, 3b+c} = j_c (V/4) (\nabla \phi_a)_c
+        double j_c = props.Js[mid];
         for (int a = 0; a < 4; ++a) {
-            int node_idx = nodes(a);
-            for (int r = 0; r < 3; ++r) {
+            for (int b = 0; b < 4; ++b) {
                 for (int c = 0; c < 3; ++c) {
-                    K_int_triplets.emplace_back(3 * node_idx + r, 3 * node_idx + c, Akk(r, c));
+                    double val = j_c * (volume / 4.0) * grad_phi(a, c);
+                    G_div_triplets.emplace_back(nodes(a), 3 * nodes(b) + c, val);
                 }
             }
         }
@@ -135,10 +164,11 @@ void assemble_matrices(
     K_int_csr = triplets_to_csr(3 * N, 3 * N, K_int_triplets);
     G_div_csr = triplets_to_csr(N, 3 * N, G_div_triplets);
 
-    // G_grad = -G_div^T
+    // G_grad = G_div^T
+    // Demag Energy E_dem = \int j_c m . \nabla U dV = m^T G_div^T U
     std::vector<Eigen::Triplet<double>> G_grad_triplets;
     for (const auto& t : G_div_triplets) {
-        G_grad_triplets.emplace_back(t.col(), t.row(), -t.value());
+        G_grad_triplets.emplace_back(t.col(), t.row(), t.value());
     }
     G_grad_csr = triplets_to_csr(3 * N, N, G_grad_triplets);
 }
@@ -187,3 +217,42 @@ Mesh load_mesh_npz(const std::string& path) {
 
     return mesh;
 }
+
+std::vector<double> compute_js_node_volumes(const Mesh& mesh, const MaterialProperties& props) {
+    std::vector<double> js_v(mesh.N, 0.0);
+    for (int e = 0; e < mesh.E; ++e) {
+        Eigen::Vector4i nodes = mesh.conn.row(e);
+        int mid = mesh.mat_id(e) - 1;
+        double j_c = props.Js[mid];
+
+        Eigen::Vector3d v0 = mesh.points.row(nodes(0));
+        Eigen::Matrix3d J;
+        J.col(0) = mesh.points.row(nodes(1)) - v0.transpose();
+        J.col(1) = mesh.points.row(nodes(2)) - v0.transpose();
+        J.col(2) = mesh.points.row(nodes(3)) - v0.transpose();
+        double volume = std::abs(J.determinant()) / 6.0;
+
+        for (int a = 0; a < 4; ++a) {
+            js_v[nodes(a)] += j_c * (volume / 4.0);
+        }
+    }
+    return js_v;
+}
+
+double compute_vmag(const Mesh& mesh, const MaterialProperties& props) {
+    double vmag = 0.0;
+    for (int e = 0; e < mesh.E; ++e) {
+        int mid = mesh.mat_id(e) - 1;
+        if (props.Js[mid] > 0) {
+            Eigen::Vector4i nodes = mesh.conn.row(e);
+            Eigen::Vector3d v0 = mesh.points.row(nodes(0));
+            Eigen::Matrix3d J;
+            J.col(0) = mesh.points.row(nodes(1)) - v0.transpose();
+            J.col(1) = mesh.points.row(nodes(2)) - v0.transpose();
+            J.col(2) = mesh.points.row(nodes(3)) - v0.transpose();
+            vmag += std::abs(J.determinant()) / 6.0;
+        }
+    }
+    return vmag;
+}
+

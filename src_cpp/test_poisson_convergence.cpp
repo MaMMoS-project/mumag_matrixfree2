@@ -5,7 +5,6 @@
 #include <vexcl/vexcl.hpp>
 #include "fem_utils.hpp"
 #include "poisson_solve.hpp"
-#include "energy_kernels.hpp"
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -19,10 +18,10 @@ int main(int argc, char** argv) {
         std::cerr << "No GPU found!" << std::endl;
         return 1;
     }
-    std::cout << "Using device: " << ctx.device(0).getInfo<CL_DEVICE_NAME>() << std::endl;
+    std::string device_name = ctx.device(0).getInfo<CL_DEVICE_NAME>();
+    std::cout << "Using device: " << device_name << std::endl;
 
     // 2. Load Mesh
-    std::cout << "Loading mesh: " << argv[1] << std::endl;
     Mesh mesh;
     try {
         mesh = load_mesh_npz(argv[1]);
@@ -32,63 +31,61 @@ int main(int argc, char** argv) {
     }
     std::cout << "Mesh: " << mesh.N << " nodes, " << mesh.E << " elements." << std::endl;
 
-    // 3. Assemble Matrices (CPU)
+    // 3. Assemble Required Matrices (CPU)
     MaterialProperties props;
     int num_mats = mesh.mat_id.maxCoeff();
-    props.A.assign(num_mats, 1e-11);
-    props.K1.assign(num_mats, 0.0);
-    props.Js.assign(num_mats, 1.0);
-    props.k_easy.assign(num_mats, Eigen::Vector3d(0, 0, 1));
+    props.Js.assign(num_mats, 0.0);
+    if (num_mats >= 1) props.Js[0] = 1.0; // Benchmark use Js=1.0 for first material (magnet)
 
-    SparseMatrixCSR L, K_int, G_div, G_grad;
-    std::cout << "Assembling matrices..." << std::endl;
+    SparseMatrixCSR L, G_div;
+    std::cout << "Assembling matrices (L, G_div)..." << std::endl;
     auto start_asm = std::chrono::high_resolution_clock::now();
-    assemble_matrices(mesh, props, L, K_int, G_div, G_grad);
+    assemble_poisson_matrices(mesh, props, L, G_div);
     auto end_asm = std::chrono::high_resolution_clock::now();
     std::cout << "Assembly took " << std::chrono::duration<double>(end_asm - start_asm).count() << " s." << std::endl;
 
-    // 4. Boundary Mask (Potential U=0 at outer shell boundary)
-    // For this test, let's assume the user has correctly marked mesh.boundary_mask
-    // If not, the Poisson solve might have a null space.
+    // 4. Boundary Mask
     std::vector<double> mask(mesh.N);
     for (int i = 0; i < mesh.N; ++i) mask[i] = mesh.boundary_mask(i);
+    vex::vector<double> mask_gpu(ctx, mask);
 
     // 5. Setup Poisson Solver (AMG)
     std::cout << "Building AMG solver..." << std::endl;
     PoissonSolver solver(ctx, L, mask);
 
-    // 6. Test RHS
-    // Create a source term b = G_div * m where m = (0,0,1)
-    std::vector<double> m_cpu(3 * mesh.N);
+    // 6. Setup Source term b = G_div * m
+    std::vector<double> m_cpu(3 * mesh.N, 0.0);
     for (int i = 0; i < mesh.N; ++i) {
-        m_cpu[3 * i + 0] = 0.0;
-        m_cpu[3 * i + 1] = 0.0;
-        m_cpu[3 * i + 2] = 1.0;
+        m_cpu[3 * i + 2] = 1.0; // m = (0,0,1)
     }
     vex::vector<double> m_gpu(ctx, m_cpu);
     vex::vector<double> b_gpu(ctx, mesh.N);
     
-    // Use the divergence matrix (transferred to sparse matrix on GPU)
-    vex::sparse::matrix<double> G_div_gpu(ctx, G_div.rows, G_div.cols, 
-                                        G_div.ptr.data(), G_div.indices.data(), G_div.data.data());
-    b_gpu = G_div_gpu * m_gpu;
+    vex::sparse::matrix<double> mat_G_div(ctx, G_div.rows, G_div.cols, G_div.ptr, G_div.indices, G_div.data);
+    b_gpu = (mat_G_div * m_gpu) * mask_gpu;
 
-    // 7. Solve Poisson
+    // 7. Solve
     vex::vector<double> U_gpu(ctx, mesh.N);
-    U_gpu = 0.0; // Initial guess
+    U_gpu = 0.0;
 
-    std::cout << "Solving Poisson equation..." << std::endl;
-    auto start_solve = std::chrono::high_resolution_clock::now();
-    solver.solve(b_gpu, U_gpu);
-    auto end_solve = std::chrono::high_resolution_clock::now();
-    std::cout << "Solve took " << std::chrono::duration<double>(end_solve - start_solve).count() << " s." << std::endl;
+    std::cout << "\nStarting Poisson Benchmarks (Tolerance 1e-10):" << std::endl;
+    std::cout << "------------------------------------------------------------" << std::endl;
+    
+    int iters;
+    double duration;
+    std::tie(iters, duration) = solver.solve(b_gpu, U_gpu);
+    
+    // Calculate final relative residual: ||b - L*U|| / ||b|| (interior nodes only)
+    vex::sparse::matrix<double> L_gpu(ctx, L.rows, L.cols, L.ptr, L.indices, L.data);
+    vex::vector<double> r = (b_gpu - L_gpu * U_gpu) * mask_gpu;
+    vex::Reductor<double, vex::SUM> reduce_sum(ctx);
+    double r2 = reduce_sum(r * r);
+    double b2 = reduce_sum(b_gpu * b_gpu);
+    double rel_res = std::sqrt(r2 / (b2 + 1e-30));
 
-    // 8. Basic validation: Check residual
-    vex::sparse::matrix<double> L_gpu(ctx, L.rows, L.cols, 
-                                    L.ptr.data(), L.indices.data(), L.data.data());
-    vex::vector<double> res = b_gpu - L_gpu * U_gpu;
-    double res_norm = std::sqrt(vex::dot(res, res));
-    std::cout << "L2 Residual Norm: " << res_norm << std::endl;
+    std::cout << "Amg         : " << iters << " iterations, " << duration << " s, rel_res: " << rel_res << std::endl;
+    std::cout << "------------------------------------------------------------" << std::endl;
+
 
     return 0;
 }

@@ -13,7 +13,7 @@ License: MIT
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Optional, Literal
+from typing import Callable, Optional, Literal, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -23,7 +23,7 @@ from fem_utils import TetGeom, pad_geom_for_chunking, chunk_mask, assemble_scatt
 
 Array = jnp.ndarray
 GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
-PrecondType = Literal['jacobi', 'chebyshev', 'amg']
+PrecondType = Literal['none', 'jacobi', 'chebyshev', 'amg', 'amgcl']
 Assembly = Literal['scatter', 'segment_sum']
 
 _GRAD_HAT = jnp.array([
@@ -183,8 +183,8 @@ def make_pcg_solve(
     apply_A: Callable[[Array], Array],
     Mdiag: Array,
     *,
-    precond_type: PrecondType = 'jacobi',
-    apply_Minv_amg: Optional[Callable[[Array], Array]] = None,
+    precond_type: PrecondType = 'none',
+    apply_Minv_amg: Optional[Callable[[Array, Optional[list]], Array]] = None,
     order: int = 3,
     maxiter: int = 500,
     tol: float = 1e-8,
@@ -193,9 +193,14 @@ def make_pcg_solve(
 ):
     default_tol = float(tol)
 
-    def apply_Minv(r: Array) -> Array:
-        if precond_type == 'amg' and apply_Minv_amg is not None:
-            return apply_Minv_amg(r)
+    def apply_Minv(r: Array, hierarchy: Optional[list] = None) -> Array:
+        if precond_type == 'none':
+            if boundary_mask is not None:
+                return r * boundary_mask
+            return r
+
+        if precond_type in ['amg', 'amgcl'] and apply_Minv_amg is not None:
+            return apply_Minv_amg(r, hierarchy)
             
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
@@ -204,33 +209,23 @@ def make_pcg_solve(
         z0 = r / (Mdiag.astype(dtype) + eps)
         
         if precond_type == 'chebyshev' and order > 0:
-            # Chebyshev polynomial step using 3-term recurrence
-            # Target range: [lam_min, lam_max]
             lam_max = l_max
             lam_min = lam_max / 10.0 
-            
             d = (lam_max + lam_min) / 2.0
             c = (lam_max - lam_min) / 2.0
-            
-            # k = 0
             alpha = 1.0 / d
             y = alpha * z0
             y_prev = jnp.zeros_like(y)
-            
-            # We use a Python loop for the recurrence to allow unrolling/JIT optimization
-            # for small fixed orders.
             curr_alpha = alpha
             for k in range(1, order):
                 res = r - apply_A(y)
+                if boundary_mask is not None: res = res * boundary_mask
                 z = res / (Mdiag.astype(dtype) + eps)
-                
                 beta = (c * curr_alpha / 2.0)**2
                 curr_alpha = 1.0 / (d - beta)
-                
                 y_next = y + curr_alpha * z + curr_alpha * beta * (y - y_prev)
                 y_prev = y
                 y = y_next
-            
             z = y
         else:
             z = z0
@@ -239,10 +234,9 @@ def make_pcg_solve(
             z = z * boundary_mask
         return z
 
-    def solve(b: Array, x0: Array, tol: Optional[float] = None) -> Array:
+    def solve(b: Array, x0: Array, tol: Optional[float] = None, hierarchy: Optional[list] = None) -> Tuple[Array, int, float]:
         dtype = b.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
-        # Use provided tol or fallback to default
         current_tol = jnp.asarray(tol if tol is not None else default_tol, dtype=dtype)
         
         if boundary_mask is not None:
@@ -252,38 +246,39 @@ def make_pcg_solve(
             x = x0
 
         r = b - apply_A(x)
-        z = apply_Minv(r)
+        if boundary_mask is not None: r = r * boundary_mask
+            
+        z = apply_Minv(r, hierarchy)
         p = z
         rz = jnp.dot(r, z)
+        r2 = jnp.dot(r, r)
         bnorm2 = jnp.dot(b, b)
+        tol2 = (current_tol * current_tol) * bnorm2
 
         def cond_fun(state):
-            it, x, r, z, p, rz = state
-            return jnp.logical_and(it < maxiter, rz > (current_tol * current_tol) * bnorm2 + jnp.asarray(0.0, dtype))
+            it, x, r, z, p, rz, r2 = state
+            return (it < maxiter) & (r2 > tol2)
 
         def body_fun(state):
-            it, x, r, z, p, rz = state
+            it, x, r, z, p, rz, r2 = state
             Ap = apply_A(p)
+            if boundary_mask is not None: Ap = Ap * boundary_mask
             alpha = rz / (jnp.dot(p, Ap) + eps)
-            
-            # Fuse x and r updates
             x_new = x + alpha * p
             r_new = r - alpha * Ap
-            
-            z_new = apply_Minv(r_new)
+            z_new = apply_Minv(r_new, hierarchy)
             rz_new = jnp.dot(r_new, z_new)
             beta = rz_new / (rz + eps)
-            
-            # Fuse p update
             p_new = z_new + beta * p
-            
-            return (it + 1, x_new, r_new, z_new, p_new, rz_new)
+            r2_new = jnp.dot(r_new, r_new)
+            return (it + 1, x_new, r_new, z_new, p_new, rz_new, r2_new)
 
-        init = (jnp.int32(0), x, r, z, p, rz)
-        _, x, _, _, _, _ = lax.while_loop(cond_fun, body_fun, init)
-        return x
+        init = (jnp.int32(0), x, r, z, p, rz, r2)
+        final_state = lax.while_loop(cond_fun, body_fun, init)
+        it_final, x_final, _, _, _, _, r2_final = final_state
+        return x_final, it_final, r2_final
 
-    return jax.jit(solve)
+    return jax.jit(solve, static_argnums=(3,))
 
 
 def make_solve_U(
@@ -302,17 +297,11 @@ def make_solve_U(
     assembly: Assembly = 'scatter',
 ):
     if enforce_zero_mean is None:
-        # Disable by default for Dirichlet problems
         enforce_zero_mean = (boundary_mask is None)
         
     apply_A, rhs_from_m, assemble_diag = make_poisson_ops(
-        geom,
-        Js_lookup,
-        chunk_elems=chunk_elems,
-        reg=poisson_reg,
-        grad_backend=grad_backend,
-        assembly=assembly,
-        boundary_mask=boundary_mask,
+        geom, Js_lookup, chunk_elems=chunk_elems, reg=poisson_reg,
+        grad_backend=grad_backend, assembly=assembly, boundary_mask=boundary_mask,
     )
 
     if geom.x_nodes is not None:
@@ -322,69 +311,92 @@ def make_solve_U(
         N = int(np.max(geom.conn)) + 1
 
     Mdiag = assemble_diag(N)
-    
     l_max = 2.0
     apply_Minv_amg = None
+    hierarchy_jax = None
     
     if precond_type == 'chebyshev':
         l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
     
-    elif precond_type == 'amg':
-        # Setup AMG on CPU
-        print("Setting up AMG hierarchy on CPU (PyAMG)...")
-        from amg_utils import assemble_poisson_matrix_cpu, setup_amg_hierarchy, csr_to_jax_bCOO, make_jax_amg_vcycle
+    elif precond_type in ['amg', 'amgcl']:
+        print(f"Setting up AMG hierarchy on CPU (PyAMG, mode={precond_type})...")
+        import pyamg
+        from amg_utils import assemble_poisson_matrix_cpu, setup_amg_hierarchy, make_jax_amg_vcycle, make_jax_amgcl_vcycle
         import numpy as np
         
-        # We need the full grad_phi for assembly. If it's padded, we slice it.
-        # For simplicity, we assume grad_phi is available in geom.
+        if geom.grad_phi is not None:
+            gp = np.array(geom.grad_phi)
+        else:
+            from loop import compute_grad_phi_from_JinvT
+            gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
+
         A_cpu = assemble_poisson_matrix_cpu(
-            np.array(geom.conn), 
-            np.array(geom.volume), 
-            np.array(geom.grad_phi), 
+            np.array(geom.conn), np.array(geom.volume), gp, 
             boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
             reg=poisson_reg
         )
         
-        hierarchy_cpu = setup_amg_hierarchy(A_cpu)
+        ml = pyamg.smoothed_aggregation_solver(
+            A_cpu, 
+            strength='evolution',
+            smooth='energy',
+            max_levels=10,
+            max_coarse=1000
+        )
+
+        print(f"AMG hierarchy has {len(ml.levels)} levels.")
         
-        # Move hierarchy to JAX
-        hierarchy_jax = []
-        for i, level in enumerate(hierarchy_cpu):
+        levels_jax = []
+        for i in range(len(ml.levels)):
+            level = ml.levels[i]
+            from amg_utils import csr_to_jax_bCOO, compute_spai0_diagonal
+            csr_A = level.A.tocsr()
             level_dict = {
-                'P': csr_to_jax_bCOO(level['P']),
-                'R': csr_to_jax_bCOO(level['R']),
-                'A_sparse': csr_to_jax_bCOO(level['A']),
-                'Mdiag': jnp.asarray(level['A'].diagonal())
+                'A_sparse': csr_to_jax_bCOO(csr_A),
+                'Mdiag': jnp.asarray(csr_A.diagonal()),
+                'Mdiag_spai0': jnp.asarray(compute_spai0_diagonal(csr_A))
             }
-            # For the coarsest level, also store as dense matrix for exact solve
-            if i == len(hierarchy_cpu) - 1:
-                level_dict['A_dense'] = jnp.asarray(level['A'].todense())
+            if i < len(ml.levels) - 1:
+                level_dict['P'] = csr_to_jax_bCOO(level.P.tocsr())
+                level_dict['R'] = csr_to_jax_bCOO(level.R.tocsr())
+            else:
+                level_dict['A_dense'] = jnp.asarray(csr_A.todense())
+            levels_jax.append(level_dict)
             
-            hierarchy_jax.append(level_dict)
-            
-        apply_Minv_amg = make_jax_amg_vcycle(apply_A, Mdiag, hierarchy_jax)
+        from amg_utils import AMGHierarchy
+        hierarchy_jax = AMGHierarchy(levels_jax)
+
+        def apply_A_masked(v):
+            res = apply_A(v)
+            if boundary_mask is not None: res = res * boundary_mask
+            return res
+
+        if precond_type == 'amgcl':
+            apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
+        else:
+            apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
+
+
 
     solve_linear = make_pcg_solve(
-        apply_A,
-        Mdiag,
-        precond_type=precond_type,
-        apply_Minv_amg=apply_Minv_amg,
-        order=order,
-        maxiter=cg_maxiter,
-        tol=cg_tol,
-        boundary_mask=boundary_mask,
-        l_max=l_max,
+        apply_A, Mdiag, precond_type=precond_type, apply_Minv_amg=apply_Minv_amg,
+        order=order, maxiter=cg_maxiter, tol=cg_tol, boundary_mask=boundary_mask, l_max=l_max,
     )
 
-    @jax.jit
-    def solve_U(m: Array, x0: Array, tol: Optional[float] = None) -> Array:
+    @partial(jax.jit, static_argnums=(3,))
+    def solve_U(m: Array, x0: Array, tol: Optional[float] = None, return_info: bool = False):
         b = rhs_from_m(m)
+        bnorm2 = jnp.vdot(b, b)
         if enforce_zero_mean:
             b = b - jnp.mean(b)
             x0 = x0 - jnp.mean(x0)
-        U = solve_linear(b, x0, tol=tol)
-        if enforce_zero_mean:
-            U = U - jnp.mean(U)
+        
+        U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_jax)
+        
+        if enforce_zero_mean: U = U - jnp.mean(U)
+        if return_info:
+            rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+            return U, it, rel_res
         return U
 
     return solve_U

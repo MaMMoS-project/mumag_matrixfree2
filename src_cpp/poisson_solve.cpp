@@ -1,11 +1,11 @@
 #include "poisson_solve.hpp"
 
 PoissonSolver::PoissonSolver(vex::Context& ctx, const SparseMatrixCSR& L, const std::vector<double>& mask)
-    : mask_cpu(mask) {
-    
+    : ctx(ctx), mask_cpu(mask) {
+
     // Create a copy of L that enforces Dirichlet boundary conditions
     SparseMatrixCSR L_masked = L;
-    
+
     for (int i = 0; i < L_masked.rows; ++i) {
         if (mask[i] == 0.0) { // Boundary node
             // Clear the row
@@ -23,23 +23,32 @@ PoissonSolver::PoissonSolver(vex::Context& ctx, const SparseMatrixCSR& L, const 
 
     // Parameters for AMGCL solver
     typename Solver::params prm;
-    prm.solver.tol = 1e-8;
-    prm.solver.maxiter = 500;
-    
-    // Adapt L_masked for VexCL/AMGCL
-    auto A_gpu = amgcl::adapter::vexcl_sparse(
-        ctx, L_masked.rows, L_masked.cols, 
-        L_masked.ptr.data(), L_masked.indices.data(), L_masked.data.data()
-    );
+    prm.solver.tol = 1e-10; // Match Python benchmark tolerance
+    prm.solver.maxiter = 2000;
 
     // Build the solver
-    solver = std::make_unique<Solver>(A_gpu, prm, amgcl::backend::vexcl_params(ctx));
+    amgcl::backend::vexcl<double>::params bprm;
+    bprm.q = ctx.queue();
+
+    solver = std::make_unique<Solver>(
+        std::tie(L_masked.rows, L_masked.ptr, L_masked.indices, L_masked.data),
+        prm, 
+        bprm
+    );
 }
 
-void PoissonSolver::solve(const vex::vector<double>& b_gpu, vex::vector<double>& U_gpu) {
-    // Before solve, make sure b_gpu satisfies b_i = 0 for boundary nodes.
-    // This can be done with a VexCL element-wise product if we transfer the mask.
-    // However, the caller should usually handle the RHS masking.
-    
-    (*solver)(b_gpu, U_gpu);
+std::pair<int, double> PoissonSolver::solve(const vex::vector<double>& b_gpu, vex::vector<double>& U_gpu) {
+    ctx.finish();
+    auto start = std::chrono::high_resolution_clock::now();
+
+    int iters;
+    double error;
+    std::tie(iters, error) = (*solver)(b_gpu, U_gpu);
+
+    ctx.finish();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    double duration = std::chrono::duration<double>(end - start).count();
+    return {iters, duration};
 }
+
