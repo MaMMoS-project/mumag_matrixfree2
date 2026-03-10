@@ -16,13 +16,13 @@ Final mesh saved to cube_60nm_shell.npz. Total elements: 2304342
 
 Starting Poisson Benchmarks (Tolerance 1e-10):
 ---------------------------------------------------------------------------
-None        : 1446 iterations, 5.037 s, rel_res: 9.60e-11
-Jacobi      :  494 iterations, 1.727 s, rel_res: 9.55e-11
-Chebyshev   :  220 iterations, 2.304 s, rel_res: 9.08e-11
+None        : 1445 iterations, 5.011 s, rel_res: 9.83e-11
+Jacobi      :  494 iterations, 1.713 s, rel_res: 9.47e-11
+Chebyshev   :  220 iterations, 2.278 s, rel_res: 9.14e-11
 Setting up AMG hierarchy on CPU (PyAMG, mode=amg)...
 AMG hierarchy has 4 levels.
-Amg         :   22 iterations, 0.341 s, rel_res: 6.25e-11
+Amg         :   22 iterations, 0.339 s, rel_res: 5.71e-11
 Setting up AMG hierarchy on CPU (PyAMG, mode=amgcl)...
 AMG hierarchy has 4 levels.
-Amgcl       :   19 iterations, 0.299 s, rel_res: 6.63e-11
+Amgcl       :   19 iterations, 0.297 s, rel_res: 7.97e-11
 ---------------------------------------------------------------------------

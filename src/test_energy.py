@@ -13,9 +13,9 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from pathlib import Path
 
-from fem_utils import TetGeom
+from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from energy_kernels import make_energy_kernels, MU0
+from energy_kernels import make_energy_kernels
 from poisson_solve import make_solve_U
 import add_shell
 
@@ -89,6 +89,12 @@ def test_micromagnetic_energies():
     Js_lookup = np.array([Js_red, 0.0])
     k_easy_lookup = np.array([k_easy, k_easy])
     
+    # Precompute M_nodal
+    vol_Js = volume * np.array(Js_lookup[mat_id - 1])
+    from dataclasses import replace
+    geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
+    M_nodal = compute_node_volumes(geom_Js, chunk_elems=200_000)
+
     # Volume of magnet in nm^3
     is_mag = (mat_id <= G)
     V_mag_nm = np.sum(volume[is_mag])
@@ -124,16 +130,18 @@ def test_micromagnetic_energies():
         
         # Energy kernels now return Energy / (Kd * Vmag)
         # 1. Internal dimensionless values
-        _, E_only_ex, _ = make_energy_kernels(geom, A_lookup, np.array([0.0, 0.0]), np.array([0.0, 0.0]), k_easy_lookup, V_mag_nm, grad_backend='stored_grad_phi')
+        A_zero = np.zeros(2); K_zero = np.zeros(2); J_zero = np.zeros(2)
+        
+        _, E_only_ex, _ = make_energy_kernels(geom, A_lookup, K_zero, J_zero, k_easy_lookup, V_mag_nm, M_nodal, grad_backend='stored_grad_phi')
         e_ex_red = float(E_only_ex(m_jax, jnp.zeros_like(U_jax), jnp.zeros(3)))
         
-        _, E_only_z, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Js_lookup, k_easy_lookup, V_mag_nm, grad_backend='stored_grad_phi')
+        _, E_only_z, _ = make_energy_kernels(geom, A_zero, K_zero, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal, grad_backend='stored_grad_phi')
         e_z_red = float(E_only_z(m_jax, jnp.zeros_like(U_jax), jnp.asarray([b_red, 0, 0])))
         
-        _, E_only_an, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), K1_lookup, np.array([0.0, 0.0]), k_easy_lookup, V_mag_nm, grad_backend='stored_grad_phi')
+        _, E_only_an, _ = make_energy_kernels(geom, A_zero, K1_lookup, J_zero, k_easy_lookup, V_mag_nm, M_nodal, grad_backend='stored_grad_phi')
         e_an_red = float(E_only_an(m_jax, jnp.zeros_like(U_jax), jnp.zeros(3)))
         
-        _, E_only_d, _ = make_energy_kernels(geom, np.array([0.0, 0.0]), np.array([0.0, 0.0]), Js_lookup, k_easy_lookup, V_mag_nm, grad_backend='stored_grad_phi')
+        _, E_only_d, _ = make_energy_kernels(geom, A_zero, K_zero, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal, grad_backend='stored_grad_phi')
         e_d_red = float(E_only_d(m_jax, U_jax, jnp.zeros(3)))
         
         # 2. Convert to SI Joules

@@ -121,6 +121,7 @@ def make_minimizer(
     k_easy_lookup: Array,
     V_mag: float,
     node_volumes: Array,
+    M_nodal: Array,
     *,
     precond_type: str = 'jacobi',
     order: int = 3,
@@ -132,9 +133,11 @@ def make_minimizer(
     grad_backend: GradBackend = 'stored_grad_phi',
     boundary_mask: Optional[Array] = None,
 ):
-    # inv_V_rel: node-wise scaling to go from (total_energy_grad / V_mag)
-    # to (local_energy_density_grad). This is a diagonal preconditioner.
-    inv_V_rel = jnp.where(node_volumes > 0, V_mag / node_volumes, 0.0)[:, None]
+    # inv_M_rel: node-wise scaling to go from (total_energy_grad / V_mag)
+    # to (local_energy_density_grad / Js). This is a physical preconditioner.
+    # We use M_nodal (nodal magnetic moment) to compute the local field.
+    # Airbox nodes (M_nodal=0) are masked out.
+    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
     energy_and_grad, energy_only, _ = make_energy_kernels(
         geom,
@@ -143,6 +146,7 @@ def make_minimizer(
         Js_lookup=Js_lookup,
         k_easy_lookup=k_easy_lookup,
         V_mag=V_mag,
+        M_nodal=M_nodal,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
@@ -227,8 +231,8 @@ def make_minimizer(
         U = solve_U(m, state.U_prev, cg_tol_base)
         E, g_raw = energy_and_grad(m, U, B_ext)
         
-        # Apply preconditioning: g_prec is approximately the local energy density gradient
-        g_prec = g_raw * inv_V_rel
+        # Apply preconditioning: g_prec is approximately the local magnetic field
+        g_prec = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_prec)
         gnorm = jnp.sqrt(jnp.vdot(g_tan, g_tan))
 
@@ -287,7 +291,7 @@ def make_minimizer(
             U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
         U = solve_U(m, U0, cg_tol_base)
         E_prev, g_raw = energy_and_grad(m, U, B_ext)
-        g_prec = g_raw * inv_V_rel
+        g_prec = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_prec)
         gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
 
@@ -301,7 +305,7 @@ def make_minimizer(
             start_ls = time.time()
             U = solve_U(state.m, state.U_prev, cg_tol_base)
             E, g_raw = energy_and_grad(state.m, U, B_ext)
-            g_prec = g_raw * inv_V_rel
+            g_prec = g_raw * inv_M_rel
             g_tan = tangent_grad(state.m, g_prec)
             pg = float(-jnp.vdot(g_raw, g_tan))
             
@@ -376,6 +380,7 @@ def make_minimizer(
         gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
         if verbose: print(f"  BB Phase Total Time: {t_bb_total:.3f}s")
         return state.m, U, {"E": E_end, "gnorm": gnorm_inf, "iters": float(max_iter), "phase": 2.0, "history": history, "t_ls": t_ls_total, "t_bb": t_bb_total}
+
 
 
     return minimize
