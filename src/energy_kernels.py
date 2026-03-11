@@ -163,24 +163,36 @@ def make_energy_kernels(
             U_e = U[conn_c]
 
             # 1. Exchange Gradient (Quadratic)
-            G = jnp.einsum('eal,eak->elk', m_e, B_c)
-            Km = jnp.einsum('elk,egk->egl', G, B_c)
+            # Unrolled contraction over 4 nodes to allow XLA fusion
+            G = (m_e[:, 0, :, None] * B_c[:, 0, None, :] + 
+                 m_e[:, 1, :, None] * B_c[:, 1, None, :] + 
+                 m_e[:, 2, :, None] * B_c[:, 2, None, :] + 
+                 m_e[:, 3, :, None] * B_c[:, 3, None, :])
+            
+            # Km_egl = sum_k G_elk * B_egk
+            Km = (G[:, None, 0, :] * B_c[..., 0, None] + 
+                  G[:, None, 1, :] * B_c[..., 1, None] + 
+                  G[:, None, 2, :] * B_c[..., 2, None])
+            
             contrib = (2.0 * a_c * Ve_eff)[:, None, None] * Km
 
             # 2. Uniaxial Anisotropy Gradient (Quadratic)
-            v_e = jnp.einsum('eac,ec->ea', m_e, k_c)
+            # v_e = m_e . k_c
+            v_e = jnp.sum(m_e * k_c[:, None, :], axis=2)
             sum_v = jnp.sum(v_e, axis=1)
             Mv = (Ve_eff / 20.0)[:, None] * (sum_v[:, None] + v_e)
             factor = (-2.0 * q_c)[:, None] * Mv
             contrib = contrib + factor[..., None] * k_c[:, None, :]
 
             # 3. Demag Gradient (Quadratic)
-            # F_dem = integral( Js * m . grad(u) ) dV
-            # g_dem = 2 * Js * grad(u)
-            # Note: m^T g_dem = 2 * integral( Js * m . grad(u) ) = 2 * F_dem
-            grad_u = jnp.einsum('ea,eak->ek', U_e, B_c)
+            # grad_u = sum_a U_ea * B_eak
+            grad_u = (U_e[:, 0, None] * B_c[:, 0, :] + 
+                      U_e[:, 1, None] * B_c[:, 1, :] + 
+                      U_e[:, 2, None] * B_c[:, 2, :] + 
+                      U_e[:, 3, None] * B_c[:, 3, :])
+            
             scale_dem = (2.0 * j_c * Ve_eff / 4.0)[:, None, None]
-            contrib = contrib + jnp.broadcast_to(scale_dem * grad_u[:, None, :], (chunk_elems, 4, 3))
+            contrib = contrib + scale_dem * grad_u[:, None, :]
 
             if assembly == 'scatter':
                 g_acc = assemble_scatter(g_acc, conn_c, contrib)
