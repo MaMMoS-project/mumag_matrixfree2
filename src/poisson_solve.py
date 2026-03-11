@@ -108,9 +108,18 @@ def make_poisson_ops(
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
             U_e = U[conn_c]
-            # Fused einsum to compute node contributions in one step
-            dot_term = jnp.einsum('eak,ebk,eb->ea', B_c, B_c, U_e)
-            contrib = Ve_c[:, None] * dot_term
+            
+            # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
+            grad_U = (B_c[:, 0, :] * U_e[:, 0, None] +
+                      B_c[:, 1, :] * U_e[:, 1, None] +
+                      B_c[:, 2, :] * U_e[:, 2, None] +
+                      B_c[:, 3, :] * U_e[:, 3, None])
+            
+            # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
+            contrib = Ve_c[:, None] * (B_c[..., 0] * grad_U[:, 0, None] + 
+                                       B_c[..., 1] * grad_U[:, 1, None] + 
+                                       B_c[..., 2] * grad_U[:, 2, None])
+
             if assembly == 'scatter':
                 return assemble_scatter(y_acc, conn_c, contrib)
             else:
@@ -132,8 +141,13 @@ def make_poisson_ops(
             B_c = _get_B(conn_c, s, dtype)
             Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
-            # Fused einsum for RHS assembly
-            dot_term = 0.25 * jnp.einsum('eak,ebk->ea', B_c, m_e)
+            
+            # Unrolled RHS: contrib_a = (Js * Ve / 4) * (sum_b m_b . grad_phi_a)
+            m_sum = m_e[:, 0, :] + m_e[:, 1, :] + m_e[:, 2, :] + m_e[:, 3, :]
+            dot_term = 0.25 * (B_c[..., 0] * m_sum[:, 0, None] + 
+                               B_c[..., 1] * m_sum[:, 1, None] + 
+                               B_c[..., 2] * m_sum[:, 2, None])
+            
             contrib = (Ve_c * Js_c)[:, None] * dot_term
             if assembly == 'scatter':
                 return assemble_scatter(b_acc, conn_c, contrib)
@@ -149,7 +163,8 @@ def make_poisson_ops(
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
-            local = Ve_c[:, None] * jnp.sum(B_c * B_c, axis=2)
+            # Unrolled norm squared: |grad_phi_a|^2
+            local = Ve_c[:, None] * (B_c[..., 0]**2 + B_c[..., 1]**2 + B_c[..., 2]**2)
             if assembly == 'scatter':
                 return assemble_scatter(d_acc, conn_c, local)
             else:
