@@ -21,3 +21,4 @@ __pycache__/
 # IDEs
 .vscode/
 .idea/
+trace_dir/

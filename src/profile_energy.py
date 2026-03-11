@@ -49,7 +49,7 @@ def profile_energy():
     V_mag_nm = np.sum(volume[mat_id == 1])
 
     # 3. Kernels
-    # Use typical CG tolerance for profiling
+    # Set tolerance to 1e-10 to match benchmark/cpp
     solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-10, boundary_mask=boundary_mask, precond_type='amgcl')
     energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal)
     
