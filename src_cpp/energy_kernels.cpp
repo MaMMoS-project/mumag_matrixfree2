@@ -34,7 +34,7 @@ double EnergyKernels::energy_and_grad(const vex::vector<double>& m_gpu,
                                     vex::vector<double>& g_gpu) {
     
     // Internal + Demag Effective Fields
-    g_gpu = mat_K_int * m_gpu + mat_G_grad * U_gpu;
+    g_gpu = mat_K_int * m_gpu + 2.0 * (mat_G_grad * U_gpu);
     
     // Zeeman Field Contribution (Factor -2.0 from Python)
     // Js_v_gpu stretched to 3N: repeats V_i three times for x,y,z components

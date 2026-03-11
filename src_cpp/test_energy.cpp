@@ -2,6 +2,7 @@
 #include <vector>
 #include <chrono>
 #include <cmath>
+#include <iomanip>
 
 #include <vexcl/vexcl.hpp>
 #include "fem_utils.hpp"
@@ -43,18 +44,19 @@ int main(int argc, char** argv) {
     double Js_red = 1.0;
 
     MaterialProperties props;
-    int num_mats = mesh.mat_id.maxCoeff();
-    props.A.assign(num_mats, 0.0);
-    props.K1.assign(num_mats, 0.0);
-    props.Js.assign(num_mats, 0.0);
-    props.k_easy.assign(num_mats, Eigen::Vector3d(0, 0, 1));
+    int max_mat = mesh.mat_id.maxCoeff();
+    props.A.assign(max_mat, 0.0);
+    props.K1.assign(max_mat, 0.0);
+    props.Js.assign(max_mat, 0.0);
+    props.k_easy.assign(max_mat, Eigen::Vector3d(0, 0, 1));
 
-    // Assume mat_id 1 is the magnet, others are air
-    if (num_mats >= 1) {
+    // mat_id 1 = cube, mat_id 2 = air (shell)
+    if (max_mat >= 1) {
         props.A[0] = A_red;
         props.K1[0] = K1_red;
         props.Js[0] = Js_red;
     }
+    // mat_id 2 remains 0 (air)
 
     // 4. Assemble Matrices
     SparseMatrixCSR L, K_int, G_div, G_grad;
@@ -62,7 +64,14 @@ int main(int argc, char** argv) {
 
     double vmag = compute_vmag(mesh, props);
     std::vector<double> js_v = compute_js_node_volumes(mesh, props);
-    std::cout << "Vmag: " << vmag << " nm^3" << std::endl;
+    
+    double V_mag_si = vmag * 1e-27;
+    double SI_FACTOR = Kd * V_mag_si;
+
+    std::cout << std::scientific << std::setprecision(3);
+    std::cout << "Cube Volume (SI): " << V_mag_si << " m^3" << std::endl;
+    std::cout << "Normalization Kd: " << Kd << " J/m^3" << std::endl;
+    std::cout << std::fixed << std::setprecision(6) << std::endl;
 
     // 5. Setup Solver and Kernels
     std::vector<double> mask_cpu(mesh.N);
@@ -70,27 +79,30 @@ int main(int argc, char** argv) {
     PoissonSolver poisson(ctx, L, mask_cpu);
     EnergyKernels kernels(ctx, K_int, G_div, G_grad, js_v, vmag);
 
+    vex::vector<double> g_gpu(ctx, 3 * mesh.N);
+    vex::vector<double> U_zero(ctx, mesh.N); U_zero = 0.0;
+
     // 6. Test States
+
     // --- HELICAL (Exchange) ---
     double L_cube = 20.0; // nm
     double k_wave = M_PI / L_cube;
-    std::vector<double> m_hel_cpu(3 * mesh.N);
+    std::vector<double> m_hel_cpu(3 * mesh.N, 0.0);
     for (int i = 0; i < mesh.N; ++i) {
         double x = mesh.points(i, 0);
         m_hel_cpu[3 * i + 0] = std::cos(k_wave * x);
         m_hel_cpu[3 * i + 1] = std::sin(k_wave * x);
-        m_hel_cpu[3 * i + 2] = 0.0;
     }
     vex::vector<double> m_hel(ctx, m_hel_cpu);
-    vex::vector<double> U_zero(ctx, mesh.N); U_zero = 0.0;
-    vex::vector<double> g_gpu(ctx, 3 * mesh.N);
-
     double e_ex = kernels.energy_and_grad(m_hel, U_zero, Eigen::Vector3d::Zero(), g_gpu);
     double e_ex_an = A_red * k_wave * k_wave;
-    std::cout << "\n--- EXCHANGE ---" << std::endl;
-    std::cout << "Numerical: " << e_ex << " (Analytic: " << e_ex_an << ", Err: " << std::abs(e_ex - e_ex_an)/e_ex_an * 100 << "%)" << std::endl;
+    double E_ex_analytic_si = A_si * std::pow(k_wave * 1e9, 2) * V_mag_si;
 
-    // --- ZEEMAN ---
+    std::cout << "--- EXCHANGE ---" << std::endl;
+    std::cout << "Internal:  " << e_ex << " (Analytic: " << e_ex_an << ", Err: " << std::abs(e_ex - e_ex_an)/e_ex_an * 100.0 << "%)" << std::endl;
+    std::cout << "SI (J):    " << std::scientific << e_ex * SI_FACTOR << " (Analytic: " << E_ex_analytic_si << ")" << std::endl << std::fixed << std::endl;
+
+    // --- ZEEMAN (Uniform X) ---
     double B_ext_si = 0.1; // Tesla
     double b_red = B_ext_si / Js;
     std::vector<double> m_unif_x_cpu(3 * mesh.N, 0.0);
@@ -99,10 +111,27 @@ int main(int argc, char** argv) {
     
     double e_z = kernels.energy_and_grad(m_unif_x, U_zero, Eigen::Vector3d(b_red, 0, 0), g_gpu);
     double e_z_an = -2.0 * b_red;
-    std::cout << "\n--- ZEEMAN ---" << std::endl;
-    std::cout << "Numerical: " << e_z << " (Analytic: " << e_z_an << ", Err: " << std::abs(e_z - e_z_an)/std::abs(e_z_an) * 100 << "%)" << std::endl;
+    double E_z_analytic_si = -(1.0/MU0_SI) * Js * V_mag_si * B_ext_si;
 
-    // --- ANISOTROPY ---
+    std::cout << "--- ZEEMAN ---" << std::endl;
+    std::cout << "Internal:  " << e_z << " (Analytic: " << e_z_an << ", Err: " << std::abs(e_z - e_z_an)/std::abs(e_z_an) * 100.0 << "%)" << std::endl;
+    std::cout << "SI (J):    " << std::scientific << e_z * SI_FACTOR << " (Analytic: " << E_z_analytic_si << ")" << std::endl << std::fixed << std::endl;
+
+    // --- DEMAG (Uniform X) ---
+    vex::vector<double> b_poisson(ctx, mesh.N);
+    vex::vector<double> U_demag(ctx, mesh.N); U_demag = 0.0;
+    kernels.compute_poisson_rhs(m_unif_x, b_poisson);
+    poisson.solve(b_poisson, U_demag);
+
+    double e_dem = kernels.energy_and_grad(m_unif_x, U_demag, Eigen::Vector3d::Zero(), g_gpu);
+    double e_dem_an = 1.0 / 3.0; // Approximation for cube
+    double E_d_analytic_si = (1.0/(6.0*MU0_SI)) * (Js*Js) * V_mag_si;
+
+    std::cout << "--- DEMAG ---" << std::endl;
+    std::cout << "Internal:  " << e_dem << " (Analytic ~ " << e_dem_an << ", Err: " << std::abs(e_dem - e_dem_an)/e_dem_an * 100.0 << "%)" << std::endl;
+    std::cout << "SI (J):    " << std::scientific << e_dem * SI_FACTOR << " (Analytic ~ " << E_d_analytic_si << ")" << std::endl << std::fixed << std::endl;
+
+    // --- ANISOTROPY (45 deg) ---
     std::vector<double> m_aniso_45_cpu(3 * mesh.N, 0.0);
     double inv_sqrt2 = 1.0 / std::sqrt(2.0);
     for (int i = 0; i < mesh.N; ++i) {
@@ -112,19 +141,11 @@ int main(int argc, char** argv) {
     vex::vector<double> m_aniso_45(ctx, m_aniso_45_cpu);
     double e_an = kernels.energy_and_grad(m_aniso_45, U_zero, Eigen::Vector3d::Zero(), g_gpu);
     double e_an_an = -K1_red * 0.5;
-    std::cout << "\n--- ANISOTROPY ---" << std::endl;
-    std::cout << "Numerical: " << e_an << " (Analytic: " << e_an_an << ", Err: " << std::abs(e_an - e_an_an)/std::abs(e_an_an) * 100 << "%)" << std::endl;
+    double E_an_expected_si = -K1 * V_mag_si * 0.5;
 
-    // --- DEMAG ---
-    vex::vector<double> b_poisson(ctx, mesh.N);
-    vex::vector<double> U_demag(ctx, mesh.N); U_demag = 0.0;
-    kernels.compute_poisson_rhs(m_unif_x, b_poisson);
-    poisson.solve(b_poisson, U_demag);
-
-    double e_dem = kernels.energy_and_grad(m_unif_x, U_demag, Eigen::Vector3d::Zero(), g_gpu);
-    double e_dem_an = 1.0 / 3.0; // Approximation for cube
-    std::cout << "\n--- DEMAG ---" << std::endl;
-    std::cout << "Numerical: " << e_dem << " (Analytic ~ " << e_dem_an << ")" << std::endl;
+    std::cout << "--- ANISOTROPY ---" << std::endl;
+    std::cout << "Internal:  " << e_an << " (Analytic: " << e_an_an << ", Err: " << std::abs(e_an - e_an_an)/std::abs(e_an_an) * 100.0 << "%)" << std::endl;
+    std::cout << "SI (J):    " << std::scientific << e_an * SI_FACTOR << " (Analytic: " << E_an_expected_si << ")" << std::endl << std::fixed << std::endl;
 
     return 0;
 }

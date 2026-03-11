@@ -38,3 +38,7 @@ target_link_libraries(test_poisson_convergence ${OpenCL_LIBRARIES} ${Boost_LIBRA
 add_executable(test_energy src_cpp/test_energy.cpp ${SOURCES})
 target_link_libraries(test_energy ${OpenCL_LIBRARIES} ${Boost_LIBRARIES} cnpy z)
 
+# Profile energy
+add_executable(profile_energy src_cpp/profile_energy.cpp ${SOURCES})
+target_link_libraries(profile_energy ${OpenCL_LIBRARIES} ${Boost_LIBRARIES} cnpy z)
+

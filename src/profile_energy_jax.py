@@ -1,7 +1,7 @@
-"""profile_energy.py
+"""profile_energy_jax.py
 
-Performance profiling for micromagnetic energy and gradient kernels.
-Compares a full iteration (including Poisson solve) vs. energy/gradient kernels alone.
+Detailed JAX profiling for micromagnetic energy and gradient kernels.
+Uses jax.profiler to capture a trace for analysis in perfetto.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from dataclasses import replace
+from pathlib import Path
 
 from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
@@ -22,6 +23,10 @@ import add_shell
 def profile_energy():
     # 1. Load existing mesh
     mesh_path = "cube_60nm_shell.npz"
+    if not Path(mesh_path).exists():
+        print(f"Error: {mesh_path} not found. Please run generate_test_mesh.py first.")
+        return
+
     print(f"Loading mesh from {mesh_path}...")
     data = np.load(mesh_path)
     knt, ijk = data['knt'], data['ijk']
@@ -49,7 +54,7 @@ def profile_energy():
     V_mag_nm = np.sum(volume[mat_id == 1])
 
     # 3. Kernels
-    # Use typical CG tolerance for profiling
+    # Set tolerance to 1e-10 to match benchmark/cpp
     solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-10, boundary_mask=boundary_mask, precond_type='amgcl')
     energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal)
     
@@ -67,42 +72,28 @@ def profile_energy():
     e_warm, g_warm = energy_and_grad(m, u_warm, b_ext)
     jax.block_until_ready((u_warm, e_warm, g_warm))
 
-    # 4. Profiling Loop 1: Full Iteration (Solve U + Kernels)
-    n_repeats = 5
-    print(f"\nLoop 1: Recomputing potential U every time ({n_repeats} iterations)...")
+    # 4. Profiling with JAX Trace
+    trace_dir = "./trace_dir"
+    print(f"\nStarting JAX profiler. Trace will be saved to {trace_dir}")
+    
+    jax.profiler.start_trace(trace_dir)
+    n_repeats = 1
+    print(f"Profiling {n_repeats} full iterations...")
     
     t0 = time.perf_counter()
-    for _ in range(n_repeats):
-        u = solve_U(m, jnp.zeros(knt.shape[0]))
-        e, g = energy_and_grad(m, u, b_ext)
-        jax.block_until_ready((e, g))
+    for i in range(n_repeats):
+        with jax.profiler.TraceAnnotation(f"full_iteration_step_{i}"):
+            u = solve_U(m, jnp.zeros(knt.shape[0]))
+            e, g = energy_and_grad(m, u, b_ext)
+            jax.block_until_ready((e, g))
     t1 = time.perf_counter()
-    
-    total_full = t1 - t0
-    avg_full = total_full / n_repeats
+    jax.profiler.stop_trace()
 
-    # 5. Profiling Loop 2: Kernels Only (Reuse U)
-    print(f"Loop 2: Reusing precomputed potential U ({n_repeats} iterations)...")
-    u_fixed = solve_U(m, jnp.zeros(knt.shape[0]))
-    jax.block_until_ready(u_fixed)
-    
-    t2 = time.perf_counter()
-    for _ in range(n_repeats):
-        e, g = energy_and_grad(m, u_fixed, b_ext)
-        jax.block_until_ready((e, g))
-    t3 = time.perf_counter()
-    
-    total_kernels = t3 - t2
-    avg_kernels = total_kernels / n_repeats
-
-    # 6. Report
-    print("\n" + "="*40)
-    print(f"{'Metric':<25} | {'Time (ms)':>10}")
-    print("-" * 40)
-    print(f"{'Full Iteration (Avg)':<25} | {avg_full*1000:>10.2f}")
-    print(f"{'Kernels Only (Avg)':<25} | {avg_kernels*1000:>10.2f}")
-    print(f"{'Poisson Solve Overhead':<25} | {(avg_full - avg_kernels)*1000:>10.2f}")
-    print("="*40)
+    avg_full = (t1 - t0) / n_repeats
+    print(f"\nAverage Full Iteration Time: {avg_full*1000:.2f} ms")
+    print("\nTo view the trace:")
+    print("1. Go to https://ui.perfetto.dev/")
+    print(f"2. Upload the .gz file from {trace_dir}/plugins/profile/")
 
 if __name__ == "__main__":
     profile_energy()
