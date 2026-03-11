@@ -50,8 +50,9 @@ def profile_energy():
 
     # 3. Kernels
     # Set tolerance to 1e-10 to match benchmark/cpp
-    solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-10, boundary_mask=boundary_mask, precond_type='amgcl')
-    energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal)
+    chunk_elems = 100_000
+    solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-10, boundary_mask=boundary_mask, precond_type='amgcl', chunk_elems=chunk_elems)
+    energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag_nm, M_nodal, chunk_elems=chunk_elems)
     
     # Test state: Random magnetization
     key = jax.random.PRNGKey(42)
