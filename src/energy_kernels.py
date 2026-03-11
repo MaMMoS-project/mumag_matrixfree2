@@ -14,7 +14,7 @@ Dimensionless variables:
     m = M / Js             (Unit vector)
     Js_red = Js / Js_ref   (Dimensionless)
     B_red = B_ext / Js_ref (Dimensionless)
-    u = (mu0 / Js_ref) * U_phys (Dimensionless potential)
+    u = (mu0 / Js_ref) * u_calc (Dimensionless potential)
 
 Energy Normalization (E_dimensionless = E_SI / (Kd_ref * Vmag)):
     1. Exchange:   E_ex  = (1/Vmag) * Integral( A_red * |grad m|^2 ) dV
@@ -99,6 +99,14 @@ def make_energy_kernels(
     # Inverse volume normalization
     inv_Vmag = 1.0 / V_mag
 
+    # Pre-calculate material-weighted geometry terms to save multiplications in the loop
+    # mat_id is 1-based, so subtract 1 for lookup
+    g_ids = mat_id - 1
+    # Scale factors for each energy term (Factor 2.0 for quadratic gradients)
+    A_Ve = 2.0 * A_lookup[g_ids] * Ve
+    K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
+    Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
+
     if grad_backend == 'stored_grad_phi':
         if geom_p.grad_phi is None:
             raise ValueError('stored_grad_phi requires geom.grad_phi')
@@ -146,18 +154,17 @@ def make_energy_kernels(
         def body(i, g_acc):
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
 
             mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-            Ve_eff = Ve_c * mask
-
-            g_ids = mat_c - 1
-            a_c = A_lookup[g_ids].astype(dtype)
-            q_c = K1_lookup[g_ids].astype(dtype)
-            k_c = k_easy_lookup[g_ids].astype(dtype)
-            j_c = Js_lookup[g_ids].astype(dtype)
+            
+            # Slice pre-scaled properties and apply mask
+            a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
+            q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
+            j_ve_c = lax.dynamic_slice(Js_Ve, (s,), (chunk_elems,)) * mask
+            
+            k_c = k_easy_lookup[mat_c - 1].astype(dtype)
 
             m_e = m[conn_c]
             U_e = U[conn_c]
@@ -169,19 +176,20 @@ def make_energy_kernels(
                  m_e[:, 2, :, None] * B_c[:, 2, None, :] + 
                  m_e[:, 3, :, None] * B_c[:, 3, None, :])
             
-            # Km_egl = sum_k G_elk * B_egk
             Km = (G[:, None, 0, :] * B_c[..., 0, None] + 
                   G[:, None, 1, :] * B_c[..., 1, None] + 
                   G[:, None, 2, :] * B_c[..., 2, None])
             
-            contrib = (2.0 * a_c * Ve_eff)[:, None, None] * Km
+            contrib = a_ve_c[:, None, None] * Km
 
             # 2. Uniaxial Anisotropy Gradient (Quadratic)
-            # v_e = m_e . k_c
-            v_e = jnp.sum(m_e * k_c[:, None, :], axis=2)
-            sum_v = jnp.sum(v_e, axis=1)
-            Mv = (Ve_eff / 20.0)[:, None] * (sum_v[:, None] + v_e)
-            factor = (-2.0 * q_c)[:, None] * Mv
+            # Unrolled dot products and sums for maximum register pressure efficiency
+            v_e = (m_e[:, :, 0] * k_c[:, None, 0] + 
+                   m_e[:, :, 1] * k_c[:, None, 1] + 
+                   m_e[:, :, 2] * k_c[:, None, 2])
+            
+            sum_v = (v_e[:, 0] + v_e[:, 1] + v_e[:, 2] + v_e[:, 3])[:, None]
+            factor = -q_ve_c[:, None] * (sum_v + v_e)
             contrib = contrib + factor[..., None] * k_c[:, None, :]
 
             # 3. Demag Gradient (Quadratic)
@@ -191,8 +199,7 @@ def make_energy_kernels(
                       U_e[:, 2, None] * B_c[:, 2, :] + 
                       U_e[:, 3, None] * B_c[:, 3, :])
             
-            scale_dem = (2.0 * j_c * Ve_eff / 4.0)[:, None, None]
-            contrib = contrib + scale_dem * grad_u[:, None, :]
+            contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
 
             if assembly == 'scatter':
                 g_acc = assemble_scatter(g_acc, conn_c, contrib)
