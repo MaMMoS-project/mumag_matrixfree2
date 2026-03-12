@@ -115,7 +115,7 @@ def make_minimizer_no_demag(
 
     bb_step = jax.jit(_bb_step)
 
-    def minimize(m0, B_ext, max_iter=500, eps_a=1e-8):
+    def minimize(m0, B_ext, max_iter=500, eps_a=1e-8, verbose=True):
         m = jnp.asarray(m0, dtype=jnp.float64)
         g_prev = jnp.zeros_like(m)
         state = MinimState(m=m, U_prev=jnp.zeros(m.shape[0]), g_prev=g_prev, m_prev=m, tau=jnp.asarray(1e-2, jnp.float64), it=jnp.int32(0))
@@ -128,12 +128,13 @@ def make_minimizer_no_demag(
 
     return minimize
 
-def run_sw_me_test(inp_path: str):
+def run_sw_me_test(inp_path: str, phi_deg: float = 0.0):
     if not os.path.exists(inp_path):
         print(f"Error: {inp_path} not found.")
         return
 
     print(f"--- Stoner-Wohlfarth ME Test (from {inp_path}) ---")
+    print(f"Field rotation plane: phi = {phi_deg} deg")
     knt, ijk, cell_data = parse_inp_with_data(inp_path)
     
     tets = ijk[:, :4].astype(np.int64); mat_id = ijk[:, 4].astype(np.int32)
@@ -172,14 +173,20 @@ def run_sw_me_test(inp_path: str):
     B_vals = np.arange(8.0, -9.0, -0.1)
     
     out_dir = ensure_dir("hyst_me_inp")
-    csv_path = out_dir / "sw_summary_me.csv"
+    csv_path = out_dir / f"sw_summary_me_phi{phi_deg:.0f}.csv"
     with open(csv_path, "w") as f:
         f.write("angle_deg,B_sw_exp_T\n")
 
+    phi_rad = np.deg2rad(phi_deg)
     for theta_deg in angles_deg:
         theta_rad = np.deg2rad(theta_deg)
-        h_dir = np.array([np.sin(theta_rad), 0.0, np.cos(theta_rad)])
-        print(f"\nSweeping angle: {theta_deg} deg...")
+        # Field direction: (sin theta * cos phi, sin theta * sin phi, cos theta)
+        h_dir = np.array([
+            np.sin(theta_rad) * np.cos(phi_rad),
+            np.sin(theta_rad) * np.sin(phi_rad),
+            np.cos(theta_rad)
+        ])
+        print(f"\nSweeping theta: {theta_deg} deg...")
         m = jnp.tile(jnp.array([0.0, 0.0, 1.0]), (knt.shape[0], 1))
         j_par_list = []
         for Bmag in B_vals:
@@ -202,5 +209,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--inp", type=str, default="lsdyna/ring.mappend.inp")
+    parser.add_argument("--phi", type=float, default=0.0, help="Azimuthal angle of the rotation plane (0=XZ, 90=YZ)")
     args = parser.parse_args()
-    run_sw_me_test(args.inp)
+    run_sw_me_test(args.inp, args.phi)
