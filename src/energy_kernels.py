@@ -170,15 +170,17 @@ def make_energy_kernels(
             U_e = U[conn_c]
 
             # 1. Exchange Gradient (Quadratic)
-            # Unrolled contraction over 4 nodes to allow XLA fusion
+            # grad_m [e, i, k] = sum_a m_eai * B_eak
             G = (m_e[:, 0, :, None] * B_c[:, 0, None, :] + 
                  m_e[:, 1, :, None] * B_c[:, 1, None, :] + 
                  m_e[:, 2, :, None] * B_c[:, 2, None, :] + 
                  m_e[:, 3, :, None] * B_c[:, 3, None, :])
             
-            Km = (G[:, None, 0, :] * B_c[..., 0, None] + 
-                  G[:, None, 1, :] * B_c[..., 1, None] + 
-                  G[:, None, 2, :] * B_c[..., 2, None])
+            # Km [e, a, i] = sum_k G_eik * B_eak
+            # We unroll over the spatial index k=0,1,2
+            Km = (G[:, :, 0][:, None, :] * B_c[:, :, 0][:, :, None] + 
+                  G[:, :, 1][:, None, :] * B_c[:, :, 1][:, :, None] + 
+                  G[:, :, 2][:, None, :] * B_c[:, :, 2][:, :, None])
             
             contrib = a_ve_c[:, None, None] * Km
 
