@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{Derivation and Implementation of Magnetoelastic Anisotropy Energy}
+\author{Gemini CLI}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Energy Density in Spherical Coordinates}
+The energy density for magnetoelastic anisotropy is provided in terms of the magnetization angles $\theta$ (polar angle from the $z$-axis) and $\phi$ (azimuthal angle from the $x$-axis):
+\begin{equation}
+    e_{\text{me}} = k_{1\text{me}} \sin^2 \theta + k'_{1\text{me}} \sin^2 \theta \cos(2\phi)
+\end{equation}
+where $k_{1\text{me}}$ and $k'_{1\text{me}}$ are the magnetoelastic constants. The magnetocrystalline easy axis is assumed to be along $(0,0,1)$.
+
+\section{Conversion to Cartesian Coordinates}
+To implement this in a Cartesian FEM framework, we use the standard transformation for the unit magnetization vector $\mathbf{m} = (m_x, m_y, m_z)$:
+\begin{align}
+    m_x &= \sin \theta \cos \phi \\
+    m_y &= \sin \theta \sin \phi \\
+    m_z &= \cos \theta
+\end{align}
+From these, we derive the following identities:
+\begin{align}
+    m_x^2 + m_y^2 &= \sin^2 \theta (\cos^2 \phi + \sin^2 \phi) = \sin^2 \theta \\
+    m_x^2 - m_y^2 &= \sin^2 \theta (\cos^2 \phi - \sin^2 \phi) = \sin^2 \theta \cos(2\phi)
+\end{align}
+Substituting these into the energy density expression:
+\begin{align}
+    e_{\text{me}} &= k_{1\text{me}} (m_x^2 + m_y^2) + k'_{1\text{me}} (m_x^2 - m_y^2) \nonumber \\
+    e_{\text{me}} &= (k_{1\text{me}} + k'_{1\text{me}}) m_x^2 + (k_{1\text{me}} - k'_{1\text{me}}) m_y^2
+\end{align}
+This is the quadratic form implemented in the code.
+
+\section{Finite Element Discretization}
+The total magnetoelastic energy is the integral of the density over the magnetic volume:
+\begin{equation}
+    E_{\text{me}} = \int_V \left[ K_x m_x^2 + K_y m_y^2 \right] dV
+\end{equation}
+where $K_x = k_{1\text{me}} + k'_{1\text{me}}$ and $K_y = k_{1\text{me}} - k'_{1\text{me}}$. 
+
+For the gradient (effective field) at node $i$, we compute:
+\begin{equation}
+    \mathbf{g}_{i,\text{me}} = \frac{\partial E_{\text{me}}}{\partial \mathbf{m}_i} = \int_V \frac{\partial e_{\text{me}}}{\partial \mathbf{m}} \phi_i dV
+\end{equation}
+The partial derivatives are:
+\begin{equation}
+    \frac{\partial e_{\text{me}}}{\partial m_x} = 2 K_x m_x, \quad \frac{\partial e_{\text{me}}}{\partial m_y} = 2 K_y m_y, \quad \frac{\partial e_{\text{me}}}{\partial m_z} = 0
+\end{equation}
+Using the P1 linear basis functions $\phi_i$ and the expansion $m_x = \sum_j m_{x,j} \phi_j$, the integral for the $x$-component is:
+\begin{equation}
+    g_{ix,\text{me}} = 2 K_x \sum_j m_{x,j} \int_V \phi_i \phi_j dV
+\end{equation}
+Over a tetrahedron of volume $V_e$, the consistent mass matrix integral is:
+\begin{equation}
+    \int_{V_e} \phi_i \phi_j dV = \frac{V_e}{20} (1 + \delta_{ij})
+\end{equation}
+Thus, the nodal gradient contribution from element $e$ is:
+\begin{equation}
+    g_{ix,\text{me}}^{(e)} = 2 K_x \frac{V_e}{20} \left( \sum_{j=1}^4 m_{x,j} + m_{x,i} \right)
+\end{equation}
+This matches the implementation in \texttt{energy\_kernels.py}:
+\begin{verbatim}
+gx_me = kx_ve_c * (sum_mx + mx_e)
+gy_me = ky_ve_c * (sum_my + my_e)
+\end{verbatim}
+where \texttt{kx\_ve\_c} corresponds to $2 K_x \frac{V_e}{20}$.
+
+\end{document}
