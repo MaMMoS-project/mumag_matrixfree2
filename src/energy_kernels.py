@@ -84,6 +84,8 @@ def make_energy_kernels(
     V_mag: float,
     M_nodal: Array,
     *,
+    k1me: Optional[Array] = None,
+    k1me_p: Optional[Array] = None,
     chunk_elems: int = 200_000,
     assembly: Assembly = 'scatter',
     grad_backend: GradBackend = 'stored_grad_phi',
@@ -106,6 +108,23 @@ def make_energy_kernels(
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
+
+    # Magnetoelastic terms (per element)
+    if k1me is not None:
+        # Pad k1me/k1me_p if provided
+        k1me_padded = jnp.zeros(conn.shape[0])
+        k1me_padded = k1me_padded.at[:k1me.shape[0]].set(k1me)
+        k1mep_padded = jnp.zeros(conn.shape[0])
+        if k1me_p is not None:
+            k1mep_padded = k1mep_padded.at[:k1me_p.shape[0]].set(k1me_p)
+        
+        # Kx = k1me + k1mep, Ky = k1me - k1mep
+        # Scale by 2.0 (quadratic) and Ve / 20.0 (consistent mass matrix)
+        Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
+        Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
+    else:
+        Kx_Ve = None
+        Ky_Ve = None
 
     if grad_backend == 'stored_grad_phi':
         if geom_p.grad_phi is None:
@@ -202,6 +221,26 @@ def make_energy_kernels(
                       U_e[:, 3, None] * B_c[:, 3, :])
             
             contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
+
+            # 4. Magnetoelastic Anisotropy (Quadratic)
+            # Ex_me = (k1me + k1me_p) * mx^2 + (k1me - k1me_p) * my^2
+            if Kx_Ve is not None:
+                kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
+                ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
+                
+                mx_e = m_e[:, :, 0]
+                my_e = m_e[:, :, 1]
+                
+                sum_mx = (mx_e[:, 0] + mx_e[:, 1] + mx_e[:, 2] + mx_e[:, 3])[:, None]
+                sum_my = (my_e[:, 0] + my_e[:, 1] + my_e[:, 2] + my_e[:, 3])[:, None]
+                
+                gx_me = kx_ve_c[:, None] * (sum_mx + mx_e)
+                gy_me = ky_ve_c[:, None] * (sum_my + my_e)
+                
+                # Add to contrib (node-wise gradient)
+                # Magnetoelastic contribution only has x and y components
+                contrib = contrib.at[:, :, 0].add(gx_me)
+                contrib = contrib.at[:, :, 1].add(gy_me)
 
             if assembly == 'scatter':
                 g_acc = assemble_scatter(g_acc, conn_c, contrib)
