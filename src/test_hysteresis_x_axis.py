@@ -17,8 +17,32 @@ import time
 from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
 from hysteresis_loop import LoopParams, run_hysteresis_loop
+from io_utils import ensure_dir
 import add_shell
 import mesh
+
+def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
+    """Writes an AVS UCD (.inp) file from numpy arrays."""
+    num_nodes = nodes_arr.shape[0]
+    num_elems = elements_arr.shape[0]
+    
+    print(f"Writing INP file: {path}")
+    with open(path, 'w') as f:
+        # header: nodes elements 0 0 0
+        f.write(f"{num_nodes} {num_elems} 0 0 0\n")
+        
+        # Write nodes (1-based ID)
+        for i in range(num_nodes):
+            x, y, z = nodes_arr[i]
+            f.write(f"{i+1} {x} {y} {z}\n")
+            
+        # Write elements (1-based ID, tetra type)
+        for i in range(num_elems):
+            eid = i + 1
+            mat_id = int(elements_arr[i, 4])
+            nids = elements_arr[i, :4].astype(int) + 1 # 1-based node IDs
+            nids_str = " ".join(map(str, nids))
+            f.write(f"{eid} {mat_id} tet {nids_str}\n")
 
 def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8):
     print(f"\n=== Running Hysteresis with {precond_type.upper()} (order={order}) ===")
@@ -33,6 +57,11 @@ def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8):
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
     knt, ijk = add_shell.run_add_shell_pipeline(in_npz=tmp_path, layers=layers, K=1.4, h0=h, verbose=False)
     if Path(tmp_path).exists(): Path(tmp_path).unlink()
+
+    # Save to INP
+    out_dir = ensure_dir(f'hyst_{precond_type}')
+    inp_path = out_dir / "mesh_20nm.inp"
+    write_inp(str(inp_path), knt, ijk)
 
     tets = ijk[:, :4].astype(np.int64)
     mat_id = ijk[:, 4].astype(np.int32)

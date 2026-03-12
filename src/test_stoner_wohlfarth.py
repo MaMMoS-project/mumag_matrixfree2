@@ -24,6 +24,24 @@ from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
 from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row
 import mesh
 
+def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
+    """Writes an AVS UCD (.inp) file from numpy arrays."""
+    num_nodes = nodes_arr.shape[0]
+    num_elems = elements_arr.shape[0]
+    
+    print(f"Writing INP file: {path}")
+    with open(path, 'w') as f:
+        f.write(f"{num_nodes} {num_elems} 0 0 0\n")
+        for i in range(num_nodes):
+            x, y, z = nodes_arr[i]
+            f.write(f"{i+1} {x} {y} {z}\n")
+        for i in range(num_elems):
+            eid = i + 1
+            mat_id = int(elements_arr[i, 4])
+            nids = elements_arr[i, :4].astype(int) + 1
+            nids_str = " ".join(map(str, nids))
+            f.write(f"{eid} {mat_id} tet {nids_str}\n")
+
 def make_minimizer_no_demag(
     geom: TetGeom,
     A_lookup: jnp.ndarray,
@@ -80,6 +98,11 @@ def run_sw_test():
     
     print(f"--- Stoner-Wohlfarth Test (20nm Cube) ---")
     knt, ijk, _, _ = mesh.run_single_solid_mesher(geom='box', extent=f"{L_cube},{L_cube},{L_cube}", h=h, backend='grid', no_vis=True, return_arrays=True)
+    
+    # Save mesh to INP
+    out_dir = ensure_dir("hyst_no_demag")
+    write_inp(str(out_dir / "mesh_sw_20nm.inp"), knt, ijk)
+
     tets = ijk[:, :4].astype(np.int64); mat_id = ijk[:, 4].astype(np.int32)
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
