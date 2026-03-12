@@ -2,7 +2,7 @@
 
 Test for magnetization curve along the hard axis (X).
 Easy axis is Z. Field is applied along X.
-Compares AMG vs Jacobi performance on a 60nm cube.
+Uses AMGCL preconditioner on a 20nm cube (NdFeB-like properties).
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from pathlib import Path
 import time
 
 from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT, load_materials_krn
+from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 import add_shell
 import mesh
 
-def run_benchmark(precond_type, order, L_cube=60.0, h=2.0, layers=8):
-    print(f"\n=== Benchmarking {precond_type.upper()} (order={order}) ===")
+def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8):
+    print(f"\n=== Running Hysteresis with {precond_type.upper()} (order={order}) ===")
     
     print(f"Creating mesh: {L_cube}nm cube, h={h}nm, layers={layers}...")
     knt0, ijk0, _, _ = mesh.run_single_solid_mesher(
@@ -47,22 +47,26 @@ def run_benchmark(precond_type, order, L_cube=60.0, h=2.0, layers=8):
         grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
     )
     
-    # Material Properties (NdFeB fallback)
-    Js_lookup = np.array([1.6, 0.0])
-    K1_lookup = np.array([4.3e6, 0.0])
-    A_si = 7.7e-12
+    # Material Properties (Normalized NdFeB-like as in test_energy.cpp)
+    Js_si = 1.6 # Tesla
+    K1_si = 4.3e6 # J/m^3
+    A_si = 7.7e-12 # J/m
+    
+    MU0_SI = 4e-7 * np.pi
+    Kd_ref = (Js_si**2) / (2.0 * MU0_SI)
+    
+    # Normalized properties
+    A_red = (A_si * 1e18) / Kd_ref
+    K1_red_val = K1_si / Kd_ref
+    Js_red_val = 1.0 # Js_si / Js_si
+    
+    # mat_id 1 = cube, mat_id 2 = air (shell)
+    Js_lookup = np.array([Js_red_val, 0.0])
+    K1_lookup = np.array([K1_red_val, 0.0])
+    A_lookup_red = np.array([A_red, 0.0])
     k_easy_lookup = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
 
-    Js_ref = np.max(Js_lookup)
-    MU0_SI = 4e-7 * np.pi
-    Kd_ref = (Js_ref**2) / (2.0 * MU0_SI)
-    
-    A_red = (A_si * 1e18) / Kd_ref
-    K1_red = K1_lookup / Kd_ref
-    Js_red = Js_lookup / Js_ref
-    A_lookup_red = np.array([A_red, 0.0])
-    
-    is_mag = np.isin(mat_id, np.where(Js_lookup > 0)[0] + 1)
+    is_mag = (mat_id == 1)
     V_mag = np.sum(volume[is_mag])
 
     m0_vec = np.array([0.0, 0.0, 1.0])
@@ -70,36 +74,43 @@ def run_benchmark(precond_type, order, L_cube=60.0, h=2.0, layers=8):
     
     params = LoopParams(
         h_dir=np.array([1.0, 0.0, 0.0]),
-        B_start=0.0, B_end=8.0, dB=2.0, # Fewer steps for faster benchmark
+        B_start=0.0, B_end=2.0, dB=0.5, # Reduced field range for a quick test
         loop=False,
-        out_dir=f'bench_{precond_type}',
-        Js_ref=Js_ref,
-        max_iter=100,
+        out_dir=f'hyst_{precond_type}',
+        Js_ref=Js_si,
+        max_iter=200,
         snapshot_every=0,
         verbose=True
     )
     
-    node_vols = compute_node_volumes(geom, chunk_elems=100000)
+    # Precompute M_nodal
+    vol_Js = volume * np.array(Js_lookup[mat_id - 1])
+    from dataclasses import replace
+    geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
+    M_nodal = compute_node_volumes(geom_Js, chunk_elems=100_000)
+    node_vols = compute_node_volumes(geom, chunk_elems=100_000)
     
     start_t = time.time()
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
         A_lookup=A_lookup_red,
-        K1_lookup=K1_red,
-        Js_lookup=Js_red,
+        K1_lookup=K1_lookup,
+        Js_lookup=Js_lookup,
         k_easy_lookup=k_easy_lookup,
         m0=m0,
         params=params,
         V_mag=float(V_mag),
         node_volumes=node_vols,
+        M_nodal=M_nodal,
         grad_backend='stored_grad_phi',
         boundary_mask=boundary_mask,
         precond_type=precond_type,
         order=order,
         cg_tol=1e-9
     )
-    jax.tree_util.tree_map(lambda x: x.block_until_ready() if hasattr(x, 'block_until_ready') else x, res)
+    # Ensure all JAX operations are done
+    jax.block_until_ready(res)
     end_t = time.time()
     
     duration = end_t - start_t
@@ -107,10 +118,5 @@ def run_benchmark(precond_type, order, L_cube=60.0, h=2.0, layers=8):
     return duration
 
 if __name__ == "__main__":
-    t_amg = run_benchmark('amg', order=3)
-    t_jac = run_benchmark('jacobi', order=0)
-    
-    print("\nSummary (60nm Cube, 8 Layers, 1e-10 tol):")
-    print(f"AMG    : {t_amg:.3f} s")
-    print(f"Jacobi : {t_jac:.3f} s")
-    print(f"Speedup: {t_jac / t_amg:.2f}x")
+    t_amg = run_benchmark('amgcl', order=3, L_cube=20.0)
+    print(f"\nSimulation finished. Total time: {t_amg:.3f} s")
