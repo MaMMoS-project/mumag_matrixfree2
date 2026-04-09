@@ -30,6 +30,7 @@ import jax.numpy as jnp
 from fem_utils import TetGeom
 import add_shell
 from hysteresis_loop import LoopParams, run_hysteresis_loop
+from io_utils import write_mh
 
 # Reference tetra gradients
 _GRAD_HAT = np.array([
@@ -107,6 +108,29 @@ def load_materials_krn(krn_path: str, G: int):
     return A, K1, Js, k_easy
 
 
+def load_params_p2(p2_path: str | Path):
+    """Basic parser for mammos-mumag .p2 configuration files."""
+    import configparser
+    config = configparser.ConfigParser()
+    config.read(p2_path)
+    
+    overrides = {}
+    if 'field' in config:
+        f = config['field']
+        if 'h' in f: overrides['h_dir'] = np.array([float(x) for x in f['h'].split(',')])
+        if 'hstart' in f: overrides['B_start'] = float(f['hstart'])
+        if 'hfinal' in f: overrides['B_end'] = float(f['hfinal'])
+        if 'hstep' in f: overrides['dB'] = float(f['hstep'])
+        if 'mfinal' in f: overrides['mfinal'] = float(f['mfinal'])
+    
+    if 'minimizer' in config:
+        m = config['minimizer']
+        if 'tol_fun' in m: overrides['tau_f'] = float(m['tol_fun'])
+        if 'precond_iter' in m: overrides['cg_maxiter'] = int(m['precond_iter'])
+        
+    return overrides
+
+
 def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None):
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
@@ -130,7 +154,8 @@ def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None):
 
 def main():
     ap = argparse.ArgumentParser(description='Micromagnetics hysteresis driver with shell + preprocessing.')
-    ap.add_argument('--mesh', required=True, help='Input NPZ mesh (knt, ijk).')
+    ap.add_argument('modelname', nargs='?', help='Base name of the model (positional, for mammos-mumag compatibility).')
+    ap.add_argument('--mesh', help='Input NPZ mesh (knt, ijk).')
 
     # shell parameters
     ap.add_argument('--add-shell', action='store_true', help='Add an airbox shell around the mesh.')
@@ -177,6 +202,21 @@ def main():
     ap.add_argument('--verbose', action='store_true', help='Show minimizer iterations.')
 
     args = ap.parse_args()
+
+    # Automatic file discovery if modelname is provided
+    modelname = args.modelname
+    if modelname:
+        if args.mesh is None:
+            args.mesh = str(Path(modelname).with_suffix('.npz'))
+        if args.materials is None:
+            krn_path = Path(modelname).with_suffix('.krn')
+            if krn_path.exists():
+                args.materials = str(krn_path)
+        if args.out_dir == 'hyst_out':
+            args.out_dir = f'hyst_{modelname}'
+
+    if args.mesh is None:
+        ap.error("the following arguments are required: --mesh or modelname")
 
     data = np.load(args.mesh)
     knt = np.asarray(data['knt'], dtype=np.float64)
@@ -297,21 +337,35 @@ def main():
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
-    params = LoopParams(
-        h_dir=h_dir,
-        B_start=float(args.B_start) / Js_ref,
-        B_end=float(args.B_end) / Js_ref,
-        dB=float(args.dB) / Js_ref,
-        tau_f=float(args.tau_f),
-        eps_a=float(args.eps_a),
-        loop=True,
-        out_dir=args.out_dir,
-        snapshot_every=int(args.snapshot_every),
-        verbose=args.verbose,
-        Js_ref=float(Js_ref),
-    )
+    params_dict = {
+        'h_dir': h_dir,
+        'B_start': float(args.B_start) / Js_ref,
+        'B_end': float(args.B_end) / Js_ref,
+        'dB': float(args.dB) / Js_ref,
+        'tau_f': float(args.tau_f),
+        'eps_a': float(args.eps_a),
+        'loop': True,
+        'out_dir': args.out_dir,
+        'snapshot_every': int(args.snapshot_every),
+        'verbose': args.verbose,
+        'Js_ref': float(Js_ref),
+    }
 
-    run_hysteresis_loop(
+    # Load .p2 overrides if available
+    if modelname:
+        p2_path = Path(modelname).with_suffix('.p2')
+        if p2_path.exists():
+            print(f"[config] Loading overrides from {p2_path}")
+            p2_overrides = load_params_p2(p2_path)
+            # Scale field values by Js_ref
+            if 'B_start' in p2_overrides: p2_overrides['B_start'] /= Js_ref
+            if 'B_end' in p2_overrides: p2_overrides['B_end'] /= Js_ref
+            if 'dB' in p2_overrides: p2_overrides['dB'] /= Js_ref
+            params_dict.update(p2_overrides)
+
+    params = LoopParams(**params_dict)
+
+    res = run_hysteresis_loop(
         points=knt,
         geom=geom,
         A_lookup=A_red,
@@ -331,6 +385,11 @@ def main():
         poisson_reg=float(args.poisson_reg),
         boundary_mask=boundary_mask,
     )
+
+    # Write .mh file for mammos-mumag compatibility
+    mh_name = modelname if modelname else "hysteresis"
+    write_mh(Path(args.out_dir) / mh_name, res['history'])
+    print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
 
 
 if __name__ == '__main__':

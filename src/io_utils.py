@@ -37,6 +37,15 @@ def append_hysteresis_row(csv_path: str | Path, H: float, M_parallel: float, E: 
         f.write(",".join(parts) + "\n")
 
 
+def write_mh(path: str | Path, records: np.ndarray) -> None:
+    """Write mammos-mumag compatible .mh file."""
+    path = Path(path).with_suffix(".mh")
+    header = "B_ext [T]  J_parallel [T]  mx  my  mz  E [J/m^3]"
+    with open(path, "w") as f:
+        f.write("# " + header + " \n")
+        np.savetxt(f, records, fmt="%.9e")
+
+
 def compute_volume_averaged_J_parallel(m_nodes: np.ndarray, conn: np.ndarray, volume: np.ndarray, mat_id: np.ndarray, Js_lookup: np.ndarray, h_dir: np.ndarray) -> float:
     h = np.asarray(h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30

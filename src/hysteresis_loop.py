@@ -94,6 +94,27 @@ def jax_compute_volume_averaged_J_parallel(
     return jnp.dot(J_avg, h)
 
 
+@jax.jit
+def jax_compute_volume_averaged_m(
+    m_nodes: jnp.ndarray,
+    conn: jnp.ndarray,
+    volume: jnp.ndarray,
+    mat_id: jnp.ndarray,
+    Js_lookup: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute volume-averaged magnetization components (mx, my, mz)."""
+    # Average m over tets
+    m_e = m_nodes[conn] # (E, 4, 3)
+    m_avg = jnp.mean(m_e, axis=1) # (E, 3)
+
+    # Material properties: only average over magnetic parts
+    Js_e = Js_lookup[mat_id - 1] # (E,)
+    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+
+    m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
+    return m_vol_avg
+
+
 def run_hysteresis_loop(
     *,
     points: np.ndarray,
@@ -152,6 +173,7 @@ def run_hysteresis_loop(
 
     total_time = 0.0
     U = None
+    history = []
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
         
@@ -181,17 +203,21 @@ def run_hysteresis_loop(
         step_duration = time.time() - start_step
         total_time += step_duration
 
+        # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
-            m,
-            geom.conn,
-            geom.volume,
-            geom.mat_id,
-            jnp.asarray(Js_lookup),
-            jnp.asarray(h),
+            m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
+        )
+        m_avg = jax_compute_volume_averaged_m(
+            m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup)
         )
 
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref
+        mx, my, mz = map(float, m_avg)
+        E_si = float(info.get('E', np.nan)) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
+
+        # Record history row: (B_ext_T, J_par_T, mx, my, mz, E_si)
+        history.append([B_tesla, J_tesla, mx, my, mz, E_si])
 
         append_hysteresis_row(csv_path, B_tesla, J_tesla, float(info.get('E', np.nan)), float(info.get('gnorm', np.nan)))
 
@@ -210,4 +236,11 @@ def run_hysteresis_loop(
         print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s")
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")
-    return {'out_dir': str(out_dir), 'csv_path': str(csv_path), 'last_m': np.array(m), 'last_U': np.array(U)}
+    return {
+        'out_dir': str(out_dir),
+        'csv_path': str(csv_path),
+        'last_m': np.array(m),
+        'last_U': np.array(U),
+        'history': np.array(history)
+    }
+
