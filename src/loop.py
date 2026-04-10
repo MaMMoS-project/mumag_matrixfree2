@@ -174,8 +174,8 @@ def main():
     ap.add_argument('--materials', type=str, default=None, help='KRN file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per line.')
 
     # preconditioning
-    ap.add_argument('--precond-type', type=str, default='jacobi', choices=['jacobi', 'chebyshev'],
-                    help='Poisson solver preconditioning: jacobi (default) or chebyshev.')
+    ap.add_argument('--precond-type', type=str, default='jacobi', choices=['jacobi', 'chebyshev', 'amg', 'amgcl'],
+                    help='Poisson solver preconditioning: jacobi (default), chebyshev, amg, or amgcl.')
 
     # gradient backend selection
 

@@ -233,7 +233,7 @@ def run_hysteresis_loop(
                 cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s")
+        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  it={info.get('iters', 0):.0f}  t/it={step_duration/(info.get('iters', 1)):.3e}s")
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")
     return {
