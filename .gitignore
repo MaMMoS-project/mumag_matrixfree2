@@ -24,3 +24,4 @@ benchmarking/BENCHMARK_REPORT.md
 .vscode/
 .idea/
 trace_dir/
+.pixi/

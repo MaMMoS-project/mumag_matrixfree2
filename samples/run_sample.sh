@@ -17,11 +17,11 @@ echo "Parameters from cube_20nm.p2"
 
 # 1. Generate Mesh
 echo "Step 1: Generating core cube mesh..."
-micromamba run -n ${ENV_NAME} python3 ../src/mesh.py --geom box --extent ${L},${L},${L} --h ${H} --backend grid --out-name cube_${L}nm --no-vis
+python3 ../src/mesh.py --geom box --extent ${L},${L},${L} --h ${H} --backend grid --out-name cube_${L}nm --no-vis
 
 # 2. Run Micromagnetics Simulation
 echo "Step 2: Running hysteresis loop simulation..."
-micromamba run -n ${ENV_NAME} python3 ../src/loop.py cube_${L}nm \
+python3 ../src/loop.py cube_${L}nm \
     --out-dir ${OUT_DIR} \
     --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
     --verbose

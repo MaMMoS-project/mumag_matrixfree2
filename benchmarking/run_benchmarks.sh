@@ -13,7 +13,7 @@ echo "=== Micromagnetics Poisson Benchmark Driver ==="
 
 # 1. Run Python Benchmark
 echo "Running Python (JAX) benchmark..."
-micromamba run -n $ENV_NAME python3 test_poisson_convergence.py | tee $PY_OUT
+python3 test_poisson_convergence.py | tee $PY_OUT
 
 # 2. Build C++ Project
 echo "Building C++ project..."

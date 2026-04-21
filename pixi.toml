@@ -1,0 +1,50 @@
+[project]
+name = "mumag-matrixfree2"
+version = "0.1.0"
+description = "Matrix-free micromagnetic simulations with JAX"
+authors = ["MaMMoS-project"]
+channels = ["set3mah", "conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.11"
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+pyamg = "*"
+meshio = "*"
+meshpy = "*"
+neper = "*"
+povray = "*"
+pip = "*"
+pytest = "*"
+
+[pypi-dependencies]
+jaxopt = "*"
+
+[feature.cpu.pypi-dependencies]
+jax = "*"
+
+[feature.cuda.pypi-dependencies]
+jax = { version = "*", extras = ["cuda12"] }
+
+[environments]
+default = ["cpu"]
+cpu = ["cpu"]
+cuda = ["cuda"]
+
+[tasks]
+# Run unit tests. Usage: pixi run test
+test = "JAX_ENABLE_X64=True pytest tests/"
+
+# Run the demagnetization curve sample. 
+# CPU: pixi run sample
+# GPU: pixi run -e cuda sample
+sample = { cmd = "cd samples && ./run_sample.sh" }
+
+# Run Poisson solver performance benchmark (Python vs C++).
+# Usage: pixi run benchmark
+benchmark = { cmd = "cd benchmarking && ./run_benchmarks.sh" }
+
+# Clean temporary mesh files
+clean = "rm -f *.npz samples/*.npz benchmarking/*.npz"
