@@ -42,7 +42,7 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Callable, Tuple, Literal, Optional
+from typing import Callable, Tuple, Literal, Optional, Any
 
 import jax
 import jax.numpy as jnp
@@ -91,7 +91,6 @@ def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
     J = jnp.stack([x_e[:, 1, :] - x0, x_e[:, 2, :] - x0, x_e[:, 3, :] - x0], axis=2)
     invJ = jnp.linalg.inv(J.astype(dtype))
     return jnp.swapaxes(invJ, 1, 2)
-
 
 def make_energy_kernels(
     geom: TetGeom,
@@ -146,10 +145,13 @@ def make_energy_kernels(
     # Inverse volume normalization
     inv_Vmag = 1.0 / V_mag
 
-    # Pre-calculate material-weighted geometry terms to save multiplications in the loop
-    # mat_id is 1-based, so subtract 1 for lookup
+    # Pre-calculate material-weighted geometry terms to save multiplications in the loop.
+    # Choice: Multiplying materials by volumes here reduces the operations inside 
+    # the JAX loop, which is critical for minimizing register pressure on GPUs.
     g_ids = mat_id - 1
-    # Scale factors for each energy term (Factor 2.0 for quadratic gradients)
+    # Scale factors for each energy term (Factor 2.0 for quadratic gradients).
+    # Mathematical Choice: For quadratic forms (A*m^2), the gradient is 2*A*m. 
+    # Pre-applying the 2.0 and the 1/20 (mass matrix factor) here simplifies the inner loop.
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
@@ -198,7 +200,7 @@ def make_energy_kernels(
     Js_lookup = jnp.asarray(Js_lookup)
     k_easy_lookup = jnp.asarray(k_easy_lookup)
 
-    def _get_B(conn_c: Array, s: int, dtype) -> Array:
+    def _get_B(conn_c: Array, s: int, dtype: Any) -> Array:
         if grad_backend == 'stored_grad_phi':
             return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
         elif grad_backend == 'stored_JinvT':
@@ -225,7 +227,7 @@ def make_energy_kernels(
         # B_ext is expected to be reduced: b_ext = B_ext / Js_ref
         B_ext = jnp.asarray(B_ext, dtype=dtype)
 
-        def body(i, g_acc):
+        def body(i: int, g_acc: Array) -> Array:
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
@@ -307,7 +309,13 @@ def make_energy_kernels(
         # Total Gradient
         g_total = g_quad + g_z
         
-        # Total Energy (using E = 0.5 * m^T (g_total + g_zeeman))
+        # Total Energy calculation choice.
+        # Mathematical Trick: 
+        # For quadratic terms (Ex, An, Demag): m^T * g_quad = 2 * E_quad
+        # For linear terms (Zeeman): m^T * g_z = E_z
+        # Total F = E_quad + E_z = 0.5 * (2 * E_quad + 2 * E_z)
+        # Therefore, F = 0.5 * m^T * (g_quad + 2 * g_z) = 0.5 * m^T * (g_total + g_z)
+        # This avoids separate energy integrations and ensures consistency.
         E = 0.5 * jnp.sum(m * (g_total + g_z))
         
         return E * inv_Vmag, g_total * inv_Vmag

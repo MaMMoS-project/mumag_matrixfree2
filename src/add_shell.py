@@ -127,7 +127,6 @@ def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
     mask[boundary_vids] = 0.0
     return mask
 
-
 def weld_points(
     knt: np.ndarray,
     ijk: np.ndarray,
@@ -184,7 +183,6 @@ def orient_tets_positive(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
         tmp[:, [1, 2]] = tmp[:, [2, 1]]
         t[bad] = tmp
     return t
-
 
 def remove_degenerate_and_duplicate_tets(
     knt: np.ndarray,
@@ -246,7 +244,6 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
 
 
 # ------------------------------- PLC builders -------------------------------
-
 def build_layer_nodes(
     knt0: np.ndarray,
     surf_verts: np.ndarray,
@@ -315,7 +312,6 @@ def build_layer_nodes(
 
     return knt, node_map, svecs_layer
 
-
 def make_shell_plc_from_surface(
     knt0: np.ndarray,
     tris0: np.ndarray,
@@ -370,7 +366,6 @@ def make_shell_plc_from_surface(
 
 
 # ------------------------------ meshing core ------------------------------
-
 def add_shell_with_meshpy(
     knt0: np.ndarray,
     ijk0: np.ndarray,

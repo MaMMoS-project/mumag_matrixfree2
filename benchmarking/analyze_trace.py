@@ -10,7 +10,7 @@ import collections
 from pathlib import Path
 
 
-def analyze_trace(trace_path: str | Path):
+def analyze_trace(trace_path: str | Path) -> None:
     """Analyze a JAX/XLA execution trace file.
 
     Parses the compressed JSON trace, aggregates event durations by name,

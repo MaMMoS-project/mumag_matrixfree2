@@ -86,7 +86,6 @@ def write_mh(path: str | Path, records: np.ndarray) -> None:
         f.write("# " + header + " \n")
         np.savetxt(f, records, fmt="%.9e")
 
-
 def compute_volume_averaged_J_parallel(
     m_nodes: np.ndarray,
     conn: np.ndarray,
@@ -150,7 +149,6 @@ def _vtk_type(arr: np.ndarray) -> str:
     if np.issubdtype(arr.dtype, np.integer):
         return "Int32"
     return "Float32"
-
 
 def write_vtu_tetra(
     path: str | Path,

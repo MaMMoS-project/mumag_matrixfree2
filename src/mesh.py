@@ -107,7 +107,6 @@ def normalize(v: np.ndarray) -> np.ndarray:
         raise ValueError("Zero-length direction vector is not allowed.")
     return v / n
 
-
 def orthonormal_frame(
     xdir: Tuple[float, float, float],
     ydir: Tuple[float, float, float],
@@ -157,7 +156,6 @@ def approx_max_volume_from_edge(h: float) -> float:
 
 # ------------------------------- Geometry: BOX -------------------------------
 
-
 def oriented_point(
     x: float, y: float, z: float, ex: np.ndarray, ey: np.ndarray, ez: np.ndarray
 ) -> np.ndarray:
@@ -171,7 +169,6 @@ def oriented_point(
         np.ndarray: World coordinate vector (3,).
     """
     return x * ex + y * ey + z * ez
-
 
 def oriented_box_facets(
     points: List[Tuple[float, float, float]],
@@ -275,7 +272,6 @@ def icosahedron() -> Tuple[np.ndarray, np.ndarray]:
     )
     return verts, faces
 
-
 def subdivide_icosphere(
     verts: np.ndarray, faces: np.ndarray, level: int = None, subdiv: int = None
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -341,7 +337,6 @@ def subdivide_icosphere(
         V = V / norms[:, None]
     return V, F
 
-
 def ellipsoid_surface(
     extents: Tuple[float, float, float], subdiv: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -385,7 +380,6 @@ def ellipsoid_surface(
 
 # ------------------------------- Auto ellipsoid subdivision -------------------------------
 
-
 def auto_ell_subdiv(
     Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
 ) -> int:
@@ -406,7 +400,6 @@ def auto_ell_subdiv(
     R = max(a, c)
     n = int(np.ceil(np.log2((1.20 * R) / max(kappa * h, 1e-12))))
     return max(0, n)
-
 
 def parse_ell_subdiv_option(
     val: str, Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
@@ -459,7 +452,6 @@ def sample_bezier(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int) -> np.
     """
     ts = np.linspace(0.0, 1.0, n)
     return np.array([bezier_quad(p0, p1, p2, t) for t in ts])
-
 
 def build_eye_polygon(
     length: float = 3.5, width: float = 1.0, samples_per_curve: int = 64
@@ -564,7 +556,7 @@ def mesh_backend_meshpy_elliptic_cylinder(
     h: float,
     minratio: float,
     verbose: bool,
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Mesh an elliptic cylinder (ellipse cross-section with semi-axes a, b; extruded by thickness t)
     using MeshPy/TetGen, without pre-triangulating the caps. The top and bottom faces are single
@@ -710,7 +702,7 @@ def mesh_backend_grid_elliptic_cylinder(
     ez: np.ndarray,
     h: float,
     verbose: bool,
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     # bounding box: x in [-a,a], y in [-b,b], z in [-t/2,t/2]
     Lx = 2.0 * float(a)
     Ly = 2.0 * float(b)
@@ -792,7 +784,7 @@ def mesh_backend_meshpy_eye(
     h: float,
     minratio: float,
     verbose: bool,
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Mesh the extruded 'eye' shape (built from two quadratic Bézier arcs) using MeshPy/TetGen,
     without pre-triangulating the caps. The top and bottom faces are passed as single N-gon facets;
@@ -941,7 +933,6 @@ def mesh_backend_meshpy_eye(
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
 '''
-
 def mesh_backend_grid_eye(
     length: float,
     width: float,
@@ -1036,7 +1027,6 @@ def mesh_backend_grid_eye(
 
 # ------------------------------- Backends -------------------------------
 
-
 def mesh_backend_meshpy_box(
     extents: Tuple[float, float, float],
     ex: np.ndarray,
@@ -1087,7 +1077,6 @@ def mesh_backend_meshpy_box(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
-
 
 def mesh_backend_meshpy_ellipsoid(
     extents: Tuple[float, float, float],
@@ -1145,7 +1134,6 @@ def mesh_backend_meshpy_ellipsoid(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
-
 
 def mesh_backend_grid_box(
     extents: Tuple[float, float, float],
@@ -1218,7 +1206,6 @@ def mesh_backend_grid_box(
             flush=True,
         )
     return knt, ijk
-
 
 def mesh_backend_grid_ellipsoid(
     extents: Tuple[float, float, float],
@@ -1545,7 +1532,7 @@ def run_single_solid_mesher(
 
 
 
-def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float):
+def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float) -> Tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
     Requires 'neper' to be available in the PATH.
@@ -1622,7 +1609,7 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
 
 
 '''
-def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float):
+def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float) -> Tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
     Requires 'neper' to be available in the PATH.
@@ -1665,7 +1652,7 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
 # ------------------------------- CLI -------------------------------
 
 
-def main():
+def main() -> None:
     """CLI entry point for the single solid mesher.
 
     Parses command line arguments and invokes run_single_solid_mesher.

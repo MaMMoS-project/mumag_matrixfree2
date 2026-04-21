@@ -21,7 +21,7 @@ from io_utils import ensure_dir
 import add_shell
 import mesh
 
-def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
+def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray) -> None:
     """Write a tetrahedral mesh to an AVS UCD (.inp) file.
 
     Args:
@@ -51,7 +51,7 @@ def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
             f.write(f"{eid} {mat_id} tet {nids_str}\n")
 
 
-def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8):
+def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8) -> float:
     """Run a hard-axis magnetization benchmark for a given preconditioner.
 
     Creates a cube mesh, adds an airbox, and executes a field sweep along the X-axis.

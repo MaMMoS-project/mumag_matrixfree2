@@ -220,7 +220,7 @@ def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, m
     return A, K1, Js, k_easy
 
 
-def main():
+def main() -> None:
     """Main CLI entry point for the micromagnetics hysteresis driver.
 
     Orchestrates the entire simulation pipeline:

@@ -9,7 +9,7 @@ License: MIT
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 
 import jax
 import jax.numpy as jnp
@@ -95,7 +95,7 @@ def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> Tuple[TetGeom, int
     return TetGeom(conn=conn, volume=volume, mat_id=mat_id, grad_phi=grad_phi, JinvT=JinvT, x_nodes=geom.x_nodes), E_orig
 
 
-def chunk_mask(E_orig: int, start_e: int, chunk_elems: int, dtype) -> Array:
+def chunk_mask(E_orig: int, start_e: int, chunk_elems: int, dtype: Any) -> Array:
     """Create a mask for valid elements in a chunk.
 
     Used to mask out padding elements when processing in fixed-size chunks.
@@ -104,7 +104,7 @@ def chunk_mask(E_orig: int, start_e: int, chunk_elems: int, dtype) -> Array:
         E_orig (int): Total number of original (unpadded) elements.
         start_e (int): The starting index of the current chunk.
         chunk_elems (int): The number of elements in a chunk.
-        dtype (jnp.dtype): The data type for the returned mask.
+        dtype (Any): The data type for the returned mask.
 
     Returns:
         Array: A mask (chunk_elems,) where 1.0 means valid and 0.0 means padding.
@@ -132,7 +132,7 @@ def assemble_scatter(g_acc: Array, conn_c: Array, contrib: Array) -> Array:
     return g_acc.at[conn_c].add(contrib)
 
 
-def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype) -> Array:
+def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype: Any) -> Array:
     """Assemble element-wise contributions to nodes using JAX's segment_sum.
 
     This is often faster than scatter-add for FEM assembly on GPUs.
@@ -141,7 +141,7 @@ def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype) -> Array:
         N (int): Total number of nodes.
         conn_c (Array): Connectivity indices for the current chunk (chunk_elems, 4).
         contrib (Array): Local contributions for the chunk (chunk_elems, 4, ...).
-        dtype (jnp.dtype): The data type for the assembly.
+        dtype (Any): The data type for the assembly.
 
     Returns:
         Array: The assembled nodal array (N, ...).

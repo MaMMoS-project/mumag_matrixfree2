@@ -23,7 +23,7 @@ from energy_kernels import make_energy_kernels
 from poisson_solve import make_solve_U
 import add_shell
 
-def profile_energy():
+def profile_energy() -> None:
     """Capture a detailed JAX execution trace for performance analysis.
 
     Orchestrates a full simulation step (Solve U + Kernels) under the 

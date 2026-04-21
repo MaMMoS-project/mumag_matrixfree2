@@ -59,7 +59,6 @@ def parse_inp(path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
             elements[i, 4] = mat_id
             
     return nodes, elements
-
 def make_minimizer_no_demag(
     geom: TetGeom,
     A_lookup: jnp.ndarray,
@@ -89,7 +88,7 @@ def make_minimizer_no_demag(
         k_easy_lookup=k_easy_lookup, V_mag=V_mag, M_nodal=M_nodal,
     )
 
-    def _bb_step(state: MinimState, B_ext: jnp.ndarray, tau_min: float, tau_max: float):
+    def _bb_step(state: MinimState, B_ext: jnp.ndarray, tau_min: float, tau_max: float) -> Tuple[MinimState, jnp.ndarray]:
         m = state.m
         U = jnp.zeros(m.shape[0], dtype=m.dtype)
         _, g_raw = energy_and_grad(m, U, B_ext)
@@ -111,7 +110,7 @@ def make_minimizer_no_demag(
 
     bb_step = jax.jit(_bb_step)
 
-    def minimize(m0, B_ext, max_iter=200, eps_a=1e-8, verbose=True):
+    def minimize(m0, B_ext, max_iter=200, eps_a=1e-8, verbose=True) -> jnp.ndarray:
         m = jnp.asarray(m0, dtype=jnp.float64)
         g_prev = jnp.zeros_like(m)
         state = MinimState(m=m, U_prev=jnp.zeros(m.shape[0]), g_prev=g_prev, m_prev=m, tau=jnp.asarray(1e-2, jnp.float64), it=jnp.int32(0))
@@ -124,7 +123,7 @@ def make_minimizer_no_demag(
 
     return minimize
 
-def run_sw_test_inp(inp_path: str):
+def run_sw_test_inp(inp_path: str) -> None:
     """Run a Stoner-Wohlfarth angle sweep using a mesh from an .inp file.
 
     Args:

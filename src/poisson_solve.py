@@ -97,7 +97,6 @@ def _make_B_getter(geom_p: TetGeom, chunk_elems: int, grad_backend: GradBackend)
         return _B_from_JinvT(JinvT_c, dtype)
     return _get_B
 
-
 def make_poisson_ops(
     geom: TetGeom,
     Js_lookup: Array,
@@ -145,8 +144,16 @@ def make_poisson_ops(
     _get_B = _make_B_getter(geom_p, chunk_elems, grad_backend)
 
     def apply_A(U: Array) -> Array:
+        """Compute the matrix-vector product A @ U.
+        
+        Optimization Choice: Matrix-free implementation. 
+        Rather than storing the global stiffness matrix A (which can be 100s of GBs
+        for large meshes), we compute the product by re-evaluating the local
+        FEM contributions on the fly. This turns a memory-bound problem into a 
+        compute-bound one, which is ideal for modern GPUs.
+        """
         dtype = U.dtype
-        def body(i, y_acc):
+        def body(i: int, y_acc: Array) -> Array:
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
@@ -154,6 +161,8 @@ def make_poisson_ops(
             U_e = U[conn_c]
             
             # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
+            # Manual unrolling here minimizes temporary array creation and
+            # improves register allocation in the XLA-compiled kernel.
             grad_U = (B_c[:, 0, :] * U_e[:, 0, None] +
                       B_c[:, 1, :] * U_e[:, 1, None] +
                       B_c[:, 2, :] * U_e[:, 2, None] +
@@ -171,13 +180,16 @@ def make_poisson_ops(
         y0 = jnp.zeros_like(U)
         y = lax.fori_loop(0, n_chunks, body, y0)
         y = y + jnp.asarray(reg, dtype=dtype) * U
+        
+        # Choice: Dirichlet boundary conditions (U=0) are enforced by zeroing out
+        # the corresponding rows of the operator.
         if boundary_mask is not None:
             y = y * boundary_mask
         return y
 
     def rhs_from_m(m: Array) -> Array:
         dtype = m.dtype
-        def body(i, b_acc):
+        def body(i: int, b_acc: Array) -> Array:
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
@@ -202,7 +214,7 @@ def make_poisson_ops(
 
     def assemble_diag(N: int) -> Array:
         dtype = jnp.float64
-        def body(i, d_acc):
+        def body(i: int, d_acc: Array) -> Array:
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s,0), (chunk_elems,4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
@@ -238,7 +250,7 @@ def estimate_spectral_radius(apply_A: Callable[[Array], Array], Mdiag: Array, bo
     if boundary_mask is not None:
         v = v * boundary_mask
     
-    def body(i, v_curr):
+    def body(i: int, v_curr: Array) -> Array:
         v_next = (apply_A(v_curr) / (Mdiag + 1e-30))
         if boundary_mask is not None:
             v_next = v_next * boundary_mask
@@ -247,7 +259,6 @@ def estimate_spectral_radius(apply_A: Callable[[Array], Array], Mdiag: Array, bo
     v_final = lax.fori_loop(0, n_iters, body, v)
     lam_max = jnp.vdot(v_final, (apply_A(v_final) / (Mdiag + 1e-30)))
     return float(lam_max)
-
 
 def make_pcg_solve(
     apply_A: Callable[[Array], Array],
@@ -346,11 +357,11 @@ def make_pcg_solve(
         bnorm2 = jnp.dot(b, b)
         tol2 = (current_tol * current_tol) * bnorm2
 
-        def cond_fun(state):
+        def cond_fun(state: Tuple[jnp.int32, Array, Array, Array, Array, Array, Array]) -> bool:
             it, x, r, z, p, rz, r2 = state
             return (it < maxiter) & (r2 > tol2)
 
-        def body_fun(state):
+        def body_fun(state: Tuple[jnp.int32, Array, Array, Array, Array, Array, Array]) -> Tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
             it, x, r, z, p, rz, r2 = state
             Ap = apply_A(p)
             if boundary_mask is not None: Ap = Ap * boundary_mask
@@ -370,7 +381,6 @@ def make_pcg_solve(
         return x_final, it_final, r2_final
 
     return jax.jit(solve, static_argnums=(3,))
-
 
 def make_solve_U(
     geom: TetGeom,
@@ -483,7 +493,7 @@ def make_solve_U(
         from amg_utils import AMGHierarchy
         hierarchy_jax = AMGHierarchy(levels_jax)
 
-        def apply_A_masked(v):
+        def apply_A_masked(v: Array) -> Array:
             res = apply_A(v)
             if boundary_mask is not None: res = res * boundary_mask
             return res
@@ -499,7 +509,7 @@ def make_solve_U(
     )
 
     @partial(jax.jit, static_argnums=(3,))
-    def solve_U(m: Array, x0: Array, tol: Optional[float] = None, return_info: bool = False):
+    def solve_U(m: Array, x0: Array, tol: Optional[float] = None, return_info: bool = False) -> Array | Tuple[Array, int, float]:
         """Perform the Poisson solve for a given magnetization state m.
 
         Args:
@@ -515,6 +525,11 @@ def make_solve_U(
         """
         b = rhs_from_m(m)
         bnorm2 = jnp.vdot(b, b)
+        
+        # Choice: For open boundary problems (no Dirichlet mask), the Poisson 
+        # equation is only solvable up to an additive constant (pure Neumann).
+        # Projecting both b and x0 to zero mean removes the null-space component
+        # and stabilizes the CG solver.
         if enforce_zero_mean:
             b = b - jnp.mean(b)
             x0 = x0 - jnp.mean(x0)

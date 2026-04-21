@@ -6,7 +6,7 @@ Profiling script to check for redundant JAX compilations.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from typing import Path, Any, Callable, Optional
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -24,7 +24,7 @@ import mesh
 original_jit = jax.jit
 compilation_counts = {}
 
-def tracked_jit(fun=None, **kwargs):
+def tracked_jit(fun: Optional[Callable] = None, **kwargs: Any) -> Callable:
     """A wrapper for jax.jit that logs when a function is being compiled.
 
     Args:
@@ -40,7 +40,7 @@ def tracked_jit(fun=None, **kwargs):
     name = getattr(fun, "__name__", str(fun))
     # Filter out internal/anonymous functions if needed, but here we want to see them
     
-    def wrapping_fun(*args, **kwargs):
+    def wrapping_fun(*args: Any, **kwargs: Any) -> Any:
         if name not in compilation_counts:
             print(f"[COMPILATION] Compiling function: {name}")
             compilation_counts[name] = 1
@@ -49,7 +49,7 @@ def tracked_jit(fun=None, **kwargs):
     return original_jit(wrapping_fun, **kwargs)
 
 
-def test_compilation():
+def test_compilation() -> None:
     """Execute a short simulation loop and log JAX compilation events.
 
     Uses a small 20nm cube mesh and NdFeB-like properties to check 
@@ -109,7 +109,7 @@ def test_compilation():
     import poisson_solve
     import curvilinear_bb_minimizer
 
-    def wrap_with_print(name, original_make):
+    def wrap_with_print(name: str, original_make: Callable) -> Callable:
         """Higher-order function to inject call logging into factory functions.
 
         Args:
@@ -119,7 +119,7 @@ def test_compilation():
         Returns:
             Callable: Wrapped factory function.
         """
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             print(f"[TRACE] Calling {name}")
             return original_make(*args, **kwargs)
         return wrapper

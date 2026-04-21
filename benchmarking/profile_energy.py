@@ -23,7 +23,7 @@ from energy_kernels import make_energy_kernels
 from poisson_solve import make_solve_U
 import add_shell
 
-def profile_energy():
+def profile_energy() -> None:
     """Benchmark performance of energy kernels and the Poisson solver.
 
     Loads a 60nm cube mesh with an airbox, then measures and compares:

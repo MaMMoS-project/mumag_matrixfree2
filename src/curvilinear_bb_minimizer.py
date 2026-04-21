@@ -28,6 +28,11 @@ GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
 
 def cayley_update(m: Array, H: Array, tau: Array) -> Array:
     """Perform a unit-length preserving magnetization update using a Cayley transform.
+    
+    Choice: The Cayley transform maps a skew-symmetric torque H directly to a 
+    rotation, ensuring that m_new has exactly the same norm as m (unity).
+    This is more robust than a simple gradient step followed by re-normalization,
+    especially for large step sizes tau.
 
     Args:
         m (Array): Current unit magnetization vectors (N, 3).
@@ -57,7 +62,6 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
         Array: Tangent gradient vectors (N, 3).
     """
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
-
 
 def armijo_weak_line_search(
     m: Array,
@@ -156,15 +160,14 @@ class MinimState:
     tau: Array
     it: Array
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> Tuple[Tuple[Array, Array, Array, Array, Array, Array], Any]:
         children = (self.m, self.U_prev, self.g_prev, self.m_prev, self.tau, self.it)
         aux_data = None
         return (children, aux_data)
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(cls, aux_data: Any, children: Tuple[Array, Array, Array, Array, Array, Array]) -> MinimState:
         return cls(*children)
-
 
 def make_minimizer(
     geom: TetGeom,
@@ -273,18 +276,18 @@ def make_minimizer(
         Returns:
             Array: Step size tau.
         """
-        def D(s):
+        def D(s: Array) -> Array:
             m_trial = cayley_update(m, H_for_update, s)
             U_trial = solve_U(m_trial, U_base, phi_tol)
             E_trial = energy_only(m_trial, U_trial, B_ext)
             return (E_trial - E0) / (s * pg + 1e-30)
 
         # Expansion phase
-        def exp_cond(state):
+        def exp_cond(state: Tuple[Array, Array, jnp.int32, bool]) -> bool:
             s, s_min, it, done = state
             return (it < max_evals) & (~done)
 
-        def exp_body(state):
+        def exp_body(state: Tuple[Array, Array, jnp.int32, bool]) -> Tuple[Array, Array, jnp.int32, bool]:
             s, s_min, it, done = state
             d = D(s)
             stop = jnp.abs(1.0 - d) >= eta2
@@ -297,11 +300,11 @@ def make_minimizer(
         s_exp, s_min_exp, _, _ = lax.while_loop(exp_cond, exp_body, init_exp)
 
         # Contraction phase
-        def con_cond(state):
+        def con_cond(state: Tuple[Array, jnp.int32, bool]) -> bool:
             s, it, done = state
             return (it < max_evals) & (~done)
 
-        def con_body(state):
+        def con_body(state: Tuple[Array, jnp.int32, bool]) -> Tuple[Array, jnp.int32, bool]:
             s, it, done = state
             d = D(s)
             stop = d >= eta1
@@ -315,7 +318,7 @@ def make_minimizer(
 
     jit_ls = jax.jit(jax_armijo_line_search, static_argnums=(7, 8, 9, 10, 11, 12))
 
-    def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float, cg_tol_base: float):
+    def _bb_step(state: MinimState, B_ext: Array, tau_min: float, tau_max: float, cg_tol_base: float) -> Tuple[MinimState, Array, Array]:
         """Take one Barzilai-Borwein step with unit-length constraint.
 
         Args:
@@ -336,7 +339,13 @@ def make_minimizer(
         g_tan = tangent_grad(m, g_prec)
         gnorm = jnp.sqrt(jnp.vdot(g_tan, g_tan))
 
-        def compute_tau(_):
+        def compute_tau(_: Any) -> Array:
+            """Compute the Barzilai-Borwein step size.
+            
+            Choice: BB step sizes (alternate spectral steps) provide a 
+            quasi-Newton speedup without the memory cost of Hessian storage.
+            We alternate between two spectral estimates (tau1, tau2).
+            """
             s = (m - state.m_prev).reshape(-1)
             y = (g_tan - state.g_prev).reshape(-1)
             sty = jnp.vdot(s, y)

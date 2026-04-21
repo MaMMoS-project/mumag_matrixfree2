@@ -23,7 +23,7 @@ import argparse
 import numpy as np
 
 
-def _try_import_meshio():
+def _try_import_meshio() -> Any:
     """Attempt to import the meshio library.
 
     Returns:
@@ -36,7 +36,7 @@ def _try_import_meshio():
         return None
 
 
-def npz_to_vtu(npz_path: str, vtu_path: str):
+def npz_to_vtu(npz_path: str, vtu_path: str) -> None:
     """Convert an NPZ mesh file to a VTU file.
 
     Args:
@@ -76,7 +76,7 @@ def npz_to_vtu(npz_path: str, vtu_path: str):
     write_vtu_tetra(vtu_path, knt, conn, cell_data=cell_data)
 
 
-def vtu_to_npz(vtu_path: str, npz_path: str):
+def vtu_to_npz(vtu_path: str, npz_path: str) -> None:
     """Convert a VTU mesh file to an NPZ file.
 
     Args:
@@ -147,7 +147,7 @@ def vtu_to_npz(vtu_path: str, npz_path: str):
     np.savez(npz_path, knt=pts, ijk=ijk)
 
 
-def main():
+def main() -> None:
     """CLI entry point for mesh conversion.
     """
     ap = argparse.ArgumentParser(description='Convert between NPZ (knt/ijk) and VTU tetra meshes.')

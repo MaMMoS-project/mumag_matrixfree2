@@ -100,7 +100,6 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
         return vals_up
     return np.concatenate([vals_up, vals_up[-2::-1]])
 
-
 @jax.jit
 def jax_compute_volume_averaged_J_parallel(
     m_nodes: jnp.ndarray,
@@ -141,7 +140,6 @@ def jax_compute_volume_averaged_J_parallel(
     return jnp.dot(J_avg, h)
 
 
-@jax.jit
 def jax_compute_volume_averaged_m(
     m_nodes: jnp.ndarray,
     conn: jnp.ndarray,
@@ -173,8 +171,6 @@ def jax_compute_volume_averaged_m(
 
     m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
     return m_vol_avg
-
-
 def run_hysteresis_loop(
     *,
     points: np.ndarray,

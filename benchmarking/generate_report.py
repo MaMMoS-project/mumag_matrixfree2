@@ -2,8 +2,9 @@ import sys
 import re
 import subprocess
 import platform
+from typing import Dict, Any
 
-def get_hardware_info():
+def get_hardware_info() -> Dict[str, str]:
     info = {}
     info['OS'] = f"{platform.system()} {platform.release()}"
     
@@ -27,7 +28,7 @@ def get_hardware_info():
         pass
     return info
 
-def parse_output(text):
+def parse_output(text: str) -> Dict[str, Any]:
     results = {}
     
     # Mesh info
@@ -55,11 +56,11 @@ def parse_output(text):
         
     return results
 
-def safe_format(val, fmt):
+def safe_format(val: Any, fmt: str) -> str:
     if val is None or val == 'N/A': return 'N/A'
     return f"{val:{fmt}}"
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         print("Usage: generate_report.py python_output.txt cpp_output.txt")
         return
