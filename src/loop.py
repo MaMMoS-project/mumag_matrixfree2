@@ -267,6 +267,10 @@ def main():
             no_exact=args.no_exact,
             verbose=args.shell_verbose,
         )
+        # Cleanup temporary body file
+        if tmp_npz.exists():
+            tmp_npz.unlink()
+            
         ijk_shell = np.asarray(ijk_shell)
         conn = ijk_shell[:, :4].astype(np.int64)
         mat_id = ijk_shell[:, 4].astype(np.int32)
