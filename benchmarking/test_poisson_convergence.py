@@ -9,20 +9,21 @@ Compares CG iterations for:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 import time
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from pathlib import Path
 
+# Add src to path for imports
+sys.path.append(str(Path(__file__).parent.parent / "src"))
 from fem_utils import TetGeom
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from poisson_solve import make_poisson_ops, estimate_spectral_radius
+from poisson_solve import make_poisson_ops, estimate_spectral_radius, make_solve_U
 import add_shell
 import mesh
-
-from poisson_solve import make_solve_U
 
 def benchmark_poisson():
     # 1. Setup Geometry (60 nm cube + 8 layer shell)
