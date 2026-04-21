@@ -223,7 +223,7 @@ def run_sw_test_inp(inp_path: str) -> None:
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--inp", type=str, default="hyst_no_demag/mesh_sw_20nm.inp")
+    parser = argparse.ArgumentParser(description="Stoner-Wohlfarth verification script using an external .inp mesh.")
+    parser.add_argument("--inp", type=str, default="hyst_no_demag/mesh_sw_20nm.inp", help="Path to the input AVS UCD (.inp) mesh file.")
     args = parser.parse_args()
     run_sw_test_inp(args.inp)

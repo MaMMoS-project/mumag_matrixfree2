@@ -651,33 +651,33 @@ def main():
     Parses command line arguments and invokes run_add_shell_pipeline.
     """
     ap = argparse.ArgumentParser(description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).")
-    ap.add_argument("--in", dest="in_npz", required=True, help="Input NPZ with knt, ijk")
-    ap.add_argument("--layers", type=int, default=None, help="Number of layers L (>=1)")
-    ap.add_argument("--K", type=float, default=None, help="Per-layer geometric scale (>1)")
-    ap.add_argument("--KL", type=float, default=None, help="Outermost geometric scale S_L = KL*S_0 (>1)")
+    ap.add_argument("--in", dest="in_npz", required=True, help="Input NPZ mesh containing core body 'knt' and 'ijk'.")
+    ap.add_argument("--layers", type=int, default=None, help="Number of graded tetrahedral shell layers L (>= 1).")
+    ap.add_argument("--K", type=float, default=None, help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.")
+    ap.add_argument("--KL", type=float, default=None, help="Total outermost geometric scale relative to body (> 1).")
     ap.add_argument("--auto-layers", action="store_true",
-                    help="Given KL and K, compute L = round(log(KL)/log(K)). Requires --KL and --K.")
+                    help="Automatically compute the number of layers L given --KL and --K.")
     ap.add_argument("--auto-K", action="store_true",
-                    help="Given KL and L, compute K = KL**(1/L). Requires --KL and --layers.")
+                    help="Automatically compute the per-layer factor K given --KL and --layers.")
     ap.add_argument("--beta", type=float, default=1.0,
-                    help="Mesh-size/geometry coupling exponent (default 1.0 -> same scaling)")
+                    help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)). Defaults to 1.0.")
     ap.add_argument("--same-scaling", action="store_true",
-                    help="Shortcut: enforce beta=1 and (if --hmax missing) set hmax=h0*K**(layers)")
-    ap.add_argument("--center", type=str, default="0,0,0", help="Ray origin 'cx,cy,cz' (default 0,0,0)")
-    ap.add_argument("--h0", type=float, default=None, help="Target edge near body (first shell). Default: 1.5*body_h")
-    ap.add_argument("--hmax", type=float, default=None, help="Target edge at outermost shell. Default: derived")
+                    help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K^L.")
+    ap.add_argument("--center", type=str, default="0,0,0", help="Ray origin for homothetic expansion as 'cx,cy,cz' (mesh units).")
+    ap.add_argument("--h0", type=float, default=None, help="Target edge length for the first shell layer (mesh units). Defaults to 1.5 * body_h.")
+    ap.add_argument("--hmax", type=float, default=None, help="Target edge length at the outermost shell boundary (mesh units).")
     ap.add_argument("--body-h", type=float, default=None,
-                    help="If omitted, derived as median boundary-edge length on the body surface.")
-    ap.add_argument("--minratio", type=float, default=1.4, help="Tet quality minratio for TetGen -q")
-    ap.add_argument("--max-steiner", type=int, default=None, help="Limit Steiner points (TetGen -S#)")
-    ap.add_argument("--no-exact", action="store_true", help="TetGen -X (suppress exact arithmetic)")
-    ap.add_argument("--verbose", action="store_true")
+                    help="Characteristic size of the input body mesh. If omitted, derived from median surface edge length.")
+    ap.add_argument("--minratio", type=float, default=1.4, help="TetGen quality minratio (-q) for shell tetrahedra.")
+    ap.add_argument("--max-steiner", type=int, default=None, help="Limit Steiner points added by TetGen (-S#).")
+    ap.add_argument("--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X).")
+    ap.add_argument("--verbose", action="store_true", help="Enable verbose TetGen output.")
 
     # NEW: optional VTU export of the merged (body + shells) mesh
     ap.add_argument("--out-npz", type=str, default=None,
-                    help="Optional path to write merged mesh as npz ('.vtu' auto-added).")
+                    help="Optional path to save the merged mesh as an NPZ file.")
     ap.add_argument("--out-vtu", type=str, default=None,
-                    help="Optional path to write merged mesh as VTU ('.vtu' auto-added). Requires meshio.")
+                    help="Optional path to save the merged mesh as a VTU file for visualization.")
 
     args = ap.parse_args()
 

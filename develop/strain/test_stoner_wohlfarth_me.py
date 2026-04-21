@@ -207,8 +207,8 @@ def run_sw_me_test(inp_path: str, phi_deg: float = 0.0):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--inp", type=str, default="lsdyna/ring.mappend.inp")
-    parser.add_argument("--phi", type=float, default=0.0, help="Azimuthal angle of the rotation plane (0=XZ, 90=YZ)")
+    parser = argparse.ArgumentParser(description="Stoner-Wohlfarth verification script with Magnetoelastic Anisotropy.")
+    parser.add_argument("--inp", type=str, default="lsdyna/ring.mappend.inp", help="Path to the input AVS UCD (.inp) mesh file containing 'k1me' and 'k1me_p' cell data.")
+    parser.add_argument("--phi", type=float, default=0.0, help="Azimuthal angle of the field rotation plane (degrees, 0=XZ, 90=YZ).")
     args = parser.parse_args()
     run_sw_me_test(args.inp, args.phi)

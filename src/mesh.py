@@ -1665,42 +1665,42 @@ def main() -> None:
         type=str,
         default="box",
         choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly"],
-        help="Select geometry: parallelepiped (box), ellipsoid (symmetry axis is local z), eye, elliptic_cylinder (extruded ellipse), poly (polyhedral grains)",
+        help="Select geometry type: box (parallelepiped), ellipsoid (symmetric about local z), eye (Bézier arc based), elliptic_cylinder, or poly (Voronoi grains).",
     )
     ap.add_argument(
         "--extent",
         type=str,
         default="60.0,60.0,60.0",
-        help="Full extents Lx,Ly,Lz. Ellipsoid enforces a=b=(Lx+Ly)/2 in local xy-plane.",
+        help="Full dimensions Lx,Ly,Lz of the core mesh (mesh units, e.g., nm).",
     )
     ap.add_argument(
         "--h",
         type=float,
         default=2.0,
-        help="Target edge length: meshpy->volume heuristic; grid->brick size ≈ h.",
+        help="Target characteristic edge length for the core mesh (mesh units, e.g., nm).",
     )
     ap.add_argument(
         "--minratio",
         type=float,
         default=1.4,
-        help="TetGen minradius-to-maxedge ratio (meshpy backend only).",
+        help="TetGen quality minratio (-q) for tetrahedron refinement (MeshPy backend only).",
     )
     ap.add_argument(
         "--backend",
         type=str,
         default="meshpy",
         choices=["meshpy", "grid"],
-        help="Choose meshing backend.",
+        help="Meshing engine: meshpy (TetGen) for quality/volume constraints, or grid (regular Freudenthal split).",
     )
 
     # Orientation (applies to BOTH box and ellipsoid now)
-    ap.add_argument("--dir-x", type=str, default="1,0,0", help="Local x direction.")
-    ap.add_argument("--dir-y", type=str, default="0,1,0", help="Local y direction.")
+    ap.add_argument("--dir-x", type=str, default="1,0,0", help="Target direction for the local x-axis as 'x,y,z'.")
+    ap.add_argument("--dir-y", type=str, default="0,1,0", help="Initial direction for the local y-axis as 'x,y,z' (orthonormalized against x).")
     ap.add_argument(
         "--dir-z",
         type=str,
         default="0,0,1",
-        help="Local z direction (ellipsoid symmetry axis).",
+        help="Initial direction for the local z-axis as 'x,y,z' (symmetry axis for ellipsoids).",
     )
 
     # Ellipsoid surface tessellation (meshpy backend only); allow 'auto'
@@ -1708,19 +1708,11 @@ def main() -> None:
         "--ell-subdiv",
         type=str,
         default="auto",
-        help="(ELLIPSOID + meshpy) Icosphere subdivision level: "
-        "non-negative integer or 'auto'/'automatic'/'-1'.",
+        help="(ELLIPSOID only) Icosphere subdivision level: non-negative integer or 'auto' (derived from h).",
     )
 
-    # ap.add_argument(
-    #     "--force-grid",
-    #     action="store_true",
-    #     help="Force use of the grid backend even if meshpy is installed.",
-    # )
-
-
-    ap.add_argument("--n", type=int, default=10, help="Number of grains for polyhedral tessellation")
-    ap.add_argument("--id", type=int, default=1, help="Random seed for tessellation")
+    ap.add_argument("--n", type=int, default=10, help="(POLY only) Number of grains for polyhedral Voronoi tessellation.")
+    ap.add_argument("--id", type=int, default=1, help="(POLY only) Random seed for tessellation generation.")
 
 
     # Output naming
@@ -1728,25 +1720,25 @@ def main() -> None:
         "--out-name",
         type=str,
         default="single_solid",
-        help="Base name for both outputs; adds .npz and .vtu.",
+        help="Base name for output files; extensions .npz and .vtu will be added.",
     )
     ap.add_argument(
         "--out-data-name",
         type=str,
         default=None,
-        help="Optional override for data filename (adds .npz).",
+        help="Optional override for the data filename (adds .npz).",
     )
     ap.add_argument(
         "--out-vis-name",
         type=str,
         default=None,
-        help="Optional override for visualization filename (adds .vtu).",
+        help="Optional override for the visualization filename (adds .vtu).",
     )
 
     ap.add_argument(
-        "--no-vis", action="store_true", help="Skip writing .vtu visualization file."
+        "--no-vis", action="store_true", help="Skip writing the .vtu visualization file."
     )
-    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--verbose", action="store_true", help="Enable verbose logging during the meshing process.")
 
     args = ap.parse_args()
 

@@ -235,48 +235,48 @@ def main() -> None:
     ap.add_argument('--mesh', help='Input NPZ mesh (knt, ijk).')
 
     # shell parameters
-    ap.add_argument('--add-shell', action='store_true', help='Add an airbox shell around the mesh.')
-    ap.add_argument('--layers', type=int, default=4)
-    ap.add_argument('--K', type=float, default=1.3)
-    ap.add_argument('--beta', type=float, default=1.0)
-    ap.add_argument('--center', type=str, default='0,0,0')
-    ap.add_argument('--h0', type=float, default=None)
-    ap.add_argument('--hmax', type=float, default=None)
-    ap.add_argument('--minratio', type=float, default=1.4)
-    ap.add_argument('--max-steiner', type=int, default=None)
-    ap.add_argument('--no-exact', action='store_true')
-    ap.add_argument('--shell-verbose', action='store_true')
+    ap.add_argument('--add-shell', action='store_true', help='Add an airbox shell around the core mesh.')
+    ap.add_argument('--layers', type=int, default=4, help='Number of graded shell layers (>= 1).')
+    ap.add_argument('--K', type=float, default=1.3, help='Geometric growth factor for shell layer thickness (> 1).')
+    ap.add_argument('--beta', type=float, default=1.0, help='Mesh-size/geometry coupling exponent (default 1.0 for linear scaling).')
+    ap.add_argument('--center', type=str, default='0,0,0', help='Ray origin for shell expansion as "cx,cy,cz" (mesh units).')
+    ap.add_argument('--h0', type=float, default=None, help='Target edge length near the body surface (mesh units).')
+    ap.add_argument('--hmax', type=float, default=None, help='Target edge length at the outermost shell boundary (mesh units).')
+    ap.add_argument('--minratio', type=float, default=1.4, help='TetGen quality minratio (-q) for shell tetrahedra.')
+    ap.add_argument('--max-steiner', type=int, default=None, help='Limit the number of Steiner points added by TetGen.')
+    ap.add_argument('--no-exact', action='store_true', help='Suppress exact arithmetic in TetGen (-X).')
+    ap.add_argument('--shell-verbose', action='store_true', help='Enable verbose output from the shell generation pipeline.')
 
     # materials
-    ap.add_argument('--materials', type=str, default=None, help='KRN file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per line.')
+    ap.add_argument('--materials', type=str, default=None, help='Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per material group.')
 
     # preconditioning
     ap.add_argument('--precond-type', type=str, default='amgcl', choices=['jacobi', 'chebyshev', 'amg', 'amgcl'],
-                    help='Poisson solver preconditioning: amgcl (default), jacobi, chebyshev, or amg.')
+                    help='Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.')
 
     # gradient backend selection
 
     ap.add_argument('--geom-backend', type=str, default='stored_JinvT', choices=['stored_JinvT', 'stored_grad_phi', 'on_the_fly'],
-                    help='How to provide grad information: stored_JinvT, stored_grad_phi, or on_the_fly (stores x_nodes on device).')
+                    help='Strategy for providing gradient info: stored_JinvT (efficient storage), stored_grad_phi (precomputed), or on_the_fly (recompute from coordinates).')
 
     # solver settings
-    ap.add_argument('--chunk-elems', type=int, default=200_000)
-    ap.add_argument('--cg-maxiter', type=int, default=400)
-    ap.add_argument('--cg-tol', type=float, default=1e-8)
-    ap.add_argument('--poisson-reg', type=float, default=1e-12)
+    ap.add_argument('--chunk-elems', type=int, default=200_000, help='Number of elements processed per loop iteration (chunking to control GPU memory).')
+    ap.add_argument('--cg-maxiter', type=int, default=400, help='Maximum iterations for the Poisson PCG solver.')
+    ap.add_argument('--cg-tol', type=float, default=1e-8, help='Relative residual tolerance for the Poisson PCG solver.')
+    ap.add_argument('--poisson-reg', type=float, default=1e-12, help='Tikhonov regularization constant for the Poisson operator diagonal.')
 
     # loop settings
-    ap.add_argument('--h-dir', type=str, default='0,0,1')
-    ap.add_argument('--B-start', type=float, default=-1.0)
-    ap.add_argument('--B-end', type=float, default=1.0)
-    ap.add_argument('--dB', type=float, default=0.05)
-    ap.add_argument('--tau-f', type=float, default=1e-6)
-    ap.add_argument('--eps-a', type=float, default=1e-10)
+    ap.add_argument('--h-dir', type=str, default='0,0,1', help='Applied field direction as unit vector "hx,hy,hz".')
+    ap.add_argument('--B-start', type=float, default=-1.0, help='Starting magnitude of the applied field (Tesla).')
+    ap.add_argument('--B-end', type=float, default=1.0, help='Final magnitude of the applied field (Tesla).')
+    ap.add_argument('--dB', type=float, default=0.05, help='Field step size magnitude (Tesla).')
+    ap.add_argument('--tau-f', type=float, default=1e-6, help='Relative energy convergence tolerance for the minimizer.')
+    ap.add_argument('--eps-a', type=float, default=1e-10, help='Absolute tangent gradient norm tolerance for the minimizer (reduced units).')
 
-    ap.add_argument('--out-dir', type=str, default='hyst_out')
-    ap.add_argument('--snapshot-every', type=int, default=1)
-    ap.add_argument('--m0-dir', type=str, default=None, help='Initial magnetization direction "x,y,z". Defaults to h-dir.')
-    ap.add_argument('--verbose', action='store_true', help='Show minimizer iterations.')
+    ap.add_argument('--out-dir', type=str, default='hyst_out', help='Directory for saving results and snapshots.')
+    ap.add_argument('--snapshot-every', type=int, default=1, help='Save VTU snapshots every N steps (0 to disable).')
+    ap.add_argument('--m0-dir', type=str, default=None, help='Initial magnetization direction "mx,my,mz". Defaults to field direction.')
+    ap.add_argument('--verbose', action='store_true', help='Print detailed minimizer iterations at each step.')
 
     args = ap.parse_args()
 
