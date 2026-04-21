@@ -17,7 +17,7 @@ __pycache__/
 *.log
 *.tmp
 *.trace.json.gz
-benchmarking/*.txt
+benchmarking/*_bench.txt
 benchmarking/BENCHMARK_REPORT.md
 
 # IDEs

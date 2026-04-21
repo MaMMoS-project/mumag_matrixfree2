@@ -17,17 +17,17 @@ micromamba run -n $ENV_NAME python3 ../src/test_poisson_convergence.py | tee $PY
 
 # 2. Build C++ Project
 echo "Building C++ project..."
-mkdir -p ../build
-cd ../build
+mkdir -p build
+cd build
 cmake ..
 make -j$(nproc)
-cd ../benchmarking
+cd ..
 
 # 3. Run C++ Benchmark
 echo "Running C++ (VexCL/AMGCL) benchmark..."
-# Ensure we use the mesh created by Python (it was created in the benchmarking/ dir)
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/../deps/cnpy/build
-../build/test_poisson_convergence $MESH_FILE | tee $CPP_OUT
+# Ensure we use the mesh created by Python
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/deps/cnpy/build
+./build/test_poisson_convergence $MESH_FILE | tee $CPP_OUT
 
 # 4. Generate Report
 echo "Generating benchmark report..."
