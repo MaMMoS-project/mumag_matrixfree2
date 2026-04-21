@@ -1,7 +1,11 @@
+import sys
+from pathlib import Path
 import numpy as np
+
+# Add src to path for imports
+sys.path.append(str(Path(__file__).parent.parent / "src"))
 import mesh
 import add_shell
-from pathlib import Path
 
 L_cube = 20.0
 h = 2.0
