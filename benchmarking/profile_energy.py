@@ -6,6 +6,8 @@ Compares a full iteration (including Poisson solve) vs. energy/gradient kernels 
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 import time
 import numpy as np
 import jax
@@ -13,6 +15,8 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from dataclasses import replace
 
+# Add src to path for imports
+sys.path.append(str(Path(__file__).parent.parent / "src"))
 from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
 from energy_kernels import make_energy_kernels
