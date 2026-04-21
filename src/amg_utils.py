@@ -12,15 +12,21 @@ import jax.numpy as jnp
 from functools import partial
 from typing import List, Tuple, Optional
 
+
 def assemble_poisson_matrix_cpu(conn, volume, grad_phi, boundary_mask=None, reg=1e-12):
-    """
-    Assembles the Poisson matrix A in CSR format on the CPU.
-    
-    conn: (E, 4) node indices
-    volume: (E,) element volumes
-    grad_phi: (E, 4, 3) shape function gradients
-    boundary_mask: (N,) mask where 1.0 is interior, 0.0 is Dirichlet boundary
-    reg: regularization constant for the diagonal
+    """Assemble the Poisson stiffness matrix in CSR format on the CPU.
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
+        boundary_mask (Optional[np.ndarray], optional): Mask where 1.0 is interior
+            and 0.0 is Dirichlet boundary. Defaults to None.
+        reg (float, optional): Regularization constant for the diagonal.
+            Defaults to 1e-12.
+
+    Returns:
+        sp.csr_matrix: The assembled sparse stiffness matrix.
     """
     E = conn.shape[0]
     N = np.max(conn) + 1
@@ -50,7 +56,7 @@ def assemble_poisson_matrix_cpu(conn, volume, grad_phi, boundary_mask=None, reg=
             r_end = A.indptr[i+1]
             A.data[r_start:r_end] = 0.0
             
-        # 2. Zero columns (requires CSC format for efficiency or COO conversion)
+        # 2. Zero columns
         A = A.tocoo()
         mask_indices = (mask[A.row] > 0) & (mask[A.col] > 0)
         A.data = A.data[mask_indices]
@@ -69,9 +75,17 @@ def assemble_poisson_matrix_cpu(conn, volume, grad_phi, boundary_mask=None, reg=
 
     return A
 
+
 def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
-    """
-    Computes the SPAI0 diagonal preconditioner: M_ii = A_ii / sum_j (A_ij^2).
+    """Compute the SPAI0 (Sparse Approximate Inverse) diagonal preconditioner.
+
+    M_ii = A_ii / sum_j (A_ij^2).
+
+    Args:
+        A (sp.csr_matrix): The sparse matrix.
+
+    Returns:
+        np.ndarray: The SPAI0 diagonal elements.
     """
     N = A.shape[0]
     m_diag = np.zeros(N)
@@ -98,9 +112,15 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
 
 
 def setup_amg_hierarchy(A_cpu, max_levels=10):
-    """
-    Uses PyAMG to compute the AMG hierarchy on CPU.
-    Returns a list of dictionaries, one per level of the hierarchy.
+    """Compute the AMG hierarchy on the CPU using PyAMG.
+
+    Args:
+        A_cpu (sp.csr_matrix): The fine-level stiffness matrix.
+        max_levels (int, optional): Maximum number of levels. Defaults to 10.
+
+    Returns:
+        List[Dict]: A list of dictionaries, one per level, containing matrices
+            (A, P, R) and preconditioner diagonals.
     """
     ml = pyamg.smoothed_aggregation_solver(A_cpu, max_levels=max_levels)
     
@@ -127,36 +147,69 @@ def setup_amg_hierarchy(A_cpu, max_levels=10):
         
     return hierarchy
 
+
 def csr_to_jax_bCOO(mat):
-    """Converts a SciPy CSR matrix to a JAX BCOO format."""
+    """Convert a SciPy CSR matrix to JAX BCOO (Blocked COO) format.
+
+    Args:
+        mat (sp.csr_matrix): Input SciPy sparse matrix.
+
+    Returns:
+        jax.experimental.sparse.BCOO: The JAX sparse matrix.
+    """
     from jax.experimental import sparse
     coo = mat.tocoo()
     indices = jnp.stack([jnp.asarray(coo.row), jnp.asarray(coo.col)], axis=1)
     return sparse.BCOO((jnp.asarray(coo.data), jnp.asarray(indices)), shape=coo.shape)
 
+
 @partial(jax.jit, static_argnums=(0,))
 def jacobi_smooth(apply_A, b, x, Mdiag, iterations=1, omega=0.6667):
-    """
-    Standard Jacobi iteration: x_{k+1} = x_k + omega * D^-1 * (b - A x_k)
-    This matches PyAMG's smoothing interface.
+    """Apply Jacobi smoothing: x_{k+1} = x_k + omega * D^-1 * (b - A x_k).
+
+    Args:
+        apply_A (Callable): Function that computes the matrix-vector product.
+        b (Array): Right-hand side vector.
+        x (Array): Initial guess.
+        Mdiag (Array): Diagonal of the matrix A.
+        iterations (int, optional): Number of iterations. Defaults to 1.
+        omega (float, optional): Relaxation factor. Defaults to 0.6667.
+
+    Returns:
+        Array: The smoothed solution.
     """
     def body(i, x_curr):
         res = b - apply_A(x_curr)
         return x_curr + omega * (res / (Mdiag + 1e-30))
     return jax.lax.fori_loop(0, iterations, body, x)
 
+
 @partial(jax.jit, static_argnums=(0,))
 def spai0_smooth(apply_A, b, x, Mdiag_spai0, iterations=1):
-    """
-    SPAI0 smoothing: x = x + M (b - Ax)
+    """Apply SPAI0 smoothing: x = x + M (b - Ax).
+
+    Args:
+        apply_A (Callable): Function that computes the matrix-vector product.
+        b (Array): Right-hand side vector.
+        x (Array): Initial guess.
+        Mdiag_spai0 (Array): SPAI0 diagonal preconditioner.
+        iterations (int, optional): Number of iterations. Defaults to 1.
+
+    Returns:
+        Array: The smoothed solution.
     """
     def body(i, x_curr):
         res = b - apply_A(x_curr)
         return x_curr + Mdiag_spai0 * res
     return jax.lax.fori_loop(0, iterations, body, x)
 
+
 @jax.tree_util.register_pytree_node_class
 class AMGHierarchy:
+    """JAX PyTree container for the AMG hierarchy levels.
+
+    Allows the hierarchy to be passed through JAX-JITted functions.
+    """
     def __init__(self, levels):
         self.levels = levels
     def tree_flatten(self):
@@ -169,10 +222,17 @@ class AMGHierarchy:
     def __getitem__(self, i):
         return self.levels[i]
 
+
 def make_jax_amg_vcycle(apply_A_fine):
-    """
-    Returns a function that performs one AMG V-cycle in JAX.
-    Matches PyAMG's MultilevelSolver._solve logic.
+    """Create a JAX function that performs one AMG V-cycle.
+
+    Matches PyAMG's MultilevelSolver logic.
+
+    Args:
+        apply_A_fine (Callable): Matrix-vector product for the finest level.
+
+    Returns:
+        Callable: A JIT-compiled function vcycle(rhs, hierarchy).
     """
     def vcycle(r, hierarchy):
         num_levels = len(hierarchy)
@@ -222,10 +282,16 @@ def make_jax_amg_vcycle(apply_A_fine):
     return jax.jit(vcycle)
 
 
-
 def make_jax_amgcl_vcycle(apply_A_fine):
-    """
-    Returns a function that performs one AMG V-cycle in JAX using SPAI0 smoothing.
+    """Create a JAX function for an AMG V-cycle using SPAI0 smoothing.
+
+    Optimized for GPU execution through SPAI0 (matrix-vector products only).
+
+    Args:
+        apply_A_fine (Callable): Matrix-vector product for the finest level.
+
+    Returns:
+        Callable: A JIT-compiled function vcycle(rhs, hierarchy).
     """
     def vcycle(r, hierarchy):
         num_levels = len(hierarchy)
@@ -272,5 +338,3 @@ def make_jax_amgcl_vcycle(apply_A_fine):
         return vcycle_recursive(0, r, jnp.zeros_like(r))
 
     return jax.jit(vcycle, static_argnums=(1,))
-
-

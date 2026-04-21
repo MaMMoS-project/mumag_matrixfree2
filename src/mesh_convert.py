@@ -1,13 +1,11 @@
 """mesh_convert.py
 
-Convert between:
-  - NPZ meshes with arrays (knt, ijk)
-  - VTU (VTK UnstructuredGrid) tetra meshes
+Convert between NPZ meshes and VTK UnstructuredGrid (.vtu) tetra meshes.
 
 NPZ format
 ----------
-  knt: (N,3) float64
-  ijk: (E,4) or (E,5) int32/int64. If (E,5), last column is mat_id.
+  knt: (N,3) float64 - node coordinates.
+  ijk: (E,4) or (E,5) int32/int64 - connectivity. If (E,5), last column is mat_id.
 
 VTU support
 -----------
@@ -26,6 +24,11 @@ import numpy as np
 
 
 def _try_import_meshio():
+    """Attempt to import the meshio library.
+
+    Returns:
+        Optional[Module]: The meshio module if available, else None.
+    """
     try:
         import meshio  # type: ignore
         return meshio
@@ -34,6 +37,19 @@ def _try_import_meshio():
 
 
 def npz_to_vtu(npz_path: str, vtu_path: str):
+    """Convert an NPZ mesh file to a VTU file.
+
+    Args:
+        npz_path (str): Path to the source .npz file.
+        vtu_path (str): Path to the target .vtu file.
+
+    Raises:
+        KeyError: If the NPZ file does not contain 'knt' or 'ijk'.
+        ValueError: If the connectivity array shape is invalid.
+
+    Example:
+        >>> npz_to_vtu("mesh.npz", "mesh.vtu")
+    """
     data = np.load(npz_path)
     if 'knt' not in data or 'ijk' not in data:
         raise KeyError("NPZ must contain 'knt' and 'ijk'")
@@ -61,6 +77,18 @@ def npz_to_vtu(npz_path: str, vtu_path: str):
 
 
 def vtu_to_npz(vtu_path: str, npz_path: str):
+    """Convert a VTU mesh file to an NPZ file.
+
+    Args:
+        vtu_path (str): Path to the source .vtu file.
+        npz_path (str): Path to the target .npz file.
+
+    Raises:
+        ValueError: If no tetra cells are found in the VTU file.
+
+    Example:
+        >>> vtu_to_npz("mesh.vtu", "mesh.npz")
+    """
     meshio = _try_import_meshio()
     if meshio is not None:
         m = meshio.read(vtu_path)
@@ -120,6 +148,8 @@ def vtu_to_npz(vtu_path: str, npz_path: str):
 
 
 def main():
+    """CLI entry point for mesh conversion.
+    """
     ap = argparse.ArgumentParser(description='Convert between NPZ (knt/ijk) and VTU tetra meshes.')
     ap.add_argument('--in', dest='inp', required=True, help='Input mesh (.npz or .vtu)')
     ap.add_argument('--out', dest='out', required=True, help='Output mesh (.vtu or .npz)')

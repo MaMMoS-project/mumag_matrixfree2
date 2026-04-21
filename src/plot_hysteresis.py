@@ -2,7 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-def plot_hysteresis(csv_path, output_image):
+def plot_hysteresis(csv_path: str | Path, output_image: str | Path):
+    """Plot a magnetization curve from a CSV file and save as an image.
+
+    Args:
+        csv_path (str | Path): Path to the input CSV file.
+        output_image (str | Path): Path where the output plot will be saved.
+
+    Example:
+        >>> plot_hysteresis("hysteresis.csv", "plot.png")
+    """
     # Load the data using numpy
     data = np.loadtxt(csv_path, delimiter=',', skiprows=1)
     

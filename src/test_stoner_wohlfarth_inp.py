@@ -23,8 +23,16 @@ from energy_kernels import make_energy_kernels
 from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
 from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row
 
-def parse_inp(path: str):
-    """Parses an AVS UCD (.inp) file."""
+def parse_inp(path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Parse an AVS UCD (.inp) tetrahedral mesh file.
+
+    Args:
+        path (str): Path to the .inp file.
+
+    Returns:
+        Tuple[Optional[np.ndarray], Optional[np.ndarray]]: 
+            (Nodes N x 3, Elements E x 5) or (None, None) if empty.
+    """
     print(f"Parsing INP file: {path}")
     with open(path, 'r') as f:
         header_line = f.readline().split()
@@ -60,7 +68,21 @@ def make_minimizer_no_demag(
     k_easy_lookup: jnp.ndarray,
     V_mag: float,
     M_nodal: jnp.ndarray,
-):
+) -> Callable:
+    """Create a simplified energy minimizer that bypasses the Poisson solve.
+
+    Args:
+        geom (TetGeom): Geometry data.
+        A_lookup (jnp.ndarray): Exchange constants.
+        K1_lookup (jnp.ndarray): Anisotropy constants.
+        Js_lookup (jnp.ndarray): Saturation polarization.
+        k_easy_lookup (jnp.ndarray): Easy axis vectors.
+        V_mag (float): Magnetic volume.
+        M_nodal (jnp.ndarray): Nodal magnetic moments.
+
+    Returns:
+        Callable: minimize(m0, B_ext, **kwargs) -> m_final.
+    """
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
     energy_and_grad, _, _ = make_energy_kernels(
         geom, A_lookup=A_lookup, K1_lookup=K1_lookup, Js_lookup=Js_lookup, 
@@ -103,6 +125,11 @@ def make_minimizer_no_demag(
     return minimize
 
 def run_sw_test_inp(inp_path: str):
+    """Run a Stoner-Wohlfarth angle sweep using a mesh from an .inp file.
+
+    Args:
+        inp_path (str): Path to the AVS UCD mesh.
+    """
     if not os.path.exists(inp_path):
         print(f"Error: {inp_path} not found.")
         return

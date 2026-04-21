@@ -21,6 +21,12 @@ from poisson_solve import make_solve_U
 import add_shell
 
 def profile_energy():
+    """Capture a detailed JAX execution trace for performance analysis.
+
+    Orchestrates a full simulation step (Solve U + Kernels) under the 
+    JAX profiler. The resulting trace can be loaded into Perfetto 
+    (ui.perfetto.dev) for fine-grained kernel timing and analysis.
+    """
     # 1. Load existing mesh
     mesh_path = "cube_60nm_shell.npz"
     if not Path(mesh_path).exists():

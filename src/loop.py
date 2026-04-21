@@ -41,10 +41,18 @@ _GRAD_HAT = np.array([
 ], dtype=np.float64)
 
 
-def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray):
-    """Compute volume and JinvT for P1 tets.
+def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute volume and inverse Jacobian transpose for P1 tetrahedra.
 
-    Ensures positive orientation by swapping nodes (1,2) if needed.
+    Ensures positive orientation by swapping nodes (1,2) for elements 
+    with negative Jacobians.
+
+    Args:
+        knt (np.ndarray): Node coordinates (N, 3).
+        conn (np.ndarray): Element connectivity (E, 4).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]: (Oriented connectivity, Volumes, JinvT).
     """
     knt = np.asarray(knt, dtype=np.float64)
     conn = np.asarray(conn, dtype=np.int64)
@@ -70,13 +78,32 @@ def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray):
 
 
 def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
+    """Compute shape function gradients from the inverse Jacobian transpose.
+
+    Args:
+        JinvT (np.ndarray): Inverse Jacobian transpose (E, 3, 3).
+
+    Returns:
+        np.ndarray: Shape function gradients (E, 4, 3).
+    """
     return np.einsum('eij,aj->eai', JinvT, _GRAD_HAT)
 
 
-def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9):
-    """
-    Read intrinsic properties from a .krn file.
-    If mesh has more groups than rows, the rest are assumed to be air (Js=0).
+def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Read intrinsic magnetic properties from a MaMMoS .krn file.
+
+    Expects columns: theta, phi, K1, K2, Js, A, ...
+    If the mesh has more material groups than the file has rows, 
+    the additional groups are initialized as air (Js=0).
+
+    Args:
+        krn_path (str): Path to the .krn file.
+        G (int): Number of material groups in the mesh.
+        mesh_unit (float, optional): Physical length of one mesh unit in meters. 
+            Used to scale the exchange constant A. Defaults to 1e-9 (nm).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js, easy_axis).
     """
     data = np.loadtxt(krn_path)
     if data.ndim == 1:
@@ -110,8 +137,17 @@ def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9):
     return A, K1, Js, k_easy
 
 
-def load_params_p2(p2_path: str | Path):
-    """Basic parser for mammos-mumag .p2 configuration files."""
+def load_params_p2(p2_path: str | Path) -> Dict[str, Any]:
+    """Basic parser for MaMMoS-mumag .p2 configuration files.
+
+    Extracts field sweep parameters and minimizer tolerances.
+
+    Args:
+        p2_path (str | Path): Path to the .p2 file.
+
+    Returns:
+        Dict[str, Any]: Dictionary of configuration overrides.
+    """
     import configparser
     config = configparser.ConfigParser()
     config.read(p2_path)
@@ -146,7 +182,23 @@ def load_params_p2(p2_path: str | Path):
     return overrides
 
 
-def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9):
+def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load intrinsic magnetic properties for G materials.
+
+    Priority:
+    1. Explicitly provided .krn file.
+    2. Automatic .krn discovery based on the mesh base name.
+    3. Default properties (generic hard magnetic material).
+
+    Args:
+        mat_path (Optional[str]): Explicit path to a .krn file.
+        G (int): Number of material groups.
+        mesh_path (Optional[str]): Path to the mesh file (for discovery).
+        mesh_unit (float, optional): Length of one mesh unit in meters. Defaults to 1e-9.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js, easy_axis).
+    """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
         return load_materials_krn(mat_path, G, mesh_unit=mesh_unit)
@@ -169,6 +221,15 @@ def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, m
 
 
 def main():
+    """Main CLI entry point for the micromagnetics hysteresis driver.
+
+    Orchestrates the entire simulation pipeline:
+    - Mesh loading and optional shell addition.
+    - Material and configuration loading.
+    - Precomputing geometry.
+    - Running the hysteresis loop.
+    - Exporting results.
+    """
     ap = argparse.ArgumentParser(description='Micromagnetics hysteresis driver with shell + preprocessing.')
     ap.add_argument('modelname', nargs='?', help='Base name of the model (positional, for mammos-mumag compatibility).')
     ap.add_argument('--mesh', help='Input NPZ mesh (knt, ijk).')

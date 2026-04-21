@@ -22,7 +22,13 @@ import add_shell
 import mesh
 
 def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
-    """Writes an AVS UCD (.inp) file from numpy arrays."""
+    """Write a tetrahedral mesh to an AVS UCD (.inp) file.
+
+    Args:
+        path (str): target output path.
+        nodes_arr (np.ndarray): Node coordinates (N, 3).
+        elements_arr (np.ndarray): Element connectivity and material ID (E, 5).
+    """
     num_nodes = nodes_arr.shape[0]
     num_elems = elements_arr.shape[0]
     
@@ -44,7 +50,22 @@ def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray):
             nids_str = " ".join(map(str, nids))
             f.write(f"{eid} {mat_id} tet {nids_str}\n")
 
+
 def run_benchmark(precond_type='amgcl', order=3, L_cube=20.0, h=2.0, layers=8):
+    """Run a hard-axis magnetization benchmark for a given preconditioner.
+
+    Creates a cube mesh, adds an airbox, and executes a field sweep along the X-axis.
+
+    Args:
+        precond_type (str, optional): solver preconditioner. Defaults to 'amgcl'.
+        order (int, optional): Chebyshev order. Defaults to 3.
+        L_cube (float, optional): physical side length. Defaults to 20.0.
+        h (float, optional): target core mesh size. Defaults to 2.0.
+        layers (int, optional): airbox layers. Defaults to 8.
+
+    Returns:
+        float: total simulation time in seconds.
+    """
     print(f"\n=== Running Hysteresis with {precond_type.upper()} (order={order}) ===")
     
     print(f"Creating mesh: {L_cube}nm cube, h={h}nm, layers={layers}...")

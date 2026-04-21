@@ -20,6 +20,13 @@ from poisson_solve import make_solve_U
 import add_shell
 
 def profile_energy():
+    """Benchmark performance of energy kernels and the Poisson solver.
+
+    Loads a 60nm cube mesh with an airbox, then measures and compares:
+    1. Average time for a full iteration (Solve U + compute kernels).
+    2. Average time for energy/gradient kernels alone (reusing U).
+    3. Poisson solver overhead.
+    """
     # 1. Load existing mesh
     mesh_path = "cube_60nm_shell.npz"
     print(f"Loading mesh from {mesh_path}...")

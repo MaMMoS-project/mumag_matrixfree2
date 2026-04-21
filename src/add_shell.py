@@ -55,10 +55,26 @@ except Exception:
 # ------------------------------- utilities -------------------------------
 
 def log(msg: str) -> None:
+    """Print a message to the console with immediate flush.
+
+    Args:
+        msg (str): message to log.
+    """
     print(msg, flush=True)
 
 
 def parse_csv3(s: str) -> Tuple[float, float, float]:
+    """Parse a comma-separated string of 3 floats.
+
+    Args:
+        s (str): string like "x,y,z".
+
+    Returns:
+        Tuple[float, float, float]: (x, y, z).
+
+    Raises:
+        ValueError: if string does not contain exactly 3 components.
+    """
     a = [float(x) for x in s.split(",")]
     if len(a) != 3:
         raise ValueError("Expected 'x,y,z'.")
@@ -66,12 +82,27 @@ def parse_csv3(s: str) -> Tuple[float, float, float]:
 
 
 def approx_max_volume_from_edge(h: float) -> float:
+    """Heuristic for TetGen max volume constraint from target edge length.
+
+    Args:
+        h (float): target edge length.
+
+    Returns:
+        float: max volume constraint (approximately 0.1 * h^3).
+    """
     # Heuristic upper bound usable for TetGen -a (max volume per region)
     return 0.1 * (h ** 3)
 
 
 def find_outer_surface_tris(ijk: np.ndarray) -> np.ndarray:
-    """Return outer boundary faces (T,3) of the whole mesh from tet connectivity."""
+    """Extract surface triangles that appear only once in the tetrahedron mesh.
+
+    Args:
+        ijk (np.ndarray): Tetrahedron connectivity (E, 4).
+
+    Returns:
+        np.ndarray: Surface triangles (T, 3).
+    """
     t4 = ijk[:, :4].astype(np.int64)
     fp = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.int64)
     faces = t4[:, fp].reshape(-1, 3)
@@ -81,7 +112,15 @@ def find_outer_surface_tris(ijk: np.ndarray) -> np.ndarray:
 
 
 def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
-    """Return a boolean mask (N,) where 0.0 means the node is on the outer boundary."""
+    """Generate a mask for nodes on the outer surface of the mesh.
+
+    Args:
+        ijk (np.ndarray): Tetrahedron connectivity (E, 4).
+        num_nodes (int): total number of nodes in the mesh.
+
+    Returns:
+        np.ndarray: Mask (N,) where 0.0 is boundary and 1.0 is interior.
+    """
     tris = find_outer_surface_tris(ijk)
     boundary_vids = np.unique(tris)
     mask = np.ones(num_nodes, dtype=np.float64)
@@ -94,9 +133,15 @@ def weld_points(
     ijk: np.ndarray,
     tol: float = 1e-12
 ) -> Tuple[np.ndarray, np.ndarray, int]:
-    """
-    Fuse nodes closer than 'tol' using integer grid hashing.
-    Returns (knt_weld, ijk_remap, n_merged). Node IDs become 0..N-1 (no gaps).
+    """Fuse nodes closer than 'tol' using integer grid hashing.
+
+    Args:
+        knt (np.ndarray): original node coordinates (N, 3).
+        ijk (np.ndarray): original element connectivity.
+        tol (float, optional): welding tolerance. Defaults to 1e-12.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, int]: (Fused nodes, remapped connectivity, number of merged nodes).
     """
     if knt.size == 0:
         return knt, ijk, 0
@@ -119,7 +164,15 @@ def weld_points(
 
 
 def orient_tets_positive(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
-    """Swap two vertices where needed to ensure positive volume."""
+    """Ensure all tetrahedra have positive volume by swapping nodes if needed.
+
+    Args:
+        knt (np.ndarray): node coordinates.
+        tets (np.ndarray): connectivity (E, 4).
+
+    Returns:
+        np.ndarray: oriented connectivity.
+    """
     if tets.size == 0:
         return tets
     t = tets.copy()
@@ -138,7 +191,16 @@ def remove_degenerate_and_duplicate_tets(
     ijk: np.ndarray,
     vol_eps: float = 1e-20
 ) -> np.ndarray:
-    """Drop tets with repeated nodes or near-zero volume; drop duplicates (same node set)."""
+    """Drop tets with repeated nodes, near-zero volume, or identical node sets.
+
+    Args:
+        knt (np.ndarray): node coordinates.
+        ijk (np.ndarray): element connectivity.
+        vol_eps (float, optional): volume threshold. Defaults to 1e-20.
+
+    Returns:
+        np.ndarray: cleaned element connectivity.
+    """
     t4 = ijk[:, :4].astype(np.int64)
     unique_nodes = np.array([len(set(row)) == 4 for row in t4], dtype=bool)
 
@@ -157,8 +219,14 @@ def remove_degenerate_and_duplicate_tets(
 # -------------------------- surface size estimate --------------------------
 
 def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> float:
-    """
-    Estimate characteristic surface mesh size as the median boundary-edge length.
+    """Estimate surface mesh size as the median boundary-edge length.
+
+    Args:
+        knt (np.ndarray): node coordinates.
+        ijk_with_mat (np.ndarray): tetrahedron connectivity.
+
+    Returns:
+        float: median edge length.
     """
     tris = find_outer_surface_tris(ijk_with_mat)
     if tris.size == 0:
@@ -186,9 +254,17 @@ def build_layer_nodes(
     K: float,
     layers: int
 ) -> Tuple[np.ndarray, Dict[Tuple[int, int], int], List[np.ndarray]]:
-    """
-    Create node copies for each surface vertex across layers l=0..L at scales K^l.
-    node_map[(vid, l)] -> node id (with l=0 reusing original vertex id).
+    """Create node copies for each surface vertex across layers at geometric scales K^l.
+
+    Args:
+        knt0 (np.ndarray): original body nodes.
+        surf_verts (np.ndarray): indices of nodes on the outer surface.
+        center (np.ndarray): ray origin for scaling.
+        K (float): geometric growth factor (> 1).
+        layers (int): number of shell layers.
+
+    Returns:
+        Tuple: (All nodes, node map (vid, layer) -> id, list of scaling vectors).
     """
     knt = knt0.copy()
     
@@ -246,11 +322,18 @@ def make_shell_plc_from_surface(
     layers: int,
     K: float,
     center: Tuple[float, float, float]
-):
-    """
-    Build a MeshPy/TetGen PLC with nested homothetic surfaces:
-    S_0 (original), S_l = K^l * S_0 (l=1..L).
-    All surfaces are added as triangular PLC facets. The interior of S_0 is marked as a 'hole'.
+) -> Tuple[np.ndarray, List[List[int]], np.ndarray, np.ndarray, Dict, List]:
+    """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
+
+    Args:
+        knt0: body nodes.
+        tris0: body surface triangles.
+        layers: number of layers.
+        K: per-layer scale.
+        center: ray origin.
+
+    Returns:
+        Tuple: (All nodes, facets, seeds, surface vertex indices, node map, scaling vectors).
     """
     center = np.asarray(center, dtype=np.float64)
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
@@ -303,9 +386,18 @@ def add_shell_with_meshpy(
     verbose: bool,
     same_scaling: bool
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create PLC shells and call TetGen (via MeshPy) to mesh only the exterior shell.
-    Then merge with the original body mesh and validate/clean.
+    """Invoke TetGen to mesh exterior shell layers and merge with the body.
+
+    Args:
+        knt0, ijk0: body nodes and connectivity.
+        layers, K, beta: geometry and size scaling.
+        center: ray origin.
+        h0, hmax: size targets.
+        minratio, max_steiner, no_exact, verbose: TetGen options.
+        same_scaling: shortcut toggle for linear scaling.
+
+    Returns:
+        Tuple: (Merged nodes, Merged connectivity).
     """
     # Ensure we have mat_id column
     if ijk0.shape[1] >= 5:
@@ -420,14 +512,25 @@ def run_add_shell_pipeline(
     no_exact: bool = False,
     verbose: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Programmatic equivalent of the CLI: load input NPZ, compute geometry/size
-    parameters, build and merge the shell mesh, and return arrays in memory.
+    """Programmatic entry point for adding graded shell layers.
 
-    Returns
-    -------
-    knt, ijk : np.ndarray
-        Fused nodes and tetrahedra (ijk has mat_id in column 4).
+    Args:
+        in_npz (str): Path to input NPZ mesh.
+        layers (int): number of layers.
+        K (float): geometric factor.
+        KL (float): outermost geometric scale.
+        auto_layers (bool): derive layers from KL and K.
+        auto_K (bool): derive K from KL and layers.
+        beta (float): size coupling factor.
+        same_scaling (bool): use linear size scaling.
+        center (str | Tuple): ray origin.
+        h0 (float): size near body.
+        hmax (float): size at boundary.
+        body_h (float): override for body surface size.
+        minratio, max_steiner, no_exact, verbose: TetGen options.
+
+    Returns:
+        Tuple: (fused nodes, fused connectivity).
     """
     # Load input
     data = np.load(in_npz)
@@ -548,6 +651,10 @@ def run_add_shell_pipeline(
 # ------------------------------ CLI (optional) ----------------------------------
 
 def main():
+    """CLI entry point for adding graded shell layers.
+
+    Parses command line arguments and invokes run_add_shell_pipeline.
+    """
     ap = argparse.ArgumentParser(description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).")
     ap.add_argument("--in", dest="in_npz", required=True, help="Input NPZ with knt, ijk")
     ap.add_argument("--layers", type=int, default=None, help="Number of layers L (>=1)")

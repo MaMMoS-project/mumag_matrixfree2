@@ -19,6 +19,16 @@ Array = jnp.ndarray
 
 @dataclass(frozen=True)
 class TetGeom:
+    """Container for tetrahedral mesh geometry data used in FEM kernels.
+
+    Attributes:
+        conn (Array): Topology connectivity (E, 4) of node indices.
+        volume (Array): Element volumes (E,).
+        mat_id (Array): Material identifiers (E,).
+        grad_phi (Optional[Array]): Precomputed shape function gradients (E, 4, 3).
+        JinvT (Optional[Array]): Precomputed inverse Jacobian transpose (E, 3, 3).
+        x_nodes (Optional[Array]): Node coordinates (N, 3).
+    """
     conn: Array
     volume: Array
     mat_id: Array
@@ -28,6 +38,22 @@ class TetGeom:
 
 
 def pad_to_multiple(x: Array, multiple: int, pad_value=0) -> Array:
+    """Pad the first axis of an array to a multiple of a given value.
+
+    Args:
+        x (Array): The array to pad.
+        multiple (int): The target multiple for the first axis.
+        pad_value (int, optional): The value to use for padding. Defaults to 0.
+
+    Returns:
+        Array: The padded array.
+
+    Example:
+        >>> import jax.numpy as jnp
+        >>> x = jnp.array([1, 2, 3])
+        >>> pad_to_multiple(x, 2)
+        Array([1, 2, 3, 0], dtype=int32)
+    """
     n = x.shape[0]
     rem = n % multiple
     if rem == 0:
@@ -38,13 +64,24 @@ def pad_to_multiple(x: Array, multiple: int, pad_value=0) -> Array:
 
 
 def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> Tuple[TetGeom, int]:
-    """Pad element axis to a multiple of chunk_elems.
+    """Pad the elements of a TetGeom container to a multiple of chunk_elems.
 
-    conn/volume/mat_id are always padded.
-    grad_phi and JinvT are padded if present.
-    x_nodes is not padded.
+    Connectivity, volume, and mat_id are always padded. Precomputed gradients
+    (grad_phi, JinvT) are padded if they exist. Node coordinates (x_nodes)
+    are not padded as they are indexed by connectivity.
 
-    Returns (geom_padded, E_original).
+    Args:
+        geom (TetGeom): The geometry container to pad.
+        chunk_elems (int): The chunk size for elements.
+
+    Returns:
+        Tuple[TetGeom, int]: A tuple containing the padded TetGeom and the
+            original number of elements.
+
+    Example:
+        >>> # Assuming geom has 10 elements and chunk_elems is 4
+        >>> # The result will have 12 elements.
+        >>> geom_p, E_orig = pad_geom_for_chunking(geom, 4)
     """
     E_orig = int(geom.conn.shape[0])
 
@@ -59,16 +96,56 @@ def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> Tuple[TetGeom, int
 
 
 def chunk_mask(E_orig: int, start_e: int, chunk_elems: int, dtype) -> Array:
+    """Create a mask for valid elements in a chunk.
+
+    Used to mask out padding elements when processing in fixed-size chunks.
+
+    Args:
+        E_orig (int): Total number of original (unpadded) elements.
+        start_e (int): The starting index of the current chunk.
+        chunk_elems (int): The number of elements in a chunk.
+        dtype (jnp.dtype): The data type for the returned mask.
+
+    Returns:
+        Array: A mask (chunk_elems,) where 1.0 means valid and 0.0 means padding.
+
+    Example:
+        >>> chunk_mask(10, 8, 4, jnp.float32)
+        Array([1., 1., 0., 0.], dtype=float32)
+    """
     j = jnp.arange(chunk_elems, dtype=jnp.int32)
     valid = (jnp.int32(start_e) + j) < jnp.int32(E_orig)
     return valid.astype(dtype)
 
 
 def assemble_scatter(g_acc: Array, conn_c: Array, contrib: Array) -> Array:
+    """Assemble element-wise contributions to nodes using JAX's scatter-add.
+
+    Args:
+        g_acc (Array): The global accumulation array (N, ...).
+        conn_c (Array): Connectivity indices for the current chunk (chunk_elems, 4).
+        contrib (Array): Local contributions for the chunk (chunk_elems, 4, ...).
+
+    Returns:
+        Array: The updated global accumulation array.
+    """
     return g_acc.at[conn_c].add(contrib)
 
 
 def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype) -> Array:
+    """Assemble element-wise contributions to nodes using JAX's segment_sum.
+
+    This is often faster than scatter-add for FEM assembly on GPUs.
+
+    Args:
+        N (int): Total number of nodes.
+        conn_c (Array): Connectivity indices for the current chunk (chunk_elems, 4).
+        contrib (Array): Local contributions for the chunk (chunk_elems, 4, ...).
+        dtype (jnp.dtype): The data type for the assembly.
+
+    Returns:
+        Array: The assembled nodal array (N, ...).
+    """
     idx = conn_c.reshape(-1)
     # Automatically handle (E, 4) vs (E, 4, 3)
     val = contrib.reshape(-1, *contrib.shape[2:])
@@ -76,7 +153,21 @@ def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype) -> Array:
 
 
 def compute_node_volumes(geom: TetGeom, chunk_elems: int) -> Array:
-    """Compute lumped volume at each node (sum of Ve/4 for all tets)."""
+    """Compute the lumped volume at each node.
+
+    The nodal volume is defined as the sum of (Ve/4) for all tetrahedra
+    connected to that node.
+
+    Args:
+        geom (TetGeom): The geometry container.
+        chunk_elems (int): The chunk size for element processing.
+
+    Returns:
+        Array: Lumped volume at each node (N,).
+
+    Example:
+        >>> vols = compute_node_volumes(geom, 200_000)
+    """
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve = geom_p.conn, geom_p.volume
     E_pad = int(conn.shape[0])

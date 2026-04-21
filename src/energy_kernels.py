@@ -42,7 +42,7 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Callable, Tuple, Literal
+from typing import Callable, Tuple, Literal, Optional
 
 import jax
 import jax.numpy as jnp
@@ -65,10 +65,28 @@ _GRAD_HAT = jnp.array([
 
 
 def _B_from_JinvT(JinvT_c: Array, dtype) -> Array:
+    """Compute shape function gradients B from inverse Jacobian transpose.
+
+    Args:
+        JinvT_c (Array): Inverse Jacobian transpose (chunk_elems, 3, 3).
+        dtype (jnp.dtype): Target data type.
+
+    Returns:
+        Array: Shape function gradients (chunk_elems, 4, 3).
+    """
     return jnp.einsum('eij,aj->eai', JinvT_c.astype(dtype), _GRAD_HAT.astype(dtype))
 
 
 def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
+    """Compute inverse Jacobian transpose from tetrahedron node coordinates.
+
+    Args:
+        x_e (Array): Node coordinates for the chunk (chunk_elems, 4, 3).
+        dtype (jnp.dtype): Target data type.
+
+    Returns:
+        Array: Inverse Jacobian transpose (chunk_elems, 3, 3).
+    """
     x0 = x_e[:, 0, :]
     J = jnp.stack([x_e[:, 1, :] - x0, x_e[:, 2, :] - x0, x_e[:, 3, :] - x0], axis=2)
     invJ = jnp.linalg.inv(J.astype(dtype))
@@ -94,6 +112,33 @@ def make_energy_kernels(
     Callable[[Array, Array, Array], Array],
     Callable[[Array, Array, Array], Array],
 ]:
+    """Create JIT-compiled micromagnetic energy and gradient functions.
+
+    Returns a triplet of functions (energy_and_grad, energy_only, grad_only).
+    All calculations use dimensionless scaling.
+
+    Args:
+        geom (TetGeom): Geometry container.
+        A_lookup (Array): Dimensionless exchange constants for each material.
+        K1_lookup (Array): Dimensionless anisotropy constants for each material.
+        Js_lookup (Array): Dimensionless saturation polarization for each material.
+        k_easy_lookup (Array): Easy axis vectors (unit length) for each material (G, 3).
+        V_mag (float): Total magnetic volume in mesh units (e.g., nm^3).
+        M_nodal (Array): Nodal magnetic moment scaling (N,).
+        k1me (Optional[Array], optional): Per-element magnetoelastic constant Kx.
+        k1me_p (Optional[Array], optional): Per-element magnetoelastic constant Ky.
+        chunk_elems (int, optional): Elements processed per loop iteration.
+            Defaults to 200_000.
+        assembly (Assembly, optional): Nodal assembly method ('scatter' or 'segment_sum').
+            Defaults to 'scatter'.
+        grad_backend (GradBackend, optional): Strategy for shape function gradients.
+            'stored_grad_phi', 'stored_JinvT', or 'on_the_fly'.
+            Defaults to 'stored_grad_phi'.
+
+    Returns:
+        Tuple[Callable, Callable, Callable]: (energy_and_grad, energy_only, grad_only).
+            Each function takes (m, U, B_ext) as input.
+    """
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
@@ -165,6 +210,16 @@ def make_energy_kernels(
             return _B_from_JinvT(JinvT_c, dtype)
 
     def energy_and_grad(m: Array, U: Array, B_ext: Array) -> Tuple[Array, Array]:
+        """Compute the total dimensionless energy and gradient.
+
+        Args:
+            m (Array): Nodal unit magnetization vectors (N, 3).
+            U (Array): Nodal scalar potential (N,).
+            B_ext (Array): Dimensionless external field vector (3,).
+
+        Returns:
+            Tuple[Array, Array]: (Total Energy, Total Gradient N, 3).
+        """
         N = m.shape[0]
         dtype = m.dtype
         # B_ext is expected to be reduced: b_ext = B_ext / Js_ref
@@ -196,7 +251,6 @@ def make_energy_kernels(
                  m_e[:, 3, :, None] * B_c[:, 3, None, :])
             
             # Km [e, a, i] = sum_k G_eik * B_eak
-            # We unroll over the spatial index k=0,1,2
             Km = (G[:, :, 0][:, None, :] * B_c[:, :, 0][:, :, None] + 
                   G[:, :, 1][:, None, :] * B_c[:, :, 1][:, :, None] + 
                   G[:, :, 2][:, None, :] * B_c[:, :, 2][:, :, None])
@@ -204,7 +258,6 @@ def make_energy_kernels(
             contrib = a_ve_c[:, None, None] * Km
 
             # 2. Uniaxial Anisotropy Gradient (Quadratic)
-            # Unrolled dot products and sums for maximum register pressure efficiency
             v_e = (m_e[:, :, 0] * k_c[:, None, 0] + 
                    m_e[:, :, 1] * k_c[:, None, 1] + 
                    m_e[:, :, 2] * k_c[:, None, 2])
@@ -214,7 +267,6 @@ def make_energy_kernels(
             contrib = contrib + factor[..., None] * k_c[:, None, :]
 
             # 3. Demag Gradient (Quadratic)
-            # grad_u = sum_a U_ea * B_eak
             grad_u = (U_e[:, 0, None] * B_c[:, 0, :] + 
                       U_e[:, 1, None] * B_c[:, 1, :] + 
                       U_e[:, 2, None] * B_c[:, 2, :] + 
@@ -223,7 +275,6 @@ def make_energy_kernels(
             contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
 
             # 4. Magnetoelastic Anisotropy (Quadratic)
-            # Ex_me = (k1me + k1me_p) * mx^2 + (k1me - k1me_p) * my^2
             if Kx_Ve is not None:
                 kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
                 ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
@@ -237,8 +288,6 @@ def make_energy_kernels(
                 gx_me = kx_ve_c[:, None] * (sum_mx + mx_e)
                 gy_me = ky_ve_c[:, None] * (sum_my + my_e)
                 
-                # Add to contrib (node-wise gradient)
-                # Magnetoelastic contribution only has x and y components
                 contrib = contrib.at[:, :, 0].add(gx_me)
                 contrib = contrib.at[:, :, 1].add(gy_me)
 
@@ -253,24 +302,41 @@ def make_energy_kernels(
         g_quad = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
         
         # 4. Zeeman Gradient (Linear)
-        # scale_z = -2.0 * Js_red * Ve / 4
         g_z = -2.0 * M_nodal[:, None] * B_ext[None, :]
         
         # Total Gradient
         g_total = g_quad + g_z
         
-        # Total Energy (using Eq 9 logic)
-        # F = 0.5 * m^T (g_quad) + m^T g_z = 0.5 * m^T (g_quad + 2*g_z)
-        # Alternatively: F = 0.5 * m^T (g_total + g_z)
+        # Total Energy (using E = 0.5 * m^T (g_total + g_zeeman))
         E = 0.5 * jnp.sum(m * (g_total + g_z))
         
         return E * inv_Vmag, g_total * inv_Vmag
 
     def energy_only(m: Array, U: Array, B_ext: Array) -> Array:
+        """Compute only the total dimensionless energy.
+
+        Args:
+            m (Array): Nodal unit magnetization vectors (N, 3).
+            U (Array): Nodal scalar potential (N,).
+            B_ext (Array): Dimensionless external field vector (3,).
+
+        Returns:
+            Array: Scalar dimensionless energy.
+        """
         E, _ = energy_and_grad(m, U, B_ext)
         return E
 
     def grad_only(m: Array, U: Array, B_ext: Array) -> Array:
+        """Compute only the total energy gradient.
+
+        Args:
+            m (Array): Nodal unit magnetization vectors (N, 3).
+            U (Array): Nodal scalar potential (N,).
+            B_ext (Array): Dimensionless external field vector (3,).
+
+        Returns:
+            Array: Energy gradient vectors (N, 3).
+        """
         _, g = energy_and_grad(m, U, B_ext)
         return g
 

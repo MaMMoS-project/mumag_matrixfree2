@@ -9,6 +9,11 @@ import numpy as np
 from pathlib import Path
 
 def plot_results():
+    """Plot Stoner-Wohlfarth switching field comparison.
+
+    Reads 'sw_summary.csv', compares simulated switching fields with 
+    analytical theory, and saves the plot as 'sw_plot.png'.
+    """
     csv_path = Path("hyst_no_demag/sw_summary.csv")
     if not csv_path.exists():
         print(f"Error: {csv_path} not found.")

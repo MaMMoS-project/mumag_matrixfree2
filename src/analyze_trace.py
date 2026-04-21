@@ -1,9 +1,29 @@
+"""analyze_trace.py
+
+Utility for analyzing JAX/XLA execution traces (hp.trace.json.gz).
+Aggregates durations by operation and identifies top GPU/assembly kernels.
+"""
+
 import json
 import gzip
 import collections
 from pathlib import Path
 
-def analyze_trace(trace_path):
+
+def analyze_trace(trace_path: str | Path):
+    """Analyze a JAX/XLA execution trace file.
+
+    Parses the compressed JSON trace, aggregates event durations by name,
+    and prints reports for top operations, GPU kernels, and categories.
+
+    Args:
+        trace_path (str | Path): Path to the `hp.trace.json.gz` file or a 
+            directory containing one.
+
+    Example:
+        >>> analyze_trace("trace_dir/plugins/profile/hp.trace.json.gz")
+    """
+    trace_path = Path(trace_path)
     print(f"Analyzing {trace_path}...")
     with gzip.open(trace_path, 'rt') as f:
         trace = json.load(f)
@@ -86,6 +106,7 @@ def analyze_trace(trace_path):
     for cat, dur_us in cat_items:
         percentage = (dur_us / total_dur) * 100 if total_dur > 0 else 0
         print(f"{cat:<30}: {dur_us/1000.0:>12.2f} ms ({percentage:>5.1f}%)")
+
 
 if __name__ == "__main__":
     import sys
