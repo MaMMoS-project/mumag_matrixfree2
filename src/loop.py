@@ -73,7 +73,7 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
     return np.einsum('eij,aj->eai', JinvT, _GRAD_HAT)
 
 
-def load_materials_krn(krn_path: str, G: int):
+def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9):
     """
     Read intrinsic properties from a .krn file.
     If mesh has more groups than rows, the rest are assumed to be air (Js=0).
@@ -98,7 +98,9 @@ def load_materials_krn(krn_path: str, G: int):
     phi   = data[:n_fill, 1]
     K1[:n_fill]    = data[:n_fill, 2]
     Js[:n_fill]    = data[:n_fill, 4]
-    A[:n_fill]     = data[:n_fill, 5] * 1e18 # Scale for nm mesh units
+    
+    A_scale = (1.0 / mesh_unit)**2
+    A[:n_fill]     = data[:n_fill, 5] * A_scale
 
     kx = np.sin(theta) * np.cos(phi)
     ky = np.sin(theta) * np.sin(phi)
@@ -115,13 +117,26 @@ def load_params_p2(p2_path: str | Path):
     config.read(p2_path)
     
     overrides = {}
+    if 'mesh' in config:
+        m = config['mesh']
+        if 'size' in m: overrides['mesh_unit'] = float(m['size'])
+
     if 'field' in config:
         f = config['field']
-        if 'h' in f: overrides['h_dir'] = np.array([float(x) for x in f['h'].split(',')])
+        # Support both 'h' csv and individual 'hx','hy','hz'
+        if 'h' in f:
+            overrides['h_dir'] = np.array([float(x) for x in f['h'].split(',')])
+        elif any(k in f for k in ('hx', 'hy', 'hz')):
+            hx = float(f.get('hx', 0.0))
+            hy = float(f.get('hy', 0.0))
+            hz = float(f.get('hz', 0.0))
+            overrides['h_dir'] = np.array([hx, hy, hz])
+            
         if 'hstart' in f: overrides['B_start'] = float(f['hstart'])
         if 'hfinal' in f: overrides['B_end'] = float(f['hfinal'])
         if 'hstep' in f: overrides['dB'] = float(f['hstep'])
         if 'mfinal' in f: overrides['mfinal'] = float(f['mfinal'])
+        if 'loop' in f: overrides['loop'] = f.getboolean('loop')
     
     if 'minimizer' in config:
         m = config['minimizer']
@@ -131,20 +146,21 @@ def load_params_p2(p2_path: str | Path):
     return overrides
 
 
-def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None):
+def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9):
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
-        return load_materials_krn(mat_path, G)
+        return load_materials_krn(mat_path, G, mesh_unit=mesh_unit)
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
         krn_path = Path(mesh_path).with_suffix('.krn')
         if krn_path.exists():
             print(f"[materials] Found auto-krn: {krn_path}")
-            return load_materials_krn(str(krn_path), G)
+            return load_materials_krn(str(krn_path), G, mesh_unit=mesh_unit)
 
     # Priority 3: Default (NdFeB-like)
-    A = np.ones((G,), dtype=np.float64) * 1e-11 * 1e18 # some default, scaled for nm mesh
+    A_scale = (1.0 / mesh_unit)**2
+    A = np.ones((G,), dtype=np.float64) * 1e-11 * A_scale
     K1 = np.zeros((G,), dtype=np.float64)
     Js = np.ones((G,), dtype=np.float64) # 1.0 Tesla
     k_easy = np.zeros((G, 3), dtype=np.float64)
@@ -174,8 +190,8 @@ def main():
     ap.add_argument('--materials', type=str, default=None, help='KRN file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per line.')
 
     # preconditioning
-    ap.add_argument('--precond-type', type=str, default='jacobi', choices=['jacobi', 'chebyshev', 'amg', 'amgcl'],
-                    help='Poisson solver preconditioning: jacobi (default), chebyshev, amg, or amgcl.')
+    ap.add_argument('--precond-type', type=str, default='amgcl', choices=['jacobi', 'chebyshev', 'amg', 'amgcl'],
+                    help='Poisson solver preconditioning: amgcl (default), jacobi, chebyshev, or amg.')
 
     # gradient backend selection
 
@@ -194,7 +210,7 @@ def main():
     ap.add_argument('--B-end', type=float, default=1.0)
     ap.add_argument('--dB', type=float, default=0.05)
     ap.add_argument('--tau-f', type=float, default=1e-6)
-    ap.add_argument('--eps-a', type=float, default=1e-12)
+    ap.add_argument('--eps-a', type=float, default=1e-10)
 
     ap.add_argument('--out-dir', type=str, default='hyst_out')
     ap.add_argument('--snapshot-every', type=int, default=1)
@@ -256,7 +272,19 @@ def main():
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
-    A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(args.materials, G, mesh_path=args.mesh)
+
+    # Load .p2 overrides early to get mesh_unit
+    p2_overrides = {}
+    if modelname:
+        p2_path = Path(modelname).with_suffix('.p2')
+        if p2_path.exists():
+            print(f"[config] Loading overrides from {p2_path}")
+            p2_overrides = load_params_p2(p2_path)
+
+    mesh_unit = p2_overrides.get('mesh_unit', 1e-9)
+    A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(
+        args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
+    )
 
     # Use volume from compute_volume_JinvT later, but we need V_mag now or soon.
     # Let's compute volume and JinvT now.
@@ -351,17 +379,17 @@ def main():
         'Js_ref': float(Js_ref),
     }
 
-    # Load .p2 overrides if available
-    if modelname:
-        p2_path = Path(modelname).with_suffix('.p2')
-        if p2_path.exists():
-            print(f"[config] Loading overrides from {p2_path}")
-            p2_overrides = load_params_p2(p2_path)
-            # Scale field values by Js_ref
-            if 'B_start' in p2_overrides: p2_overrides['B_start'] /= Js_ref
-            if 'B_end' in p2_overrides: p2_overrides['B_end'] /= Js_ref
-            if 'dB' in p2_overrides: p2_overrides['dB'] /= Js_ref
-            params_dict.update(p2_overrides)
+    # Apply overrides
+    if p2_overrides:
+        # Scale field values by Js_ref
+        if 'B_start' in p2_overrides: p2_overrides['B_start'] /= Js_ref
+        if 'B_end' in p2_overrides: p2_overrides['B_end'] /= Js_ref
+        if 'dB' in p2_overrides: p2_overrides['dB'] /= Js_ref
+        
+        # Remove mesh parameters that are not in LoopParams
+        p2_overrides.pop('mesh_unit', None)
+        
+        params_dict.update(p2_overrides)
 
     params = LoopParams(**params_dict)
 
