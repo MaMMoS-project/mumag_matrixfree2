@@ -1,0 +1,21 @@
+[tool.ruff]
+target-version = "py311"
+exclude = [
+  "dev",
+]
+[tool.ruff.lint]
+select = [
+  "B",   # flake8-bugbear
+  "D",   # pydocstyle
+  "E",   # pycodestyle
+  "F",   # Pyflakes
+  "I",   # isort
+  "SIM", # flake8-simplify
+  "UP",  # pyupgrade
+]
+isort.known-local-folder = [ "src" ]
+pydocstyle.convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["B018"]  # "Found useless expression. Either assign it to a variable or remove it."; false positives when using implicit __repr__ in the notebook
+"tests/*" = ["D100", "D103"]  # do not enforce docstrings in tests
