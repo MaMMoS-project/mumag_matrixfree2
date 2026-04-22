@@ -18,7 +18,9 @@ A high-performance, matrix-free micromagnetics library built on **JAX**. It solv
 
 ### JAX Implementation Patterns
 - **Matrix-Free**: NEVER assemble a global stiffness matrix. Operations must be computed element-wise.
-- **Batching (Chunking)**: Large meshes must be processed in chunks (default `--chunk-elems 200,000`) to manage GPU memory limits.
+- **XLA Fusion**: Avoid high-level abstractions like `jnp.einsum` for small-tensor contractions (e.g., $4 \times 3$ element gradients). Manually unroll these into explicit scalar-vector arithmetic to enable XLA kernel fusion and register utilization.
+- **Pre-scaling**: Pre-calculate all loop-invariant weighted geometry terms (e.g., $A_{red} \cdot V_e$, $K_1 \cdot V_e$) outside the inner JAX loops to reduce FLOP counts.
+- **Batching (Chunking)**: Large meshes must be processed in chunks to manage GPU memory. While `chunk_elems = 100,000` is a documented baseline for mid-range hardware (RTX 4060), this parameter must be **tuned to fit the GPU's L2 cache**. The goal is to maximize cache hit rates and minimize VRAM round-trips during atomic `scatter-add` assembly operations.
 - **JIT & Pytrees**: Use `jax.jit` extensively. Complex states should be managed as registered `jax.tree_util` classes (see `MinimState` in `src/curvilinear_bb_minimizer.py`).
 
 ## 3. Physical & Numerical Methodology
@@ -31,7 +33,10 @@ A high-performance, matrix-free micromagnetics library built on **JAX**. It solv
 ### Poisson Solver
 - **Implementation**: Preconditioned Conjugate Gradient (PCG).
 - **Stability**: Project RHS and initial guess to **zero-mean** for pure Neumann (open boundary) problems to ensure solvability.
-- **Preconditioning**: Default to `amgcl` (PyAMG on CPU, mapped to JAX kernels).
+- **Preconditioning**: Default to `amgcl`.
+
+### Validation & Reference
+- **C++ Alignment**: The JAX implementation is the performance benchmark for the native C++ (OpenCL/VexCL) port. Maintain strict mathematical alignment in iteration counts and physical scaling between JAX kernels and the C++ CSR-based reference.
 
 ## 4. Repository Structure
 - `src/`: Core library modules (documented and typed).
