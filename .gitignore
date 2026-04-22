@@ -25,3 +25,4 @@ benchmarking/BENCHMARK_REPORT.md
 .idea/
 trace_dir/
 .pixi/
+pixi.lock
