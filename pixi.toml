@@ -15,7 +15,6 @@ pyamg = "*"
 meshio = "*"
 meshpy = "*"
 neper = "*"
-povray = "*"
 pip = "*"
 pytest = "*"
 

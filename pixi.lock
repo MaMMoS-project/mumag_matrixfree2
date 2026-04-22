@@ -18,7 +18,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/aom-3.5.0-h27087fc_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/attr-2.5.2-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/attrs-26.1.0-pyhcf101f3_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/boost-cpp-1.72.0-he72f1d9_7.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-1.2.0-hed03a55_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-bin-1.2.0-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_9.conda
@@ -205,7 +204,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ply-3.11-pyhd8ed1ab_3.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/povray-3.7.0.8-h4a0979c_6.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/proj-9.1.1-h8ffa02c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.3.1-py311h2dc5d0c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
@@ -300,7 +298,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/aom-3.5.0-h27087fc_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/attr-2.5.2-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/attrs-26.1.0-pyhcf101f3_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/boost-cpp-1.72.0-he72f1d9_7.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-1.2.0-hed03a55_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-bin-1.2.0-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_9.conda
@@ -487,7 +484,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ply-3.11-pyhd8ed1ab_3.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/povray-3.7.0.8-h4a0979c_6.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/proj-9.1.1-h8ffa02c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.3.1-py311h2dc5d0c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
@@ -597,7 +593,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/aom-3.5.0-h27087fc_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/attr-2.5.2-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/attrs-26.1.0-pyhcf101f3_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/boost-cpp-1.72.0-he72f1d9_7.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-1.2.0-hed03a55_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-bin-1.2.0-hb03c661_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_9.conda
@@ -784,7 +779,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ply-3.11-pyhd8ed1ab_3.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/povray-3.7.0.8-h4a0979c_6.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/proj-9.1.1-h8ffa02c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/propcache-0.3.1-py311h2dc5d0c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
@@ -966,22 +960,6 @@ packages:
   - pkg:pypi/attrs?source=compressed-mapping
   size: 64927
   timestamp: 1773935801332
-- conda: https://conda.anaconda.org/conda-forge/linux-64/boost-cpp-1.72.0-he72f1d9_7.tar.bz2
-  sha256: 59fb42aa71a21d4470f050edc0e6ad4dac390448ceab2c57547b75ddf245e642
-  md5: 47cec9aec6512a27e36c75e1a6b13d53
-  depends:
-  - bzip2 >=1.0.8,<2.0a0
-  - icu >=70.1,<71.0a0
-  - libgcc-ng >=10.3.0
-  - libstdcxx-ng >=10.3.0
-  - xz >=5.2.5,<6.0.0a0
-  - zstd >=1.5.2,<1.6.0a0
-  constrains:
-  - libboost <0
-  license: BSL-1.0
-  purls: []
-  size: 16842058
-  timestamp: 1648884631781
 - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-1.2.0-hed03a55_1.conda
   sha256: e511644d691f05eb12ebe1e971fd6dc3ae55a4df5c253b4e1788b789bdf2dfa6
   md5: 8ccf913aaba749a5496c17629d859ed1
@@ -3564,22 +3542,6 @@ packages:
   - pkg:pypi/ply?source=hash-mapping
   size: 49052
   timestamp: 1733239818090
-- conda: https://conda.anaconda.org/conda-forge/linux-64/povray-3.7.0.8-h4a0979c_6.conda
-  sha256: bfc97d3da81d356a948c9fdd93a86a56816fd70fbb3caba57452b69d11d46dba
-  md5: f6cad27d92aa86a2d2b80d621f646962
-  depends:
-  - boost-cpp 1.72.0.*
-  - jpeg >=9e,<10a
-  - libgcc-ng >=12
-  - libpng >=1.6.39,<1.7.0a0
-  - libstdcxx-ng >=12
-  - libtiff >=4.5.0,<4.6.0a0
-  - libzlib >=1.2.13,<2.0.0a0
-  license: AGPL-3.0-only
-  license_family: AGPL
-  purls: []
-  size: 22952318
-  timestamp: 1671493677992
 - conda: https://conda.anaconda.org/conda-forge/linux-64/proj-9.1.1-h8ffa02c_2.conda
   sha256: c9fcbf2cab7a354394c2c91a0d57c324fd88234b59042c58b1012999ace00834
   md5: c264aea0e16bba26afa0a0940e954492
