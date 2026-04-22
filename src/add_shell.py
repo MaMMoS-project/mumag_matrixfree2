@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 """
 Add graded tetrahedral layers *outside* an existing body mesh using MeshPy (TetGen),
 with flexible control of outermost geometric scale and automatic derivation of
@@ -47,12 +48,14 @@ from meshpy.tet import MeshInfo, Options, build  # MeshPy -> TetGen
 # Optional: VTU export
 try:
     import meshio
+
     HAVE_meshio = True
 except Exception:
     HAVE_meshio = False
 
 
 # ------------------------------- utilities -------------------------------
+
 
 def log(msg: str) -> None:
     """Print a message to the console with immediate flush.
@@ -91,7 +94,7 @@ def approx_max_volume_from_edge(h: float) -> float:
         float: max volume constraint (approximately 0.1 * h^3).
     """
     # Heuristic upper bound usable for TetGen -a (max volume per region)
-    return 0.1 * (h ** 3)
+    return 0.1 * (h**3)
 
 
 def find_outer_surface_tris(ijk: np.ndarray) -> np.ndarray:
@@ -127,10 +130,9 @@ def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
     mask[boundary_vids] = 0.0
     return mask
 
+
 def weld_points(
-    knt: np.ndarray,
-    ijk: np.ndarray,
-    tol: float = 1e-12
+    knt: np.ndarray, ijk: np.ndarray, tol: float = 1e-12
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """Fuse nodes closer than 'tol' using integer grid hashing.
 
@@ -184,10 +186,9 @@ def orient_tets_positive(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
         t[bad] = tmp
     return t
 
+
 def remove_degenerate_and_duplicate_tets(
-    knt: np.ndarray,
-    ijk: np.ndarray,
-    vol_eps: float = 1e-20
+    knt: np.ndarray, ijk: np.ndarray, vol_eps: float = 1e-20
 ) -> np.ndarray:
     """Drop tets with repeated nodes, near-zero volume, or identical node sets.
 
@@ -216,6 +217,7 @@ def remove_degenerate_and_duplicate_tets(
 
 # -------------------------- surface size estimate --------------------------
 
+
 def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> float:
     """Estimate surface mesh size as the median boundary-edge length.
 
@@ -231,11 +233,13 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
         diag = np.linalg.norm(knt.max(0) - knt.min(0))
         return max(1e-6, 0.02 * diag)
 
-    edges = np.vstack([
-        np.sort(tris[:, [0, 1]], axis=1),
-        np.sort(tris[:, [1, 2]], axis=1),
-        np.sort(tris[:, [2, 0]], axis=1),
-    ])
+    edges = np.vstack(
+        [
+            np.sort(tris[:, [0, 1]], axis=1),
+            np.sort(tris[:, [1, 2]], axis=1),
+            np.sort(tris[:, [2, 0]], axis=1),
+        ]
+    )
     edges = np.unique(edges, axis=0)
     p = knt[edges[:, 0]]
     q = knt[edges[:, 1]]
@@ -245,11 +249,7 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
 
 # ------------------------------- PLC builders -------------------------------
 def build_layer_nodes(
-    knt0: np.ndarray,
-    surf_verts: np.ndarray,
-    center: np.ndarray,
-    K: float,
-    layers: int
+    knt0: np.ndarray, surf_verts: np.ndarray, center: np.ndarray, K: float, layers: int
 ) -> Tuple[np.ndarray, Dict[Tuple[int, int], int], List[np.ndarray]]:
     """Create node copies for each surface vertex across layers at geometric scales K^l.
 
@@ -264,60 +264,63 @@ def build_layer_nodes(
         Tuple: (All nodes, node map (vid, layer) -> id, list of scaling vectors).
     """
     knt = knt0.copy()
-    
+
     vmin = np.min(knt0, axis=0)
     vmax = np.max(knt0, axis=0)
     ext = vmax - vmin
     Lmax = float(np.max(ext))
-    
+
     node_map: Dict[Tuple[int, int], int] = {}
 
     for vid in surf_verts:
         node_map[(int(vid), 0)] = int(vid)
 
     c = center.reshape(1, 3)
-    v0 = (knt0[surf_verts] - c)  # rays from center to surface verts
+    v0 = knt0[surf_verts] - c  # rays from center to surface verts
 
-    max_anisotropy = 5.
-    
+    max_anisotropy = 5.0
+
     # Print header once (before your loop)
     print(f"{'Layer':>5} | {'sx':>10} | {'sy':>10} | {'sz':>10}")
-    print("-"*5 + "-+-" + "-"*10 + "-+-" + "-"*10 + "-+-" + "-"*10)
+    print("-" * 5 + "-+-" + "-" * 10 + "-+-" + "-" * 10 + "-+-" + "-" * 10)
 
     svecs_layer = []
     for l in range(1, layers + 1):
-        s = (K ** l)
+        s = K**l
         t = l / layers if layers > 1 else 1.0
         L_target = s * Lmax
-        sx = np.array([L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float)
-        sv = (1-t)*np.array([1.0,1.0,1.0]) + t*sx
+        sx = np.array(
+            [L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float
+        )
+        sv = (1 - t) * np.array([1.0, 1.0, 1.0]) + t * sx
 
         r = sv.max() / max(sv.min(), 1e-12)
         if r > max_anisotropy:
             # softly clamp: scale towards the geometric mean
             g = np.exp(np.log(sv).mean())
             # blend towards isotropy keeping product constant
-            alpha = (r / max_anisotropy)  # >1
+            alpha = r / max_anisotropy  # >1
             sv = g * (sv / g) ** (1.0 / alpha)
 
-        #pts = c + s * v0
+        # pts = c + s * v0
         print(f"{l:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
         pts = c + v0 * sv.reshape(1, 3)
         start = knt.shape[0]
         knt = np.vstack([knt, pts])
         for i, vid in enumerate(surf_verts):
             node_map[(int(vid), l)] = start + i
-            
-        svecs_layer.append(sv.copy()) 
+
+        svecs_layer.append(sv.copy())
 
     return knt, node_map, svecs_layer
+
 
 def make_shell_plc_from_surface(
     knt0: np.ndarray,
     tris0: np.ndarray,
     layers: int,
     K: float,
-    center: Tuple[float, float, float]
+    center: Tuple[float, float, float],
 ) -> Tuple[np.ndarray, List[List[int]], np.ndarray, np.ndarray, Dict, List]:
     """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
 
@@ -335,7 +338,9 @@ def make_shell_plc_from_surface(
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
     surf_verts = np.unique(tris0.reshape(-1))
 
-    knt_all, node_map, svecs_layer = build_layer_nodes(knt0, surf_verts, center, K, layers)
+    knt_all, node_map, svecs_layer = build_layer_nodes(
+        knt0, surf_verts, center, K, layers
+    )
 
     facets: List[List[int]] = []
     for l in range(0, layers + 1):
@@ -349,18 +354,20 @@ def make_shell_plc_from_surface(
 
     # in make_shell_plc_from_surface(...), after knt_all/node_map are ready:
     tri0 = tris0[0]  # pick a stable triangle
+
     def centroid_at(layer: int) -> np.ndarray:
         vids = [node_map[(int(v), layer)] for v in tri0]
         return knt_all[vids].mean(axis=0)
 
-    seeds = np.vstack([
-        0.5 * (centroid_at(l) + centroid_at(l + 1))     # one seed per layer
-        for l in range(layers)
-    ]).astype(np.float64)
+    seeds = np.vstack(
+        [
+            0.5 * (centroid_at(l) + centroid_at(l + 1))  # one seed per layer
+            for l in range(layers)
+        ]
+    ).astype(np.float64)
 
     # Optional sanity check:
     assert seeds.shape == (layers, 3)
-
 
     return knt_all, facets, seeds, surf_verts, node_map, svecs_layer
 
@@ -379,7 +386,7 @@ def add_shell_with_meshpy(
     max_steiner: int | None,
     no_exact: bool,
     verbose: bool,
-    same_scaling: bool
+    same_scaling: bool,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Invoke TetGen to mesh exterior shell layers and merge with the body.
 
@@ -400,8 +407,12 @@ def add_shell_with_meshpy(
         ijk_body = ijk0[:, :5].astype(np.int32)
     else:
         body_mat = 1
-        ijk_body = np.hstack([ijk0[:, :4].astype(np.int32),
-                              np.full((ijk0.shape[0], 1), body_mat, dtype=np.int32)])
+        ijk_body = np.hstack(
+            [
+                ijk0[:, :4].astype(np.int32),
+                np.full((ijk0.shape[0], 1), body_mat, dtype=np.int32),
+            ]
+        )
     shell_mat = body_mat + 1
 
     tris0 = find_outer_surface_tris(ijk_body)
@@ -409,8 +420,8 @@ def add_shell_with_meshpy(
         raise RuntimeError("Could not find outer surface triangles.")
 
     # PLC creation
-    knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = make_shell_plc_from_surface(
-        knt0, tris0, layers=layers, K=K, center=center
+    knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = (
+        make_shell_plc_from_surface(knt0, tris0, layers=layers, K=K, center=center)
     )
 
     mi = MeshInfo()
@@ -426,11 +437,14 @@ def add_shell_with_meshpy(
         beta = 1.0
 
     if h0 is None:
-        raise RuntimeError("Internal error: h0 must be resolved before calling add_shell_with_meshpy.")
-
+        raise RuntimeError(
+            "Internal error: h0 must be resolved before calling add_shell_with_meshpy."
+        )
 
     # New: drive h_l from the actual sv used for S_{l+1}
-    gms = [float(np.exp(np.log(sv).mean())) for sv in svecs_layer]  # geometric means (length 'layers')
+    gms = [
+        float(np.exp(np.log(sv).mean())) for sv in svecs_layer
+    ]  # geometric means (length 'layers')
 
     if hmax is None:
         scale = 1.0
@@ -441,7 +455,7 @@ def add_shell_with_meshpy(
 
     mi.regions.resize(layers)
     for l in range(layers):
-        h_l = scale * h0 * (gms[l] ** beta)      # region l is between S_l and S_{l+1}
+        h_l = scale * h0 * (gms[l] ** beta)  # region l is between S_l and S_{l+1}
         max_vol = approx_max_volume_from_edge(h_l)
         x, y, z = seeds[l]
         mi.regions[l] = (float(x), float(y), float(z), float(shell_mat), float(max_vol))
@@ -457,7 +471,13 @@ def add_shell_with_meshpy(
     if no_exact:
         opts.parse_switches("X")
 
-    shell = build(mi, options=opts, attributes=True, volume_constraints=True, verbose=bool(verbose))
+    shell = build(
+        mi,
+        options=opts,
+        attributes=True,
+        volume_constraints=True,
+        verbose=bool(verbose),
+    )
     knt_shell = np.asarray(shell.points, dtype=np.float64)
     tets_shell = np.asarray(shell.elements, dtype=np.int64)
 
@@ -606,7 +626,7 @@ def run_add_shell_pipeline(
         if verbose:
             log(f"[size] same-scaling: set hmax = h0 * K^L = {hmax_val:.6g}")
     else:
-        hmax_val = (float(hmax) if (hmax is not None) else None)
+        hmax_val = float(hmax) if (hmax is not None) else None
 
     if verbose:
         log(
@@ -639,45 +659,122 @@ def run_add_shell_pipeline(
         verbose=bool(verbose),
         same_scaling=bool(same_scaling),
     )
-    print("layers = ",L," nodes = ",len(knt)," elements = ",len(ijk))
+    print("layers = ", L, " nodes = ", len(knt), " elements = ", len(ijk))
     return knt, ijk
 
 
 # ------------------------------ CLI (optional) ----------------------------------
+
 
 def main():
     """CLI entry point for adding graded shell layers.
 
     Parses command line arguments and invokes run_add_shell_pipeline.
     """
-    ap = argparse.ArgumentParser(description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).")
-    ap.add_argument("--in", dest="in_npz", required=True, help="Input NPZ mesh containing core body 'knt' and 'ijk'.")
-    ap.add_argument("--layers", type=int, default=None, help="Number of graded tetrahedral shell layers L (>= 1).")
-    ap.add_argument("--K", type=float, default=None, help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.")
-    ap.add_argument("--KL", type=float, default=None, help="Total outermost geometric scale relative to body (> 1).")
-    ap.add_argument("--auto-layers", action="store_true",
-                    help="Automatically compute the number of layers L given --KL and --K.")
-    ap.add_argument("--auto-K", action="store_true",
-                    help="Automatically compute the per-layer factor K given --KL and --layers.")
-    ap.add_argument("--beta", type=float, default=1.0,
-                    help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)). Defaults to 1.0.")
-    ap.add_argument("--same-scaling", action="store_true",
-                    help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K^L.")
-    ap.add_argument("--center", type=str, default="0,0,0", help="Ray origin for homothetic expansion as 'cx,cy,cz' (mesh units).")
-    ap.add_argument("--h0", type=float, default=None, help="Target edge length for the first shell layer (mesh units). Defaults to 1.5 * body_h.")
-    ap.add_argument("--hmax", type=float, default=None, help="Target edge length at the outermost shell boundary (mesh units).")
-    ap.add_argument("--body-h", type=float, default=None,
-                    help="Characteristic size of the input body mesh. If omitted, derived from median surface edge length.")
-    ap.add_argument("--minratio", type=float, default=1.4, help="TetGen quality minratio (-q) for shell tetrahedra.")
-    ap.add_argument("--max-steiner", type=int, default=None, help="Limit Steiner points added by TetGen (-S#).")
-    ap.add_argument("--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X).")
-    ap.add_argument("--verbose", action="store_true", help="Enable verbose TetGen output.")
+    ap = argparse.ArgumentParser(
+        description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory)."
+    )
+    ap.add_argument(
+        "--in",
+        dest="in_npz",
+        required=True,
+        help="Input NPZ mesh containing core body 'knt' and 'ijk'.",
+    )
+    ap.add_argument(
+        "--layers",
+        type=int,
+        default=None,
+        help="Number of graded tetrahedral shell layers L (>= 1).",
+    )
+    ap.add_argument(
+        "--K",
+        type=float,
+        default=None,
+        help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
+    )
+    ap.add_argument(
+        "--KL",
+        type=float,
+        default=None,
+        help="Total outermost geometric scale relative to body (> 1).",
+    )
+    ap.add_argument(
+        "--auto-layers",
+        action="store_true",
+        help="Automatically compute the number of layers L given --KL and --K.",
+    )
+    ap.add_argument(
+        "--auto-K",
+        action="store_true",
+        help="Automatically compute the per-layer factor K given --KL and --layers.",
+    )
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)). Defaults to 1.0.",
+    )
+    ap.add_argument(
+        "--same-scaling",
+        action="store_true",
+        help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K^L.",
+    )
+    ap.add_argument(
+        "--center",
+        type=str,
+        default="0,0,0",
+        help="Ray origin for homothetic expansion as 'cx,cy,cz' (mesh units).",
+    )
+    ap.add_argument(
+        "--h0",
+        type=float,
+        default=None,
+        help="Target edge length for the first shell layer (mesh units). Defaults to 1.5 * body_h.",
+    )
+    ap.add_argument(
+        "--hmax",
+        type=float,
+        default=None,
+        help="Target edge length at the outermost shell boundary (mesh units).",
+    )
+    ap.add_argument(
+        "--body-h",
+        type=float,
+        default=None,
+        help="Characteristic size of the input body mesh. If omitted, derived from median surface edge length.",
+    )
+    ap.add_argument(
+        "--minratio",
+        type=float,
+        default=1.4,
+        help="TetGen quality minratio (-q) for shell tetrahedra.",
+    )
+    ap.add_argument(
+        "--max-steiner",
+        type=int,
+        default=None,
+        help="Limit Steiner points added by TetGen (-S#).",
+    )
+    ap.add_argument(
+        "--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X)."
+    )
+    ap.add_argument(
+        "--verbose", action="store_true", help="Enable verbose TetGen output."
+    )
 
     # NEW: optional VTU export of the merged (body + shells) mesh
-    ap.add_argument("--out-npz", type=str, default=None,
-                    help="Optional path to save the merged mesh as an NPZ file.")
-    ap.add_argument("--out-vtu", type=str, default=None,
-                    help="Optional path to save the merged mesh as a VTU file for visualization.")
+    ap.add_argument(
+        "--out-npz",
+        type=str,
+        default=None,
+        help="Optional path to save the merged mesh as an NPZ file.",
+    )
+    ap.add_argument(
+        "--out-vtu",
+        type=str,
+        default=None,
+        help="Optional path to save the merged mesh as a VTU file for visualization.",
+    )
 
     args = ap.parse_args()
 
@@ -705,11 +802,15 @@ def main():
     if args.out_vtu:
         out_vtu = str(Path(args.out_vtu).with_suffix(".vtu"))
         if not HAVE_meshio:
-            print("[warn] meshio not installed; skipping VTU export. Install with: pip install meshio")
+            print(
+                "[warn] meshio not installed; skipping VTU export. Install with: pip install meshio"
+            )
         else:
             cells = [("tetra", ijk[:, :4].astype(np.int32))]
             cell_data = {"mat_id": [ijk[:, 4].astype(np.int32)]}
-            meshio.Mesh(points=knt.astype(np.float64), cells=cells, cell_data=cell_data).write(out_vtu)
+            meshio.Mesh(
+                points=knt.astype(np.float64), cells=cells, cell_data=cell_data
+            ).write(out_vtu)
             print(f"[ok] wrote VTU -> {out_vtu}")
 
     if args.out_npz:

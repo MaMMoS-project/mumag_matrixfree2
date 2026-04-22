@@ -24,6 +24,7 @@ import argparse
 from pathlib import Path
 import numpy as np
 import jax
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
@@ -33,18 +34,23 @@ from hysteresis_loop import LoopParams, run_hysteresis_loop
 from io_utils import write_mh
 
 # Reference tetra gradients
-_GRAD_HAT = np.array([
-    [-1.0, -1.0, -1.0],
-    [ 1.0,  0.0,  0.0],
-    [ 0.0,  1.0,  0.0],
-    [ 0.0,  0.0,  1.0],
-], dtype=np.float64)
+_GRAD_HAT = np.array(
+    [
+        [-1.0, -1.0, -1.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
 
 
-def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def compute_volume_JinvT(
+    knt: np.ndarray, conn: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute volume and inverse Jacobian transpose for P1 tetrahedra.
 
-    Ensures positive orientation by swapping nodes (1,2) for elements 
+    Ensures positive orientation by swapping nodes (1,2) for elements
     with negative Jacobians.
 
     Args:
@@ -58,7 +64,9 @@ def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> Tuple[np.ndarray,
     conn = np.asarray(conn, dtype=np.int64)
 
     x0 = knt[conn[:, 0]]
-    J = np.stack([knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2)
+    J = np.stack(
+        [knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2
+    )
     detJ = np.linalg.det(J)
 
     neg = detJ < 0
@@ -68,7 +76,9 @@ def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> Tuple[np.ndarray,
         conn[neg, 1] = conn[neg, 2]
         conn[neg, 2] = tmp
         x0 = knt[conn[:, 0]]
-        J = np.stack([knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2)
+        J = np.stack(
+            [knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2
+        )
         detJ = np.linalg.det(J)
 
     volume = np.abs(detJ) / 6.0
@@ -86,20 +96,22 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Shape function gradients (E, 4, 3).
     """
-    return np.einsum('eij,aj->eai', JinvT, _GRAD_HAT)
+    return np.einsum("eij,aj->eai", JinvT, _GRAD_HAT)
 
 
-def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_materials_krn(
+    krn_path: str, G: int, mesh_unit: float = 1e-9
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Expects columns: theta, phi, K1, K2, Js, A, ...
-    If the mesh has more material groups than the file has rows, 
+    If the mesh has more material groups than the file has rows,
     the additional groups are initialized as air (Js=0).
 
     Args:
         krn_path (str): Path to the .krn file.
         G (int): Number of material groups in the mesh.
-        mesh_unit (float, optional): Physical length of one mesh unit in meters. 
+        mesh_unit (float, optional): Physical length of one mesh unit in meters.
             Used to scale the exchange constant A. Defaults to 1e-9 (nm).
 
     Returns:
@@ -110,24 +122,24 @@ def load_materials_krn(krn_path: str, G: int, mesh_unit: float = 1e-9) -> Tuple[
         data = data[None, :]
 
     n_rows = data.shape[0]
-    
+
     # Initialize arrays for G material groups
     A = np.zeros(G, dtype=np.float64)
     K1 = np.zeros(G, dtype=np.float64)
     Js = np.zeros(G, dtype=np.float64)
     k_easy = np.zeros((G, 3), dtype=np.float64)
-    k_easy[:, 2] = 1.0 # default easy axis along z
+    k_easy[:, 2] = 1.0  # default easy axis along z
 
     # Only fill up to what we have in the file
     n_fill = min(G, n_rows)
-    
+
     theta = data[:n_fill, 0]
-    phi   = data[:n_fill, 1]
-    K1[:n_fill]    = data[:n_fill, 2]
-    Js[:n_fill]    = data[:n_fill, 4]
-    
-    A_scale = (1.0 / mesh_unit)**2
-    A[:n_fill]     = data[:n_fill, 5] * A_scale
+    phi = data[:n_fill, 1]
+    K1[:n_fill] = data[:n_fill, 2]
+    Js[:n_fill] = data[:n_fill, 4]
+
+    A_scale = (1.0 / mesh_unit) ** 2
+    A[:n_fill] = data[:n_fill, 5] * A_scale
 
     kx = np.sin(theta) * np.cos(phi)
     ky = np.sin(theta) * np.sin(phi)
@@ -149,40 +161,51 @@ def load_params_p2(p2_path: str | Path) -> Dict[str, Any]:
         Dict[str, Any]: Dictionary of configuration overrides.
     """
     import configparser
+
     config = configparser.ConfigParser()
     config.read(p2_path)
-    
-    overrides = {}
-    if 'mesh' in config:
-        m = config['mesh']
-        if 'size' in m: overrides['mesh_unit'] = float(m['size'])
 
-    if 'field' in config:
-        f = config['field']
+    overrides = {}
+    if "mesh" in config:
+        m = config["mesh"]
+        if "size" in m:
+            overrides["mesh_unit"] = float(m["size"])
+
+    if "field" in config:
+        f = config["field"]
         # Support both 'h' csv and individual 'hx','hy','hz'
-        if 'h' in f:
-            overrides['h_dir'] = np.array([float(x) for x in f['h'].split(',')])
-        elif any(k in f for k in ('hx', 'hy', 'hz')):
-            hx = float(f.get('hx', 0.0))
-            hy = float(f.get('hy', 0.0))
-            hz = float(f.get('hz', 0.0))
-            overrides['h_dir'] = np.array([hx, hy, hz])
-            
-        if 'hstart' in f: overrides['B_start'] = float(f['hstart'])
-        if 'hfinal' in f: overrides['B_end'] = float(f['hfinal'])
-        if 'hstep' in f: overrides['dB'] = float(f['hstep'])
-        if 'mfinal' in f: overrides['mfinal'] = float(f['mfinal'])
-        if 'loop' in f: overrides['loop'] = f.getboolean('loop')
-    
-    if 'minimizer' in config:
-        m = config['minimizer']
-        if 'tol_fun' in m: overrides['tau_f'] = float(m['tol_fun'])
-        if 'precond_iter' in m: overrides['cg_maxiter'] = int(m['precond_iter'])
-        
+        if "h" in f:
+            overrides["h_dir"] = np.array([float(x) for x in f["h"].split(",")])
+        elif any(k in f for k in ("hx", "hy", "hz")):
+            hx = float(f.get("hx", 0.0))
+            hy = float(f.get("hy", 0.0))
+            hz = float(f.get("hz", 0.0))
+            overrides["h_dir"] = np.array([hx, hy, hz])
+
+        if "hstart" in f:
+            overrides["B_start"] = float(f["hstart"])
+        if "hfinal" in f:
+            overrides["B_end"] = float(f["hfinal"])
+        if "hstep" in f:
+            overrides["dB"] = float(f["hstep"])
+        if "mfinal" in f:
+            overrides["mfinal"] = float(f["mfinal"])
+        if "loop" in f:
+            overrides["loop"] = f.getboolean("loop")
+
+    if "minimizer" in config:
+        m = config["minimizer"]
+        if "tol_fun" in m:
+            overrides["tau_f"] = float(m["tol_fun"])
+        if "precond_iter" in m:
+            overrides["cg_maxiter"] = int(m["precond_iter"])
+
     return overrides
 
 
-def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_materials(
+    mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load intrinsic magnetic properties for G materials.
 
     Priority:
@@ -205,16 +228,16 @@ def load_materials(mat_path: str | None, G: int, mesh_path: str | None = None, m
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
-        krn_path = Path(mesh_path).with_suffix('.krn')
+        krn_path = Path(mesh_path).with_suffix(".krn")
         if krn_path.exists():
             print(f"[materials] Found auto-krn: {krn_path}")
             return load_materials_krn(str(krn_path), G, mesh_unit=mesh_unit)
 
     # Priority 3: Default (NdFeB-like)
-    A_scale = (1.0 / mesh_unit)**2
+    A_scale = (1.0 / mesh_unit) ** 2
     A = np.ones((G,), dtype=np.float64) * 1e-11 * A_scale
     K1 = np.zeros((G,), dtype=np.float64)
-    Js = np.ones((G,), dtype=np.float64) # 1.0 Tesla
+    Js = np.ones((G,), dtype=np.float64)  # 1.0 Tesla
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0
     return A, K1, Js, k_easy
@@ -230,53 +253,189 @@ def main() -> None:
     - Running the hysteresis loop.
     - Exporting results.
     """
-    ap = argparse.ArgumentParser(description='Micromagnetics hysteresis driver with shell + preprocessing.')
-    ap.add_argument('modelname', nargs='?', help='Base name of the model (positional, for mammos-mumag compatibility).')
-    ap.add_argument('--mesh', help='Input NPZ mesh (knt, ijk).')
+    ap = argparse.ArgumentParser(
+        description="Micromagnetics hysteresis driver with shell + preprocessing."
+    )
+    ap.add_argument(
+        "modelname",
+        nargs="?",
+        help="Base name of the model (positional, for mammos-mumag compatibility).",
+    )
+    ap.add_argument("--mesh", help="Input NPZ mesh (knt, ijk).")
 
     # shell parameters
-    ap.add_argument('--add-shell', action='store_true', help='Add an airbox shell around the core mesh.')
-    ap.add_argument('--layers', type=int, default=4, help='Number of graded shell layers (>= 1).')
-    ap.add_argument('--K', type=float, default=1.3, help='Geometric growth factor for shell layer thickness (> 1).')
-    ap.add_argument('--beta', type=float, default=1.0, help='Mesh-size/geometry coupling exponent (default 1.0 for linear scaling).')
-    ap.add_argument('--center', type=str, default='0,0,0', help='Ray origin for shell expansion as "cx,cy,cz" (mesh units).')
-    ap.add_argument('--h0', type=float, default=None, help='Target edge length near the body surface (mesh units).')
-    ap.add_argument('--hmax', type=float, default=None, help='Target edge length at the outermost shell boundary (mesh units).')
-    ap.add_argument('--minratio', type=float, default=1.4, help='TetGen quality minratio (-q) for shell tetrahedra.')
-    ap.add_argument('--max-steiner', type=int, default=None, help='Limit the number of Steiner points added by TetGen.')
-    ap.add_argument('--no-exact', action='store_true', help='Suppress exact arithmetic in TetGen (-X).')
-    ap.add_argument('--shell-verbose', action='store_true', help='Enable verbose output from the shell generation pipeline.')
+    ap.add_argument(
+        "--add-shell",
+        action="store_true",
+        help="Add an airbox shell around the core mesh.",
+    )
+    ap.add_argument(
+        "--layers", type=int, default=4, help="Number of graded shell layers (>= 1)."
+    )
+    ap.add_argument(
+        "--K",
+        type=float,
+        default=1.3,
+        help="Geometric growth factor for shell layer thickness (> 1).",
+    )
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Mesh-size/geometry coupling exponent (default 1.0 for linear scaling).",
+    )
+    ap.add_argument(
+        "--center",
+        type=str,
+        default="0,0,0",
+        help='Ray origin for shell expansion as "cx,cy,cz" (mesh units).',
+    )
+    ap.add_argument(
+        "--h0",
+        type=float,
+        default=None,
+        help="Target edge length near the body surface (mesh units).",
+    )
+    ap.add_argument(
+        "--hmax",
+        type=float,
+        default=None,
+        help="Target edge length at the outermost shell boundary (mesh units).",
+    )
+    ap.add_argument(
+        "--minratio",
+        type=float,
+        default=1.4,
+        help="TetGen quality minratio (-q) for shell tetrahedra.",
+    )
+    ap.add_argument(
+        "--max-steiner",
+        type=int,
+        default=None,
+        help="Limit the number of Steiner points added by TetGen.",
+    )
+    ap.add_argument(
+        "--no-exact",
+        action="store_true",
+        help="Suppress exact arithmetic in TetGen (-X).",
+    )
+    ap.add_argument(
+        "--shell-verbose",
+        action="store_true",
+        help="Enable verbose output from the shell generation pipeline.",
+    )
 
     # materials
-    ap.add_argument('--materials', type=str, default=None, help='Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per material group.')
+    ap.add_argument(
+        "--materials",
+        type=str,
+        default=None,
+        help="Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per material group.",
+    )
 
     # preconditioning
-    ap.add_argument('--precond-type', type=str, default='amgcl', choices=['jacobi', 'chebyshev', 'amg', 'amgcl'],
-                    help='Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.')
+    ap.add_argument(
+        "--precond-type",
+        type=str,
+        default="amgcl",
+        choices=["jacobi", "chebyshev", "amg", "amgcl"],
+        help="Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.",
+    )
 
     # gradient backend selection
 
-    ap.add_argument('--geom-backend', type=str, default='stored_JinvT', choices=['stored_JinvT', 'stored_grad_phi', 'on_the_fly'],
-                    help='Strategy for providing gradient info: stored_JinvT (efficient storage), stored_grad_phi (precomputed), or on_the_fly (recompute from coordinates).')
+    ap.add_argument(
+        "--geom-backend",
+        type=str,
+        default="stored_JinvT",
+        choices=["stored_JinvT", "stored_grad_phi", "on_the_fly"],
+        help="Strategy for providing gradient info: stored_JinvT (efficient storage), stored_grad_phi (precomputed), or on_the_fly (recompute from coordinates).",
+    )
 
     # solver settings
-    ap.add_argument('--chunk-elems', type=int, default=200_000, help='Number of elements processed per loop iteration (chunking to control GPU memory).')
-    ap.add_argument('--cg-maxiter', type=int, default=400, help='Maximum iterations for the Poisson PCG solver.')
-    ap.add_argument('--cg-tol', type=float, default=1e-8, help='Relative residual tolerance for the Poisson PCG solver.')
-    ap.add_argument('--poisson-reg', type=float, default=1e-12, help='Tikhonov regularization constant for the Poisson operator diagonal.')
+    ap.add_argument(
+        "--chunk-elems",
+        type=int,
+        default=200_000,
+        help="Number of elements processed per loop iteration (chunking to control GPU memory).",
+    )
+    ap.add_argument(
+        "--cg-maxiter",
+        type=int,
+        default=400,
+        help="Maximum iterations for the Poisson PCG solver.",
+    )
+    ap.add_argument(
+        "--cg-tol",
+        type=float,
+        default=1e-8,
+        help="Relative residual tolerance for the Poisson PCG solver.",
+    )
+    ap.add_argument(
+        "--poisson-reg",
+        type=float,
+        default=1e-12,
+        help="Tikhonov regularization constant for the Poisson operator diagonal.",
+    )
 
     # loop settings
-    ap.add_argument('--h-dir', type=str, default='0,0,1', help='Applied field direction as unit vector "hx,hy,hz".')
-    ap.add_argument('--B-start', type=float, default=-1.0, help='Starting magnitude of the applied field (Tesla).')
-    ap.add_argument('--B-end', type=float, default=1.0, help='Final magnitude of the applied field (Tesla).')
-    ap.add_argument('--dB', type=float, default=0.05, help='Field step size magnitude (Tesla).')
-    ap.add_argument('--tau-f', type=float, default=1e-6, help='Relative energy convergence tolerance for the minimizer.')
-    ap.add_argument('--eps-a', type=float, default=1e-10, help='Absolute tangent gradient norm tolerance for the minimizer (reduced units).')
+    ap.add_argument(
+        "--h-dir",
+        type=str,
+        default="0,0,1",
+        help='Applied field direction as unit vector "hx,hy,hz".',
+    )
+    ap.add_argument(
+        "--B-start",
+        type=float,
+        default=-1.0,
+        help="Starting magnitude of the applied field (Tesla).",
+    )
+    ap.add_argument(
+        "--B-end",
+        type=float,
+        default=1.0,
+        help="Final magnitude of the applied field (Tesla).",
+    )
+    ap.add_argument(
+        "--dB", type=float, default=0.05, help="Field step size magnitude (Tesla)."
+    )
+    ap.add_argument(
+        "--tau-f",
+        type=float,
+        default=1e-6,
+        help="Relative energy convergence tolerance for the minimizer.",
+    )
+    ap.add_argument(
+        "--eps-a",
+        type=float,
+        default=1e-10,
+        help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+    )
 
-    ap.add_argument('--out-dir', type=str, default='hyst_out', help='Directory for saving results and snapshots.')
-    ap.add_argument('--snapshot-every', type=int, default=1, help='Save VTU snapshots every N steps (0 to disable).')
-    ap.add_argument('--m0-dir', type=str, default=None, help='Initial magnetization direction "mx,my,mz". Defaults to field direction.')
-    ap.add_argument('--verbose', action='store_true', help='Print detailed minimizer iterations at each step.')
+    ap.add_argument(
+        "--out-dir",
+        type=str,
+        default="hyst_out",
+        help="Directory for saving results and snapshots.",
+    )
+    ap.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=1,
+        help="Save VTU snapshots every N steps (0 to disable).",
+    )
+    ap.add_argument(
+        "--m0-dir",
+        type=str,
+        default=None,
+        help='Initial magnetization direction "mx,my,mz". Defaults to field direction.',
+    )
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed minimizer iterations at each step.",
+    )
 
     args = ap.parse_args()
 
@@ -284,23 +443,23 @@ def main() -> None:
     modelname = args.modelname
     if modelname:
         if args.mesh is None:
-            args.mesh = str(Path(modelname).with_suffix('.npz'))
+            args.mesh = str(Path(modelname).with_suffix(".npz"))
         if args.materials is None:
-            krn_path = Path(modelname).with_suffix('.krn')
+            krn_path = Path(modelname).with_suffix(".krn")
             if krn_path.exists():
                 args.materials = str(krn_path)
-        if args.out_dir == 'hyst_out':
-            args.out_dir = f'hyst_{modelname}'
+        if args.out_dir == "hyst_out":
+            args.out_dir = f"hyst_{modelname}"
 
     if args.mesh is None:
         ap.error("the following arguments are required: --mesh or modelname")
 
     data = np.load(args.mesh)
-    knt = np.asarray(data['knt'], dtype=np.float64)
-    ijk = np.asarray(data['ijk'])
+    knt = np.asarray(data["knt"], dtype=np.float64)
+    ijk = np.asarray(data["ijk"])
 
     if ijk.ndim != 2 or ijk.shape[1] not in (4, 5):
-        raise ValueError('ijk must have shape (E,4) or (E,5)')
+        raise ValueError("ijk must have shape (E,4) or (E,5)")
 
     if ijk.shape[1] == 4:
         mat_id = np.ones((ijk.shape[0],), dtype=np.int32)
@@ -312,8 +471,12 @@ def main() -> None:
             mat_id = mat_id + 1
 
     if args.add_shell:
-        tmp_npz = Path(args.mesh).with_suffix('.tmp_body.npz')
-        np.savez(tmp_npz, knt=knt, ijk=np.column_stack([conn.astype(np.int32), mat_id.astype(np.int32)]))
+        tmp_npz = Path(args.mesh).with_suffix(".tmp_body.npz")
+        np.savez(
+            tmp_npz,
+            knt=knt,
+            ijk=np.column_stack([conn.astype(np.int32), mat_id.astype(np.int32)]),
+        )
 
         knt, ijk_shell = add_shell.run_add_shell_pipeline(
             in_npz=str(tmp_npz),
@@ -331,7 +494,7 @@ def main() -> None:
         # Cleanup temporary body file
         if tmp_npz.exists():
             tmp_npz.unlink()
-            
+
         ijk_shell = np.asarray(ijk_shell)
         conn = ijk_shell[:, :4].astype(np.int64)
         mat_id = ijk_shell[:, 4].astype(np.int32)
@@ -341,12 +504,12 @@ def main() -> None:
     # Load .p2 overrides early to get mesh_unit
     p2_overrides = {}
     if modelname:
-        p2_path = Path(modelname).with_suffix('.p2')
+        p2_path = Path(modelname).with_suffix(".p2")
         if p2_path.exists():
             print(f"[config] Loading overrides from {p2_path}")
             p2_overrides = load_params_p2(p2_path)
 
-    mesh_unit = p2_overrides.get('mesh_unit', 1e-9)
+    mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
     A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(
         args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
     )
@@ -359,11 +522,13 @@ def main() -> None:
     # Only groups with Js > 0 are considered magnetic.
     is_mag = np.isin(mat_id, np.where(Js_lookup > 0)[0] + 1)
     V_mag = np.sum(volume[is_mag])
-    if V_mag == 0: V_mag = 1.0
+    if V_mag == 0:
+        V_mag = 1.0
 
     # Normalization: Kd = Js^2 / (2 * mu0)
     Js_ref = np.max(Js_lookup)
-    if Js_ref == 0: Js_ref = 1.0
+    if Js_ref == 0:
+        Js_ref = 1.0
     MU0_SI = 4e-7 * np.pi
     Kd_ref = (Js_ref**2) / (2.0 * MU0_SI)
 
@@ -375,7 +540,7 @@ def main() -> None:
     # Build TetGeom depending on backend
     grad_backend = args.geom_backend
 
-    if grad_backend == 'on_the_fly':
+    if grad_backend == "on_the_fly":
         geom = TetGeom(
             conn=jnp.asarray(conn32, dtype=jnp.int32),
             volume=jnp.asarray(volume, dtype=jnp.float64),
@@ -383,7 +548,7 @@ def main() -> None:
             x_nodes=jnp.asarray(knt, dtype=jnp.float64),
         )
     else:
-        if grad_backend == 'stored_grad_phi':
+        if grad_backend == "stored_grad_phi":
             grad_phi = compute_grad_phi_from_JinvT(JinvT)
             geom = TetGeom(
                 conn=jnp.asarray(conn32, dtype=jnp.int32),
@@ -405,14 +570,14 @@ def main() -> None:
 
     # initial magnetisation
     if args.m0_dir:
-        m0_vec = np.array([float(x) for x in args.m0_dir.split(',')], dtype=np.float64)
+        m0_vec = np.array([float(x) for x in args.m0_dir.split(",")], dtype=np.float64)
     else:
-        m0_vec = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
+        m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
 
     m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
     m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
 
-    h_dir = np.array([float(x) for x in args.h_dir.split(',')], dtype=np.float64)
+    h_dir = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
 
     # Dirichlet boundary mask (U=0 at outer boundary)
@@ -421,39 +586,44 @@ def main() -> None:
 
     # Preconditioning: compute lumped node volumes and magnetic moments M_nodal
     from fem_utils import compute_node_volumes
+
     node_vols = compute_node_volumes(geom, chunk_elems=int(args.chunk_elems))
-    
+
     # Precompute nodal moments M (M_i = sum_e Js_red[e] * Ve / 4)
     # This is used for Zeeman energy/gradient and as a physical preconditioner
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
+
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
     params_dict = {
-        'h_dir': h_dir,
-        'B_start': float(args.B_start) / Js_ref,
-        'B_end': float(args.B_end) / Js_ref,
-        'dB': float(args.dB) / Js_ref,
-        'tau_f': float(args.tau_f),
-        'eps_a': float(args.eps_a),
-        'loop': True,
-        'out_dir': args.out_dir,
-        'snapshot_every': int(args.snapshot_every),
-        'verbose': args.verbose,
-        'Js_ref': float(Js_ref),
+        "h_dir": h_dir,
+        "B_start": float(args.B_start) / Js_ref,
+        "B_end": float(args.B_end) / Js_ref,
+        "dB": float(args.dB) / Js_ref,
+        "tau_f": float(args.tau_f),
+        "eps_a": float(args.eps_a),
+        "loop": True,
+        "out_dir": args.out_dir,
+        "snapshot_every": int(args.snapshot_every),
+        "verbose": args.verbose,
+        "Js_ref": float(Js_ref),
     }
 
     # Apply overrides
     if p2_overrides:
         # Scale field values by Js_ref
-        if 'B_start' in p2_overrides: p2_overrides['B_start'] /= Js_ref
-        if 'B_end' in p2_overrides: p2_overrides['B_end'] /= Js_ref
-        if 'dB' in p2_overrides: p2_overrides['dB'] /= Js_ref
-        
+        if "B_start" in p2_overrides:
+            p2_overrides["B_start"] /= Js_ref
+        if "B_end" in p2_overrides:
+            p2_overrides["B_end"] /= Js_ref
+        if "dB" in p2_overrides:
+            p2_overrides["dB"] /= Js_ref
+
         # Remove mesh parameters that are not in LoopParams
-        p2_overrides.pop('mesh_unit', None)
-        
+        p2_overrides.pop("mesh_unit", None)
+
         params_dict.update(p2_overrides)
 
     params = LoopParams(**params_dict)
@@ -481,9 +651,11 @@ def main() -> None:
 
     # Write .mh file for mammos-mumag compatibility
     mh_name = modelname if modelname else "hysteresis"
-    write_mh(Path(args.out_dir) / mh_name, res['history'])
-    print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
+    write_mh(Path(args.out_dir) / mh_name, res["history"])
+    print(
+        f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

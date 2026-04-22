@@ -29,6 +29,7 @@ class TetGeom:
         JinvT (Optional[Array]): Precomputed inverse Jacobian transpose (E, 3, 3).
         x_nodes (Optional[Array]): Node coordinates (N, 3).
     """
+
     conn: Array
     volume: Array
     mat_id: Array
@@ -89,10 +90,25 @@ def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> Tuple[TetGeom, int
     volume = pad_to_multiple(geom.volume, chunk_elems, pad_value=0.0)
     mat_id = pad_to_multiple(geom.mat_id.astype(jnp.int32), chunk_elems, pad_value=1)
 
-    grad_phi = pad_to_multiple(geom.grad_phi, chunk_elems, pad_value=0.0) if geom.grad_phi is not None else None
-    JinvT = pad_to_multiple(geom.JinvT, chunk_elems, pad_value=0.0) if geom.JinvT is not None else None
+    grad_phi = (
+        pad_to_multiple(geom.grad_phi, chunk_elems, pad_value=0.0)
+        if geom.grad_phi is not None
+        else None
+    )
+    JinvT = (
+        pad_to_multiple(geom.JinvT, chunk_elems, pad_value=0.0)
+        if geom.JinvT is not None
+        else None
+    )
 
-    return TetGeom(conn=conn, volume=volume, mat_id=mat_id, grad_phi=grad_phi, JinvT=JinvT, x_nodes=geom.x_nodes), E_orig
+    return TetGeom(
+        conn=conn,
+        volume=volume,
+        mat_id=mat_id,
+        grad_phi=grad_phi,
+        JinvT=JinvT,
+        x_nodes=geom.x_nodes,
+    ), E_orig
 
 
 def chunk_mask(E_orig: int, start_e: int, chunk_elems: int, dtype: Any) -> Array:
@@ -172,11 +188,12 @@ def compute_node_volumes(geom: TetGeom, chunk_elems: int) -> Array:
     conn, Ve = geom_p.conn, geom_p.volume
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
-    
+
     if geom_p.x_nodes is not None:
         N = geom_p.x_nodes.shape[0]
     else:
         import numpy as np
+
         N = int(np.max(geom.conn)) + 1
 
     def body(i, vol_acc):

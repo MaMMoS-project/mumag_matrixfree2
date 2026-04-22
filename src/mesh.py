@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Tuple, List, Dict, Optional, Union
 import numpy as np
 from scipy.spatial import Delaunay
+
 #!/usr/bin/env python3
 """
 Single-solid tetra mesher with selectable geometry and backend:
@@ -33,8 +34,6 @@ Dependencies:
 - For .vtu export: meshio -> pip install meshio
 - Grid backend works without meshpy; visualization still needs meshio.
 """
-
-
 
 
 # Optional: visualization
@@ -107,6 +106,7 @@ def normalize(v: np.ndarray) -> np.ndarray:
         raise ValueError("Zero-length direction vector is not allowed.")
     return v / n
 
+
 def orthonormal_frame(
     xdir: Tuple[float, float, float],
     ydir: Tuple[float, float, float],
@@ -156,6 +156,7 @@ def approx_max_volume_from_edge(h: float) -> float:
 
 # ------------------------------- Geometry: BOX -------------------------------
 
+
 def oriented_point(
     x: float, y: float, z: float, ex: np.ndarray, ey: np.ndarray, ez: np.ndarray
 ) -> np.ndarray:
@@ -169,6 +170,7 @@ def oriented_point(
         np.ndarray: World coordinate vector (3,).
     """
     return x * ex + y * ey + z * ez
+
 
 def oriented_box_facets(
     points: List[Tuple[float, float, float]],
@@ -272,6 +274,7 @@ def icosahedron() -> Tuple[np.ndarray, np.ndarray]:
     )
     return verts, faces
 
+
 def subdivide_icosphere(
     verts: np.ndarray, faces: np.ndarray, level: int = None, subdiv: int = None
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -337,6 +340,7 @@ def subdivide_icosphere(
         V = V / norms[:, None]
     return V, F
 
+
 def ellipsoid_surface(
     extents: Tuple[float, float, float], subdiv: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -380,6 +384,7 @@ def ellipsoid_surface(
 
 # ------------------------------- Auto ellipsoid subdivision -------------------------------
 
+
 def auto_ell_subdiv(
     Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
 ) -> int:
@@ -400,6 +405,7 @@ def auto_ell_subdiv(
     R = max(a, c)
     n = int(np.ceil(np.log2((1.20 * R) / max(kappa * h, 1e-12))))
     return max(0, n)
+
 
 def parse_ell_subdiv_option(
     val: str, Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
@@ -452,6 +458,7 @@ def sample_bezier(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int) -> np.
     """
     ts = np.linspace(0.0, 1.0, n)
     return np.array([bezier_quad(p0, p1, p2, t) for t in ts])
+
 
 def build_eye_polygon(
     length: float = 3.5, width: float = 1.0, samples_per_curve: int = 64
@@ -546,10 +553,11 @@ def build_ellipse_polygon(a: float = 1.0, b: float = 0.5, n: int = 128) -> np.nd
     polygon = np.column_stack((x, y))
     return polygon
 
+
 def mesh_backend_meshpy_elliptic_cylinder(
-    a: float,          # semi-axis along local x
-    b: float,          # semi-axis along local y
-    t: float,          # thickness along local z
+    a: float,  # semi-axis along local x
+    b: float,  # semi-axis along local y
+    t: float,  # thickness along local z
     ex: np.ndarray,
     ey: np.ndarray,
     ez: np.ndarray,
@@ -570,7 +578,7 @@ def mesh_backend_meshpy_elliptic_cylinder(
 
     # 2) Build 3D vertices in LOCAL coords, then map to WORLD
     top_z, bottom_z = t / 2.0, -t / 2.0
-    verts_top    = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
+    verts_top = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
     verts_bottom = np.hstack([polygon, np.full((polygon.shape[0], 1), bottom_z)])
     V_local = np.vstack([verts_top, verts_bottom])
 
@@ -622,9 +630,7 @@ def mesh_backend_meshpy_elliptic_cylinder(
     )
 
 
-
-
-'''
+"""
 def mesh_backend_meshpy_elliptic_cylinder(
     a: float,
     b: float,
@@ -691,7 +697,8 @@ def mesh_backend_meshpy_elliptic_cylinder(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
-'''
+"""
+
 
 def mesh_backend_grid_elliptic_cylinder(
     a: float,
@@ -776,7 +783,7 @@ def mesh_backend_grid_elliptic_cylinder(
 # Mesh backends for eye geometry
 def mesh_backend_meshpy_eye(
     length: float,
-    width: float,     # NOTE: this is the half-height (i.e., Ly/2)
+    width: float,  # NOTE: this is the half-height (i.e., Ly/2)
     t: float,
     ex: np.ndarray,
     ey: np.ndarray,
@@ -798,7 +805,7 @@ def mesh_backend_meshpy_eye(
 
     # 2) Build 3D vertices for top and bottom in LOCAL coords, then map to WORLD
     top_z, bottom_z = t / 2.0, -t / 2.0
-    verts_top    = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
+    verts_top = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
     verts_bottom = np.hstack([polygon, np.full((polygon.shape[0], 1), bottom_z)])
     V_local = np.vstack([verts_top, verts_bottom])
 
@@ -861,7 +868,8 @@ def mesh_backend_meshpy_eye(
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
 
-'''
+
+"""
 def mesh_backend_meshpy_eye(
     length: float,
     width: float,
@@ -932,7 +940,9 @@ def mesh_backend_meshpy_eye(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
-'''
+"""
+
+
 def mesh_backend_grid_eye(
     length: float,
     width: float,
@@ -1027,6 +1037,7 @@ def mesh_backend_grid_eye(
 
 # ------------------------------- Backends -------------------------------
 
+
 def mesh_backend_meshpy_box(
     extents: Tuple[float, float, float],
     ex: np.ndarray,
@@ -1077,6 +1088,7 @@ def mesh_backend_meshpy_box(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
+
 
 def mesh_backend_meshpy_ellipsoid(
     extents: Tuple[float, float, float],
@@ -1134,6 +1146,7 @@ def mesh_backend_meshpy_ellipsoid(
     tets = np.asarray(mesh.elements, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     return knt, ijk
+
 
 def mesh_backend_grid_box(
     extents: Tuple[float, float, float],
@@ -1206,6 +1219,7 @@ def mesh_backend_grid_box(
             flush=True,
         )
     return knt, ijk
+
 
 def mesh_backend_grid_ellipsoid(
     extents: Tuple[float, float, float],
@@ -1328,7 +1342,7 @@ def run_single_solid_mesher(
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], str, Optional[str]]:
     """Build a single-solid tetrahedral mesh (box, ellipsoid, eye, cylinder, or poly).
 
-    Dispatches to the appropriate geometry and backend implementation, 
+    Dispatches to the appropriate geometry and backend implementation,
     writes outputs (.npz and optional .vtu), and returns paths and optionally arrays.
 
     Args:
@@ -1384,7 +1398,6 @@ def run_single_solid_mesher(
         raise ValueError("backend must be 'meshpy' or 'grid'")
     # Prefer meshpy when it is available, unless the caller set force_grid=True
 
-
     if geom == "box":
         if backend == "meshpy":
             knt, ijk = mesh_backend_meshpy_box(
@@ -1397,9 +1410,9 @@ def run_single_solid_mesher(
                 verbose=bool(verbose),
             )
         else:
-                knt, ijk = mesh_backend_grid_box(
-                    (Lx, Ly, Lz), ex, ey, ez, h=float(h), verbose=bool(verbose)
-                )
+            knt, ijk = mesh_backend_grid_box(
+                (Lx, Ly, Lz), ex, ey, ez, h=float(h), verbose=bool(verbose)
+            )
     elif geom == "ellipsoid":
         # Ellipsoid (now oriented using ex,ey,ez)
         if backend == "meshpy":
@@ -1424,9 +1437,9 @@ def run_single_solid_mesher(
                 verbose=bool(verbose),
             )
         else:
-                knt, ijk = mesh_backend_grid_ellipsoid(
-                    (Lx, Ly, Lz), h=float(h), ex=ex, ey=ey, ez=ez, verbose=bool(verbose)
-                )
+            knt, ijk = mesh_backend_grid_ellipsoid(
+                (Lx, Ly, Lz), h=float(h), ex=ex, ey=ey, ez=ez, verbose=bool(verbose)
+            )
     elif geom == "eye":
         # Eye: interpret Lx as length, Ly as full width, Lz as thickness
         length = float(Lx)
@@ -1489,11 +1502,14 @@ def run_single_solid_mesher(
             Lx, Ly, Lz = parse_csv3(extent)
         else:
             Lx, Ly, Lz = float(extent[0]), float(extent[1]), float(extent[2])
-        knt, ijk = mesh_backend_neper_poly(n=int(number_of_grains), 
-                                           seed=int(seed), 
-                                           size_x=Lx, size_y=Ly, size_z=Lz,
-                                           h=float(h))
-
+        knt, ijk = mesh_backend_neper_poly(
+            n=int(number_of_grains),
+            seed=int(seed),
+            size_x=Lx,
+            size_y=Ly,
+            size_z=Lz,
+            h=float(h),
+        )
 
     # Resolve output filenames
     base = (out_name or "single_solid").strip()
@@ -1530,9 +1546,9 @@ def run_single_solid_mesher(
         return knt, ijk, out_npz, out_vtu
 
 
-
-
-def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float) -> Tuple[np.ndarray, np.ndarray]:
+def mesh_backend_neper_poly(
+    n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float
+) -> Tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
     Requires 'neper' to be available in the PATH.
@@ -1549,16 +1565,36 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
         Tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
     """
     import subprocess
+
     # 1) Generate tessellation
-    cmd_tess = ["neper", "-T", "-n", str(n), "-id", str(seed),
-                "-morpho", "gg",
-                "-morphooptistop", "val=1e-2",
-                "-domain", f"cube({size_x},{size_y},{size_z}):translate({-size_x/2},{-size_y/2},{-size_z/2})",
-                "-reg", "1"]
+    cmd_tess = [
+        "neper",
+        "-T",
+        "-n",
+        str(n),
+        "-id",
+        str(seed),
+        "-morpho",
+        "gg",
+        "-morphooptistop",
+        "val=1e-2",
+        "-domain",
+        f"cube({size_x},{size_y},{size_z}):translate({-size_x / 2},{-size_y / 2},{-size_z / 2})",
+        "-reg",
+        "1",
+    ]
     subprocess.run(cmd_tess, check=True)
 
     # Optional preview (kept as-is)
-    cmd_vis = ["neper", "-V", f"n{n}-id{seed}.tess", "-datacellcol", "id", "-print", f"n{n}-id{seed}"]
+    cmd_vis = [
+        "neper",
+        "-V",
+        f"n{n}-id{seed}.tess",
+        "-datacellcol",
+        "id",
+        "-print",
+        f"n{n}-id{seed}",
+    ]
     subprocess.run(cmd_vis, check=True)
 
     # 2) Mesh tessellation
@@ -1569,7 +1605,7 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
     vtk_path = f"n{n}-id{seed}.vtk"
     mesh = meshio.read(vtk_path)
 
-    knt  = mesh.points
+    knt = mesh.points
     tets = mesh.cells_dict.get("tetra")
     if tets is None:
         raise RuntimeError("No tetra cells found in Neper output VTK.")
@@ -1579,7 +1615,16 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
     # Prefer the cell_data_dict (present in modern meshio versions)
     try:
         cd_tet = mesh.cell_data_dict.get("tetra", {})
-        for key in ("matids", "mat_id", "poly", "grain", "gmsh:physical", "material", "region", "domain"):
+        for key in (
+            "matids",
+            "mat_id",
+            "poly",
+            "grain",
+            "gmsh:physical",
+            "material",
+            "region",
+            "domain",
+        ):
             if key in cd_tet:
                 mat = np.asarray(cd_tet[key], dtype=np.int32).ravel()
                 break
@@ -1591,7 +1636,10 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
         for key, data_list in mesh.cell_data.items():
             # Each data_list aligns with mesh.cells blocks
             for cell_block, data in zip(mesh.cells, data_list):
-                if getattr(cell_block, "type", getattr(cell_block, "type", None)) == "tetra":
+                if (
+                    getattr(cell_block, "type", getattr(cell_block, "type", None))
+                    == "tetra"
+                ):
                     mat = np.asarray(data, dtype=np.int32).ravel()
                     break
             if mat is not None:
@@ -1599,7 +1647,10 @@ def mesh_backend_neper_poly(n: int, seed: int, size_x: float, size_y: float, siz
 
     # Last resort: all ones (warn)
     if mat is None:
-        print("[warn] No per-tetra cell data found in Neper VTK; defaulting mat_id=1.", file=sys.stderr)
+        print(
+            "[warn] No per-tetra cell data found in Neper VTK; defaulting mat_id=1.",
+            file=sys.stderr,
+        )
         mat = np.ones((tets.shape[0],), dtype=np.int32)
 
     # Build ijk (E,5): 4 indices + mat_id
@@ -1694,8 +1745,18 @@ def main() -> None:
     )
 
     # Orientation (applies to BOTH box and ellipsoid now)
-    ap.add_argument("--dir-x", type=str, default="1,0,0", help="Target direction for the local x-axis as 'x,y,z'.")
-    ap.add_argument("--dir-y", type=str, default="0,1,0", help="Initial direction for the local y-axis as 'x,y,z' (orthonormalized against x).")
+    ap.add_argument(
+        "--dir-x",
+        type=str,
+        default="1,0,0",
+        help="Target direction for the local x-axis as 'x,y,z'.",
+    )
+    ap.add_argument(
+        "--dir-y",
+        type=str,
+        default="0,1,0",
+        help="Initial direction for the local y-axis as 'x,y,z' (orthonormalized against x).",
+    )
     ap.add_argument(
         "--dir-z",
         type=str,
@@ -1711,9 +1772,18 @@ def main() -> None:
         help="(ELLIPSOID only) Icosphere subdivision level: non-negative integer or 'auto' (derived from h).",
     )
 
-    ap.add_argument("--n", type=int, default=10, help="(POLY only) Number of grains for polyhedral Voronoi tessellation.")
-    ap.add_argument("--id", type=int, default=1, help="(POLY only) Random seed for tessellation generation.")
-
+    ap.add_argument(
+        "--n",
+        type=int,
+        default=10,
+        help="(POLY only) Number of grains for polyhedral Voronoi tessellation.",
+    )
+    ap.add_argument(
+        "--id",
+        type=int,
+        default=1,
+        help="(POLY only) Random seed for tessellation generation.",
+    )
 
     # Output naming
     ap.add_argument(
@@ -1736,9 +1806,15 @@ def main() -> None:
     )
 
     ap.add_argument(
-        "--no-vis", action="store_true", help="Skip writing the .vtu visualization file."
+        "--no-vis",
+        action="store_true",
+        help="Skip writing the .vtu visualization file.",
     )
-    ap.add_argument("--verbose", action="store_true", help="Enable verbose logging during the meshing process.")
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging during the meshing process.",
+    )
 
     args = ap.parse_args()
 
