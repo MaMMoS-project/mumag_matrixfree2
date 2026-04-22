@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "mumag-matrixfree2"
 version = "0.1.0"
 description = "Matrix-free micromagnetic simulations with JAX"
