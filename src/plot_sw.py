@@ -4,9 +4,10 @@ Plotting script for Stoner-Wohlfarth verification.
 Reads sw_summary.csv using numpy and creates a comparison plot.
 """
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 
 
 def plot_results():

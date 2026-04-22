@@ -8,8 +8,8 @@ License: MIT
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, Optional, Sequence
 
 import numpy as np
 
@@ -50,8 +50,8 @@ def append_hysteresis_row(
     csv_path: str | Path,
     H: float,
     M_parallel: float,
-    E: Optional[float] = None,
-    gnorm: Optional[float] = None,
+    E: float | None = None,
+    gnorm: float | None = None,
 ) -> None:
     """Append a single data row to a hysteresis CSV file.
 
@@ -165,8 +165,8 @@ def write_vtu_tetra(
     points: np.ndarray,
     tets: np.ndarray,
     *,
-    point_data: Optional[Dict[str, np.ndarray]] = None,
-    cell_data: Optional[Dict[str, np.ndarray]] = None,
+    point_data: dict[str, np.ndarray] | None = None,
+    cell_data: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Write a tetrahedral mesh to an ASCII VTK UnstructuredGrid (.vtu) file.
 

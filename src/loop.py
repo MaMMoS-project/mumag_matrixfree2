@@ -22,14 +22,15 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import numpy as np
+
 import jax
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from fem_utils import TetGeom
 import add_shell
+from fem_utils import TetGeom
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 from io_utils import write_mh
 

@@ -9,8 +9,9 @@ License: MIT
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Optional, Literal, Tuple
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -18,10 +19,9 @@ from jax import lax
 
 from fem_utils import (
     TetGeom,
-    pad_geom_for_chunking,
-    chunk_mask,
     assemble_scatter,
     assemble_segment_sum,
+    pad_geom_for_chunking,
 )
 
 Array = jnp.ndarray
@@ -127,8 +127,8 @@ def make_poisson_ops(
     reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
     assembly: Assembly = "scatter",
-    boundary_mask: Optional[Array] = None,
-) -> Tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
+    boundary_mask: Array | None = None,
+) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
     """Create JIT-compiled matrix-free Poisson operators.
 
     Args:
@@ -149,7 +149,6 @@ def make_poisson_ops(
             rhs_from_m: Computes demag RHS from magnetization m.
             assemble_diag: Computes the diagonal of A.
     """
-
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
     Js_lookup = jnp.asarray(Js_lookup)
@@ -276,7 +275,7 @@ def make_poisson_ops(
 def estimate_spectral_radius(
     apply_A: Callable[[Array], Array],
     Mdiag: Array,
-    boundary_mask: Optional[Array],
+    boundary_mask: Array | None,
     N: int,
     n_iters: int = 15,
 ) -> float:
@@ -313,15 +312,13 @@ def make_pcg_solve(
     Mdiag: Array,
     *,
     precond_type: PrecondType = "none",
-    apply_Minv_amg: Optional[Callable[[Array, Optional[list]], Array]] = None,
+    apply_Minv_amg: Callable[[Array, list | None], Array] | None = None,
     order: int = 3,
     maxiter: int = 500,
     tol: float = 1e-8,
-    boundary_mask: Optional[Array] = None,
+    boundary_mask: Array | None = None,
     l_max: float = 2.0,
-) -> Callable[
-    [Array, Array, Optional[float], Optional[list]], Tuple[Array, int, float]
-]:
+) -> Callable[[Array, Array, float | None, list | None], tuple[Array, int, float]]:
     """Create a JIT-compiled PCG solver function.
 
     Args:
@@ -345,7 +342,7 @@ def make_pcg_solve(
     """
     default_tol = float(tol)
 
-    def apply_Minv(r: Array, hierarchy: Optional[list] = None) -> Array:
+    def apply_Minv(r: Array, hierarchy: list | None = None) -> Array:
         if precond_type == "none":
             if boundary_mask is not None:
                 return r * boundary_mask
@@ -390,9 +387,9 @@ def make_pcg_solve(
     def solve(
         b: Array,
         x0: Array,
-        tol: Optional[float] = None,
-        hierarchy: Optional[list] = None,
-    ) -> Tuple[Array, int, float]:
+        tol: float | None = None,
+        hierarchy: list | None = None,
+    ) -> tuple[Array, int, float]:
         dtype = b.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
         current_tol = jnp.asarray(tol if tol is not None else default_tol, dtype=dtype)
@@ -415,14 +412,14 @@ def make_pcg_solve(
         tol2 = (current_tol * current_tol) * bnorm2
 
         def cond_fun(
-            state: Tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
+            state: tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
         ) -> bool:
             it, x, r, z, p, rz, r2 = state
             return (it < maxiter) & (r2 > tol2)
 
         def body_fun(
-            state: Tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
-        ) -> Tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
+            state: tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
+        ) -> tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
             it, x, r, z, p, rz, r2 = state
             Ap = apply_A(p)
             if boundary_mask is not None:
@@ -456,10 +453,10 @@ def make_solve_U(
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
-    enforce_zero_mean: Optional[bool] = None,
-    boundary_mask: Optional[Array] = None,
+    enforce_zero_mean: bool | None = None,
+    boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
-) -> Callable[[Array, Array, Optional[float], bool], Array | Tuple[Array, int, float]]:
+) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U.
 
     Orchestrates operator creation, preconditioning setup (including AMG on CPU),
@@ -516,14 +513,14 @@ def make_solve_U(
 
     elif precond_type in ["amg", "amgcl"]:
         print(f"Setting up AMG hierarchy on CPU (PyAMG, mode={precond_type})...")
+        import numpy as np
         import pyamg
+
         from amg_utils import (
             assemble_poisson_matrix_cpu,
-            setup_amg_hierarchy,
             make_jax_amg_vcycle,
             make_jax_amgcl_vcycle,
         )
-        import numpy as np
 
         if geom.grad_phi is not None:
             gp = np.array(geom.grad_phi)
@@ -551,7 +548,7 @@ def make_solve_U(
         levels_jax = []
         for i in range(len(ml.levels)):
             level = ml.levels[i]
-            from amg_utils import csr_to_jax_bCOO, compute_spai0_diagonal
+            from amg_utils import compute_spai0_diagonal, csr_to_jax_bCOO
 
             csr_A = level.A.tocsr()
             level_dict = {
@@ -595,8 +592,8 @@ def make_solve_U(
 
     @partial(jax.jit, static_argnums=(3,))
     def solve_U(
-        m: Array, x0: Array, tol: Optional[float] = None, return_info: bool = False
-    ) -> Array | Tuple[Array, int, float]:
+        m: Array, x0: Array, tol: float | None = None, return_info: bool = False
+    ) -> Array | tuple[Array, int, float]:
         """Perform the Poisson solve for a given magnetization state m.
 
         Args:

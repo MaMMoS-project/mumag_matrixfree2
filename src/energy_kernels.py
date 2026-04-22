@@ -42,7 +42,8 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Callable, Tuple, Literal, Optional, Any
+from collections.abc import Callable
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -50,10 +51,10 @@ from jax import lax
 
 from fem_utils import (
     TetGeom,
-    pad_geom_for_chunking,
-    chunk_mask,
     assemble_scatter,
     assemble_segment_sum,
+    chunk_mask,
+    pad_geom_for_chunking,
 )
 
 MU0 = 4e-7 * jnp.pi
@@ -111,13 +112,13 @@ def make_energy_kernels(
     V_mag: float,
     M_nodal: Array,
     *,
-    k1me: Optional[Array] = None,
-    k1me_p: Optional[Array] = None,
+    k1me: Array | None = None,
+    k1me_p: Array | None = None,
     chunk_elems: int = 200_000,
     assembly: Assembly = "scatter",
     grad_backend: GradBackend = "stored_grad_phi",
-) -> Tuple[
-    Callable[[Array, Array, Array], Tuple[Array, Array]],
+) -> tuple[
+    Callable[[Array, Array, Array], tuple[Array, Array]],
     Callable[[Array, Array, Array], Array],
     Callable[[Array, Array, Array], Array],
 ]:
@@ -148,7 +149,6 @@ def make_energy_kernels(
         Tuple[Callable, Callable, Callable]: (energy_and_grad, energy_only, grad_only).
             Each function takes (m, U, B_ext) as input.
     """
-
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
 
@@ -225,7 +225,7 @@ def make_energy_kernels(
             JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
             return _B_from_JinvT(JinvT_c, dtype)
 
-    def energy_and_grad(m: Array, U: Array, B_ext: Array) -> Tuple[Array, Array]:
+    def energy_and_grad(m: Array, U: Array, B_ext: Array) -> tuple[Array, Array]:
         """Compute the total dimensionless energy and gradient.
 
         Args:

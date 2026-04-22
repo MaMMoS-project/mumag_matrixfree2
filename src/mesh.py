@@ -1,8 +1,9 @@
 from __future__ import annotations
-import sys
+
 import argparse
+import sys
 from pathlib import Path
-from typing import Tuple, List, Dict, Optional, Union
+
 import numpy as np
 from scipy.spatial import Delaunay
 
@@ -46,7 +47,8 @@ except Exception:
 
 # Optional: TetGen backend
 try:
-    from meshpy.tet import MeshInfo, Options, build as tet_build
+    from meshpy.tet import MeshInfo, Options
+    from meshpy.tet import build as tet_build
 
     HAVE_meshpy = True
 except Exception:
@@ -55,7 +57,7 @@ except Exception:
 # ------------------------------- Utilities -------------------------------
 
 
-def parse_csv3(s: str) -> Tuple[float, float, float]:
+def parse_csv3(s: str) -> tuple[float, float, float]:
     """Parse a string containing three comma-separated floats.
 
     Args:
@@ -108,10 +110,10 @@ def normalize(v: np.ndarray) -> np.ndarray:
 
 
 def orthonormal_frame(
-    xdir: Tuple[float, float, float],
-    ydir: Tuple[float, float, float],
-    zdir: Tuple[float, float, float],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    xdir: tuple[float, float, float],
+    ydir: tuple[float, float, float],
+    zdir: tuple[float, float, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Create an orthonormal right-handed frame from given directions.
 
     Uses Gram–Schmidt orthonormalization.
@@ -173,13 +175,13 @@ def oriented_point(
 
 
 def oriented_box_facets(
-    points: List[Tuple[float, float, float]],
-    center: Tuple[float, float, float],
-    half: Tuple[float, float, float],
+    points: list[tuple[float, float, float]],
+    center: tuple[float, float, float],
+    half: tuple[float, float, float],
     ex: np.ndarray,
     ey: np.ndarray,
     ez: np.ndarray,
-) -> List[List[int]]:
+) -> list[list[int]]:
     """Generate points and facets for an oriented box.
 
     Args:
@@ -222,7 +224,7 @@ def oriented_box_facets(
 # ------------------------------- Geometry: ELLIPSOID -------------------------------
 
 
-def icosahedron() -> Tuple[np.ndarray, np.ndarray]:
+def icosahedron() -> tuple[np.ndarray, np.ndarray]:
     """Return (V,F) for a unit icosahedron centered at origin.
 
     Returns:
@@ -277,7 +279,7 @@ def icosahedron() -> Tuple[np.ndarray, np.ndarray]:
 
 def subdivide_icosphere(
     verts: np.ndarray, faces: np.ndarray, level: int = None, subdiv: int = None
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Subdivide icosphere triangles into 4 and project to unit sphere.
 
     Args:
@@ -306,7 +308,7 @@ def subdivide_icosphere(
     F = np.asarray(faces, dtype=np.int32)
 
     for _ in range(lvl):
-        edge_cache: Dict[Tuple[int, int], int] = {}
+        edge_cache: dict[tuple[int, int], int] = {}
         new_faces = []
         new_verts = V.tolist()
 
@@ -342,8 +344,8 @@ def subdivide_icosphere(
 
 
 def ellipsoid_surface(
-    extents: Tuple[float, float, float], subdiv: int
-) -> Tuple[np.ndarray, np.ndarray]:
+    extents: tuple[float, float, float], subdiv: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Build a triangular surface mesh of an ellipsoid.
 
     Rotational symmetry is enforced in the local xy-plane.
@@ -564,9 +566,8 @@ def mesh_backend_meshpy_elliptic_cylinder(
     h: float,
     minratio: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Mesh an elliptic cylinder (ellipse cross-section with semi-axes a, b; extruded by thickness t)
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh an elliptic cylinder (ellipse cross-section with semi-axes a, b; extruded by thickness t)
     using MeshPy/TetGen, without pre-triangulating the caps. The top and bottom faces are single
     N-gon facets; the side surface is N quads.
     """
@@ -709,7 +710,7 @@ def mesh_backend_grid_elliptic_cylinder(
     ez: np.ndarray,
     h: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     # bounding box: x in [-a,a], y in [-b,b], z in [-t/2,t/2]
     Lx = 2.0 * float(a)
     Ly = 2.0 * float(b)
@@ -791,9 +792,8 @@ def mesh_backend_meshpy_eye(
     h: float,
     minratio: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Mesh the extruded 'eye' shape (built from two quadratic Bézier arcs) using MeshPy/TetGen,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh the extruded 'eye' shape (built from two quadratic Bézier arcs) using MeshPy/TetGen,
     without pre-triangulating the caps. The top and bottom faces are passed as single N-gon facets;
     the side surface is passed as quads between successive boundary vertices.
     """
@@ -952,7 +952,7 @@ def mesh_backend_grid_eye(
     ez: np.ndarray,
     h: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh an oriented extruded eye shape using a regular grid.
 
     Args:
@@ -1039,14 +1039,14 @@ def mesh_backend_grid_eye(
 
 
 def mesh_backend_meshpy_box(
-    extents: Tuple[float, float, float],
+    extents: tuple[float, float, float],
     ex: np.ndarray,
     ey: np.ndarray,
     ez: np.ndarray,
     h: float,
     minratio: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh an oriented box using MeshPy/TetGen.
 
     Args:
@@ -1063,7 +1063,7 @@ def mesh_backend_meshpy_box(
         raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
     Lx, Ly, Lz = extents
     half = (0.5 * Lx, 0.5 * Ly, 0.5 * Lz)
-    points: List[Tuple[float, float, float]] = []
+    points: list[tuple[float, float, float]] = []
     facets = oriented_box_facets(points, (0.0, 0.0, 0.0), half, ex, ey, ez)
 
     mi = MeshInfo()
@@ -1091,7 +1091,7 @@ def mesh_backend_meshpy_box(
 
 
 def mesh_backend_meshpy_ellipsoid(
-    extents: Tuple[float, float, float],
+    extents: tuple[float, float, float],
     h: float,
     minratio: float,
     subdiv: int,
@@ -1099,7 +1099,7 @@ def mesh_backend_meshpy_ellipsoid(
     ey: np.ndarray,
     ez: np.ndarray,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh an oriented ellipsoid using MeshPy/TetGen.
 
     Args:
@@ -1149,13 +1149,13 @@ def mesh_backend_meshpy_ellipsoid(
 
 
 def mesh_backend_grid_box(
-    extents: Tuple[float, float, float],
+    extents: tuple[float, float, float],
     ex: np.ndarray,
     ey: np.ndarray,
     ez: np.ndarray,
     h: float,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh an oriented box using a regular grid.
 
     Args:
@@ -1189,7 +1189,7 @@ def mesh_backend_grid_box(
                 p = oriented_point(x, y, z, ex, ey, ez)
                 knt[nidx(i, j, k), :] = p
 
-    tets: List[Tuple[int, int, int, int]] = []
+    tets: list[tuple[int, int, int, int]] = []
     for k in range(nz):
         for j in range(ny):
             for i in range(nx):
@@ -1222,13 +1222,13 @@ def mesh_backend_grid_box(
 
 
 def mesh_backend_grid_ellipsoid(
-    extents: Tuple[float, float, float],
+    extents: tuple[float, float, float],
     h: float,
     ex: np.ndarray,
     ey: np.ndarray,
     ez: np.ndarray,
     verbose: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh an oriented ellipsoid using a regular grid and centroid filtering.
 
     Args:
@@ -1277,7 +1277,7 @@ def mesh_backend_grid_ellipsoid(
             [np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64
         )
 
-    tets: List[Tuple[int, int, int, int]] = []
+    tets: list[tuple[int, int, int, int]] = []
     for k in range(nz):
         for j in range(ny):
             for i in range(nx):
@@ -1321,25 +1321,24 @@ def mesh_backend_grid_ellipsoid(
 def run_single_solid_mesher(
     *,
     geom: str = "box",  # "box" | "ellipsoid" | "eye"
-    extent: Union[str, Tuple[float, float, float]] = "60.0,60.0,60.0",
+    extent: str | tuple[float, float, float] = "60.0,60.0,60.0",
     h: float = 2.0,
     minratio: float = 1.4,  # meshpy backend only
     backend: str = "meshpy",  # "meshpy" | "grid"
-    dir_x: Union[str, Tuple[float, float, float]] = "1,0,0",
-    dir_y: Union[str, Tuple[float, float, float]] = "0,1,0",
-    dir_z: Union[str, Tuple[float, float, float]] = "0,0,1",  # ellipsoid symmetry axis
-    ell_subdiv: Union[
-        str, int
-    ] = "auto",  # ellipsoid + meshpy: int >=0 or 'auto'/'automatic'/'-1'
-    out_name: Optional[str] = "single_solid",
-    out_data_name: Optional[str] = None,  # overrides .npz base name
-    out_vis_name: Optional[str] = None,  # overrides .vtu base name
+    dir_x: str | tuple[float, float, float] = "1,0,0",
+    dir_y: str | tuple[float, float, float] = "0,1,0",
+    dir_z: str | tuple[float, float, float] = "0,0,1",  # ellipsoid symmetry axis
+    ell_subdiv: str
+    | int = "auto",  # ellipsoid + meshpy: int >=0 or 'auto'/'automatic'/'-1'
+    out_name: str | None = "single_solid",
+    out_data_name: str | None = None,  # overrides .npz base name
+    out_vis_name: str | None = None,  # overrides .vtu base name
     number_of_grains=1,
     seed=123,
     no_vis: bool = False,
     verbose: bool = False,
     return_arrays: bool = True,  # NEW: set False to minimize memory
-) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], str, Optional[str]]:
+) -> tuple[np.ndarray | None, np.ndarray | None, str, str | None]:
     """Build a single-solid tetrahedral mesh (box, ellipsoid, eye, cylinder, or poly).
 
     Dispatches to the appropriate geometry and backend implementation,
@@ -1372,8 +1371,8 @@ def run_single_solid_mesher(
         Lx, Ly, Lz = float(extent[0]), float(extent[1]), float(extent[2])
 
     def _csv_or_tuple(
-        v: Union[str, Tuple[float, float, float]],
-    ) -> Tuple[float, float, float]:
+        v: str | tuple[float, float, float],
+    ) -> tuple[float, float, float]:
         return (
             parse_csv3(v)
             if isinstance(v, str)
@@ -1522,7 +1521,7 @@ def run_single_solid_mesher(
     print(f"[ok] Wrote data: {out_npz} (nodes={knt.shape[0]}, tets={ijk.shape[0]})")
 
     # Save visualization (.vtu)
-    out_vtu: Optional[str] = None
+    out_vtu: str | None = None
     if not no_vis:
         out_vtu = with_ext(vis_name, ".vtu")
         if not HAVE_meshio:
@@ -1548,7 +1547,7 @@ def run_single_solid_mesher(
 
 def mesh_backend_neper_poly(
     n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
     Requires 'neper' to be available in the PATH.

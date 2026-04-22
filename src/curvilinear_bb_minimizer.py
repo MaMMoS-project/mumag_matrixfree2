@@ -10,16 +10,17 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Callable, Dict, Literal, Optional, List, Any
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 from jax import lax
 
-from fem_utils import TetGeom
 from energy_kernels import make_energy_kernels
+from fem_utils import TetGeom
 from poisson_solve import make_solve_U
 
 Array = jnp.ndarray
@@ -70,7 +71,7 @@ def armijo_weak_line_search(
     H_for_update: Array,
     E0: float,
     U_base: Array,
-    solve_U: Callable[[Array, Array, Optional[float]], Array],
+    solve_U: Callable[[Array, Array, float | None], Array],
     energy_only: Callable[[Array, Array, Array], Array],
     B_ext: Array,
     phi_tol: float,
@@ -104,7 +105,6 @@ def armijo_weak_line_search(
     Returns:
         float: Optimal step size tau.
     """
-
     if pg >= 0:
         return 0.0
 
@@ -194,8 +194,8 @@ def make_minimizer(
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
-    boundary_mask: Optional[Array] = None,
-) -> Callable[..., Tuple[Array, Array, Dict[str, Any]]]:
+    boundary_mask: Array | None = None,
+) -> Callable[..., Tuple[Array, Array, dict[str, Any]]]:
     """Create a high-level micromagnetic minimizer.
 
     Args:
@@ -402,7 +402,7 @@ def make_minimizer(
         m0: Array,
         B_ext: Array,
         *,
-        U0: Optional[Array] = None,
+        U0: Array | None = None,
         gamma: int = 5,
         max_iter: int = 200,
         tau_f: float = 1e-6,
@@ -417,7 +417,7 @@ def make_minimizer(
         ls_s0: float = 1.0,
         ls_max_evals: int = 15,
         verbose: bool = True,
-    ) -> Tuple[Array, Array, Dict[str, Any]]:
+    ) -> Tuple[Array, Array, dict[str, Any]]:
         """Minimize the micromagnetic energy using BB and line search.
 
         Args:

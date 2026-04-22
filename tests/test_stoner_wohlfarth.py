@@ -1,19 +1,20 @@
 import sys
 from pathlib import Path
-import numpy as np
+
 import jax
 import jax.numpy as jnp
-from jax import lax
+import numpy as np
 import pytest
+from jax import lax
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from energy_kernels import make_energy_kernels
-from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
 import mesh
+from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
+from energy_kernels import make_energy_kernels
+from fem_utils import TetGeom, compute_node_volumes
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
 def make_minimizer_no_demag(

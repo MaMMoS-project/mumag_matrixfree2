@@ -9,20 +9,20 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Literal, Optional, List, Any
-
 import time
-import numpy as np
+from dataclasses import dataclass
+from typing import Any, Literal
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from fem_utils import TetGeom
 from curvilinear_bb_minimizer import make_minimizer
+from fem_utils import TetGeom
 from io_utils import (
+    append_hysteresis_row,
     ensure_dir,
     write_hysteresis_header,
-    append_hysteresis_row,
     write_vtu_tetra,
 )
 
@@ -204,8 +204,8 @@ def run_hysteresis_loop(
     cg_maxiter: int = 400,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
-    boundary_mask: Optional[jnp.ndarray] = None,
-) -> Dict[str, Any]:
+    boundary_mask: jnp.ndarray | None = None,
+) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
     Args:
@@ -234,7 +234,6 @@ def run_hysteresis_loop(
     Returns:
         Dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
     """
-
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
     write_hysteresis_header(csv_path)

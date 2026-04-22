@@ -1,6 +1,7 @@
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def plot_hysteresis(csv_path: str | Path, output_image: str | Path):

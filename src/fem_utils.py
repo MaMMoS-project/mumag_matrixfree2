@@ -9,7 +9,7 @@ License: MIT
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Any
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -33,9 +33,9 @@ class TetGeom:
     conn: Array
     volume: Array
     mat_id: Array
-    grad_phi: Optional[Array] = None
-    JinvT: Optional[Array] = None
-    x_nodes: Optional[Array] = None
+    grad_phi: Array | None = None
+    JinvT: Array | None = None
+    x_nodes: Array | None = None
 
 
 def pad_to_multiple(x: Array, multiple: int, pad_value=0) -> Array:
@@ -64,7 +64,7 @@ def pad_to_multiple(x: Array, multiple: int, pad_value=0) -> Array:
     return jnp.pad(x, pad_width, constant_values=pad_value)
 
 
-def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> Tuple[TetGeom, int]:
+def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> tuple[TetGeom, int]:
     """Pad the elements of a TetGeom container to a multiple of chunk_elems.
 
     Connectivity, volume, and mat_id are always padded. Precomputed gradients

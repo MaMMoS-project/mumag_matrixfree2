@@ -1,18 +1,17 @@
 import sys
 from pathlib import Path
-import numpy as np
-import jax
+
 import jax.numpy as jnp
-import pytest
+import numpy as np
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from curvilinear_bb_minimizer import make_minimizer
 import add_shell
 import mesh
+from curvilinear_bb_minimizer import make_minimizer
+from fem_utils import TetGeom, compute_node_volumes
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
 def test_minimizer_relaxation():

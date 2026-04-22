@@ -4,20 +4,22 @@ Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
 """
 
-import numpy as np
-import scipy.sparse as sp
-import pyamg
+from collections.abc import Callable
+from functools import partial
+from typing import Any
+
 import jax
 import jax.numpy as jnp
-from functools import partial
-from typing import List, Tuple, Optional, Any, Callable, Dict
+import numpy as np
+import pyamg
+import scipy.sparse as sp
 
 
 def assemble_poisson_matrix_cpu(
     conn: np.ndarray,
     volume: np.ndarray,
     grad_phi: np.ndarray,
-    boundary_mask: Optional[np.ndarray] = None,
+    boundary_mask: np.ndarray | None = None,
     reg: float = 1e-12,
 ) -> sp.csr_matrix:
     """Assemble the Poisson stiffness matrix in CSR format on the CPU.
@@ -121,7 +123,7 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
     return m_diag
 
 
-def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> List[Dict]:
+def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict]:
     """Compute the AMG hierarchy on the CPU using PyAMG.
 
     Args:

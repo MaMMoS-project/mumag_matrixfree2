@@ -1,7 +1,8 @@
 import sys
 from pathlib import Path
-import numpy as np
+
 import jax
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -10,12 +11,12 @@ import pytest
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from energy_kernels import make_energy_kernels
-from poisson_solve import make_solve_U
 import add_shell
 import mesh
+from energy_kernels import make_energy_kernels
+from fem_utils import TetGeom, compute_node_volumes
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
+from poisson_solve import make_solve_U
 
 
 def test_micromagnetic_energies():

@@ -7,20 +7,21 @@ Uses AMGCL preconditioner on a 20nm cube (NdFeB-like properties).
 
 from __future__ import annotations
 
-import numpy as np
 import jax
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-from pathlib import Path
 import time
+from pathlib import Path
 
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from hysteresis_loop import LoopParams, run_hysteresis_loop
-from io_utils import ensure_dir
+import jax.numpy as jnp
+
 import add_shell
 import mesh
+from fem_utils import TetGeom, compute_node_volumes
+from hysteresis_loop import LoopParams, run_hysteresis_loop
+from io_utils import ensure_dir
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
 def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray) -> None:

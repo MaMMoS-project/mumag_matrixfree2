@@ -9,20 +9,20 @@ Sweeps field from 8T to -8T and identifies the switching field.
 from __future__ import annotations
 
 import os
-import time
-import numpy as np
+
 import jax
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 from jax import lax
-from pathlib import Path
 
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from energy_kernels import make_energy_kernels
 from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
-from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row
+from energy_kernels import make_energy_kernels
+from fem_utils import TetGeom, compute_node_volumes
+from io_utils import ensure_dir
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
 def parse_inp(path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
@@ -36,7 +36,7 @@ def parse_inp(path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
             (Nodes N x 3, Elements E x 5) or (None, None) if empty.
     """
     print(f"Parsing INP file: {path}")
-    with open(path, "r") as f:
+    with open(path) as f:
         header_line = f.readline().split()
         if not header_line:
             return None, None

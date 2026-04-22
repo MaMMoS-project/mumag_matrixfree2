@@ -40,7 +40,6 @@ Requirements
 import argparse
 import math
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional, Union
 
 import numpy as np
 from meshpy.tet import MeshInfo, Options, build  # MeshPy -> TetGen
@@ -66,7 +65,7 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def parse_csv3(s: str) -> Tuple[float, float, float]:
+def parse_csv3(s: str) -> tuple[float, float, float]:
     """Parse a comma-separated string of 3 floats.
 
     Args:
@@ -133,7 +132,7 @@ def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
 
 def weld_points(
     knt: np.ndarray, ijk: np.ndarray, tol: float = 1e-12
-) -> Tuple[np.ndarray, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, int]:
     """Fuse nodes closer than 'tol' using integer grid hashing.
 
     Args:
@@ -250,7 +249,7 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
 # ------------------------------- PLC builders -------------------------------
 def build_layer_nodes(
     knt0: np.ndarray, surf_verts: np.ndarray, center: np.ndarray, K: float, layers: int
-) -> Tuple[np.ndarray, Dict[Tuple[int, int], int], List[np.ndarray]]:
+) -> tuple[np.ndarray, dict[tuple[int, int], int], list[np.ndarray]]:
     """Create node copies for each surface vertex across layers at geometric scales K^l.
 
     Args:
@@ -270,7 +269,7 @@ def build_layer_nodes(
     ext = vmax - vmin
     Lmax = float(np.max(ext))
 
-    node_map: Dict[Tuple[int, int], int] = {}
+    node_map: dict[tuple[int, int], int] = {}
 
     for vid in surf_verts:
         node_map[(int(vid), 0)] = int(vid)
@@ -320,8 +319,8 @@ def make_shell_plc_from_surface(
     tris0: np.ndarray,
     layers: int,
     K: float,
-    center: Tuple[float, float, float],
-) -> Tuple[np.ndarray, List[List[int]], np.ndarray, np.ndarray, Dict, List]:
+    center: tuple[float, float, float],
+) -> tuple[np.ndarray, list[list[int]], np.ndarray, np.ndarray, dict, list]:
     """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
 
     Args:
@@ -342,7 +341,7 @@ def make_shell_plc_from_surface(
         knt0, surf_verts, center, K, layers
     )
 
-    facets: List[List[int]] = []
+    facets: list[list[int]] = []
     for l in range(0, layers + 1):
         for tri in tris0:
             v = [
@@ -379,7 +378,7 @@ def add_shell_with_meshpy(
     layers: int,
     K: float,
     beta: float,
-    center: Tuple[float, float, float],
+    center: tuple[float, float, float],
     h0: float | None,
     hmax: float | None,
     minratio: float,
@@ -387,7 +386,7 @@ def add_shell_with_meshpy(
     no_exact: bool,
     verbose: bool,
     same_scaling: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Invoke TetGen to mesh exterior shell layers and merge with the body.
 
     Args:
@@ -507,26 +506,26 @@ def run_add_shell_pipeline(
     *,
     in_npz: str,
     # Geometry controls
-    layers: Optional[int] = None,
-    K: Optional[float] = None,
-    KL: Optional[float] = None,
+    layers: int | None = None,
+    K: float | None = None,
+    KL: float | None = None,
     auto_layers: bool = False,
     auto_K: bool = False,
     # Mesh-size coupling
     beta: float = 1.0,
     same_scaling: bool = False,
     # Radial center
-    center: Union[str, Tuple[float, float, float]] = "0,0,0",
+    center: str | tuple[float, float, float] = "0,0,0",
     # Size targets
-    h0: Optional[float] = None,
-    hmax: Optional[float] = None,
-    body_h: Optional[float] = None,
+    h0: float | None = None,
+    hmax: float | None = None,
+    body_h: float | None = None,
     # TetGen options
     minratio: float = 1.4,
-    max_steiner: Optional[int] = None,
+    max_steiner: int | None = None,
     no_exact: bool = False,
     verbose: bool = False,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Programmatic entry point for adding graded shell layers.
 
     Args:
