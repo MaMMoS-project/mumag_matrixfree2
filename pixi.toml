@@ -18,6 +18,7 @@ neper = "*"
 povray = "*"
 pip = "*"
 pytest = "*"
+ruff = "*"
 
 [pypi-dependencies]
 jaxopt = "*"
