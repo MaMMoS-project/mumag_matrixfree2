@@ -10,7 +10,7 @@ import pyamg
 import jax
 import jax.numpy as jnp
 from functools import partial
-from typing import List, Tuple, Optional, Any, Callable
+from typing import List, Tuple, Optional, Any, Callable, Dict
 
 
 def assemble_poisson_matrix_cpu(conn: np.ndarray, volume: np.ndarray, grad_phi: np.ndarray, boundary_mask: Optional[np.ndarray] = None, reg: float = 1e-12) -> sp.csr_matrix:
