@@ -17,6 +17,7 @@ meshpy = "*"
 neper = "*"
 pip = "*"
 pytest = "*"
+ruff = "*"
 
 [pypi-dependencies]
 jaxopt = "*"
