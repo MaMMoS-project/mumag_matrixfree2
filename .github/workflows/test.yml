@@ -1,0 +1,40 @@
+name: Test package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_call:
+
+env:
+  PYTEST_ADDOPTS: "--color=yes"
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest] # , macos-latest, windows-latest]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Setup Pixi
+      uses: prefix-dev/setup-pixi@v0.9.4
+    - name: Run tests
+      run: pixi run test
+    - name: Run example
+      run: pixi run sample
+    # for later: standardised task names
+    # - name: unit tests
+    #   run: pixi run test-unittest
+    # - name: doc tests
+    #   run: pixi run test-docstrings
+    # - name: Test examples
+    #   run: pixi run test-notebooks
+    - name: Keep pixi.lock artifact for debugging
+      uses: actions/upload-artifact@v4
+      with:
+        path: pixi.lock
+      if: ${{ matrix.os == 'ubuntu-latest' && !cancelled() }}
