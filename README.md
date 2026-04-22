@@ -93,41 +93,91 @@ tol_fun = 1e-6      ; tau_f tolerance
 precond_iter = 400  ; Poisson solver max iterations
 ```
 
-### CLI Options for `loop.py`
-- `modelname`: (Positional) Base name. Automatically looks for `[modelname].npz`, `[modelname].krn`, and `[modelname].p2`.
-- `--mesh`: Explicit path to the core mesh file.
-- `--materials`: Path to a `.krn` file with magnetic properties.
-- `--add-shell`: Programmatically adds an airbox shell (see below).
-- `--chunk-elems`: Number of elements per GPU processing batch (controls memory usage).
-- `--snapshot-every`: VTU output frequency (0=none, 1=every step).
-- `--precond-type`: Poisson solver preconditioner (`amgcl`, `jacobi`, `chebyshev`).
-- `--eps-a`: Absolute tolerance for the tangent gradient norm.
+## 4. CLI Reference
 
-## 4. Meshing Tools
+### `src/loop.py` (Main Driver)
+The primary entry point for running hysteresis loop simulations.
 
-### `mesh.py`
-A versatile mesher for core magnetic bodies. Supports:
-- **Geometries**: `box`, `ellipsoid`, `eye` (Bézier arcs), `elliptic_cylinder`, and `poly` (Voronoi grains via Neper).
-- **Backends**: 
-    - `grid`: Regular brick grid split into tetrahedra (extremely fast, recommended for simple shapes).
-    - `meshpy`: Unstructured refinement via TetGen (allows quality constraints).
-- **Orientation**: Full 3D orientation using `--dir-x`, `--dir-y`, and `--dir-z`.
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `modelname` | string | **Positional**. Base name. Automatically looks for `[modelname].npz`, `[modelname].krn`, and `[modelname].p2`. |
+| `--mesh` | path | Explicit path to the input NPZ mesh (knt, ijk). |
+| `--add-shell` | flag | Automatically add an airbox shell around the core mesh. |
+| `--layers` | int | Number of graded shell layers (default: 4). |
+| `--K` | float | Geometric growth factor for shell layer thickness (default: 1.3). |
+| `--beta` | float | Mesh-size/geometry coupling exponent (default: 1.0). |
+| `--center` | CSV | Ray origin for shell expansion as "cx,cy,cz" (default: 0,0,0). |
+| `--h0` | float | Target edge length near the body surface (mesh units). |
+| `--hmax` | float | Target edge length at the outermost shell boundary (mesh units). |
+| `--minratio` | float | TetGen quality minratio (-q) for shell tetrahedra (default: 1.4). |
+| `--max-steiner` | int | Limit the number of Steiner points added by TetGen. |
+| `--no-exact` | flag | Suppress exact arithmetic in TetGen (-X). |
+| `--materials` | path | Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...). |
+| `--precond-type` | choice | Poisson preconditioner: `amgcl` (default), `jacobi`, `chebyshev`, or `amg`. |
+| `--geom-backend` | choice | Gradient info strategy: `stored_JinvT` (default), `stored_grad_phi`, or `on_the_fly`. |
+| `--chunk-elems` | int | Elements processed per loop iteration (default: 200,000). Controls GPU memory. |
+| `--cg-maxiter` | int | Maximum iterations for the Poisson PCG solver (default: 400). |
+| `--cg-tol` | float | Relative residual tolerance for the Poisson solver (default: 1e-8). |
+| `--poisson-reg` | float | Tikhonov regularization constant for Poisson diagonal (default: 1e-12). |
+| `--h-dir` | CSV | Applied field direction as unit vector "hx,hy,hz" (default: 0,0,1). |
+| `--B-start` | float | Starting magnitude of the applied field (Tesla, default: -1.0). |
+| `--B-end` | float | Final magnitude of the applied field (Tesla, default: 1.0). |
+| `--dB` | float | Field step size magnitude (Tesla, default: 0.05). |
+| `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
+| `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
+| `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
+| `--m0-dir` | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |
+| `--verbose` | flag | Print detailed minimizer iterations at each step. |
 
-### `add_shell.py` (The Airbox)
-**No airbox is needed in your input mesh.** The simulation adds one programmatically if `--add-shell` is used.
-- **Layers**: Number of concentric tetrahedral layers added outside the body.
-- **Grading (K)**: The layer thickness grows geometrically. Layer $l$ is scaled by $K^l$ relative to the body surface.
-- **h0**: The target edge length at the body-air interface. Should match the body's internal mesh size.
-- **hmax**: The target edge length at the outermost boundary.
-- **Grading Logic**: Mesh size $h_l$ grows as $h_l = h_0 \cdot K^l$, effectively reducing the node count in the far field where potential gradients are low.
+### `src/mesh.py` (Meshing Tool)
+A versatile mesher for core magnetic bodies.
 
-### `mesh_convert.py`
-A utility to convert between JAX-friendly `.npz` files and standard `.vtu` (Paraview) or `.inp` (AVS UCD) formats.
-```bash
-pixi run python src/mesh_convert.py --in mesh.npz --out mesh.vtu
-```
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `elliptic_cylinder`, or `poly`. |
+| `--extent` | CSV | Full dimensions Lx,Ly,Lz of the core mesh (default: 60,60,60). |
+| `--h` | float | Target characteristic edge length (default: 2.0). |
+| `--minratio` | float | TetGen quality minratio (-q) for refinement (default: 1.4). |
+| `--backend` | choice | Meshing engine: `meshpy` (TetGen, default) or `grid` (regular Freudenthal). |
+| `--dir-x` | CSV | Target direction for the local x-axis (default: 1,0,0). |
+| `--dir-y` | CSV | Initial direction for the local y-axis (default: 0,1,0). |
+| `--dir-z` | CSV | Initial direction for the local z-axis (default: 0,0,1). |
+| `--ell-subdiv` | mixed | (Ellipsoid only) Icosphere subdivision level: integer or `auto` (default). |
+| `--n` | int | (Poly only) Number of grains for Voronoi tessellation (default: 10). |
+| `--id` | int | (Poly only) Random seed for tessellation (default: 1). |
+| `--out-name` | string | Base name for output files (default: single_solid). |
+| `--no-vis` | flag | Skip writing the .vtu visualization file. |
+| `--verbose` | flag | Enable verbose logging during meshing. |
+
+### `src/add_shell.py` (Airbox Tool)
+Manually add graded exterior tetrahedral layers.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `--in` | path | **Required**. Input NPZ mesh containing core body 'knt' and 'ijk'. |
+| `--layers` | int | Number of graded shell layers L. |
+| `--K` | float | Geometric scale factor (> 1) for layer thickness. |
+| `--KL` | float | Total outermost geometric scale relative to body. |
+| `--auto-layers` | flag | Compute L given KL and K. |
+| `--auto-K` | flag | Compute K given KL and layers. |
+| `--beta` | float | Mesh-size/geometry coupling exponent (default: 1.0). |
+| `--same-scaling` | flag | Shortcut for beta=1.0 and automatic hmax. |
+| `--center` | CSV | Ray origin for homothetic expansion (default: 0,0,0). |
+| `--h0` | float | Target edge length at the first shell layer. |
+| `--hmax` | float | Target edge length at the outermost boundary. |
+| `--body-h` | float | Characteristic size of the input body mesh (optional). |
+| `--out-npz` | path | Optional path to save the merged mesh as an NPZ. |
+| `--out-vtu` | path | Optional path to save the merged mesh as a VTU. |
+
+### `src/mesh_convert.py` (Interoperability)
+Convert between JAX-friendly NPZ and standard formats.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `--in` | path | **Required**. Input mesh (.npz or .vtu). |
+| `--out` | path | **Required**. Output mesh (.vtu or .npz). |
 
 ## 5. Benchmarking & Tests
 - **Unit Tests**: Run `pixi run test` to verify the physics (energies, gradients, and switching fields).
-- **Performance**: Run `pixi run benchmark` to compare the JAX Poisson solver against the native C++ (OpenCL/VexCL) implementation.
-- **Profiling**: `benchmarking/profile_compilation.py` and `profile_energy_jax.py` provide detailed XLA trace analysis.
+- **Performance**: Run `pixi run benchmark` to compare the JAX Poisson solver against the native C++ implementation.
