@@ -1,4 +1,4 @@
-"""io_utils.py
+"""io_utils.py.
 
 Simple output utilities including ASCII VTK UnstructuredGrid (.vtu) writer.
 
@@ -8,8 +8,8 @@ License: MIT
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, Optional, Sequence
 
 import numpy as np
 
@@ -28,7 +28,9 @@ def ensure_dir(path: str | Path) -> Path:
     return p
 
 
-def write_hysteresis_header(csv_path: str | Path, extra_cols: Sequence[str] = ("E", "gnorm")) -> None:
+def write_hysteresis_header(
+    csv_path: str | Path, extra_cols: Sequence[str] = ("E", "gnorm")
+) -> None:
     """Write the header for a hysteresis CSV file.
 
     Args:
@@ -44,7 +46,13 @@ def write_hysteresis_header(csv_path: str | Path, extra_cols: Sequence[str] = ("
     csv_path.write_text(",".join(cols) + "\n", encoding="utf-8")
 
 
-def append_hysteresis_row(csv_path: str | Path, H: float, M_parallel: float, E: Optional[float] = None, gnorm: Optional[float] = None) -> None:
+def append_hysteresis_row(
+    csv_path: str | Path,
+    H: float,
+    M_parallel: float,
+    E: float | None = None,
+    gnorm: float | None = None,
+) -> None:
     """Append a single data row to a hysteresis CSV file.
 
     Args:
@@ -63,7 +71,7 @@ def append_hysteresis_row(csv_path: str | Path, H: float, M_parallel: float, E: 
         parts.append(f"{E:.9e}")
     if gnorm is not None:
         parts.append(f"{gnorm:.9e}")
-    with csv_path.open('a', encoding='utf-8') as f:
+    with csv_path.open("a", encoding="utf-8") as f:
         f.write(",".join(parts) + "\n")
 
 
@@ -86,13 +94,14 @@ def write_mh(path: str | Path, records: np.ndarray) -> None:
         f.write("# " + header + " \n")
         np.savetxt(f, records, fmt="%.9e")
 
+
 def compute_volume_averaged_J_parallel(
     m_nodes: np.ndarray,
     conn: np.ndarray,
     volume: np.ndarray,
     mat_id: np.ndarray,
     Js_lookup: np.ndarray,
-    h_dir: np.ndarray
+    h_dir: np.ndarray,
 ) -> float:
     """Compute the volume-averaged magnetic polarization parallel to a direction.
 
@@ -150,13 +159,14 @@ def _vtk_type(arr: np.ndarray) -> str:
         return "Int32"
     return "Float32"
 
+
 def write_vtu_tetra(
     path: str | Path,
     points: np.ndarray,
     tets: np.ndarray,
     *,
-    point_data: Optional[Dict[str, np.ndarray]] = None,
-    cell_data: Optional[Dict[str, np.ndarray]] = None
+    point_data: dict[str, np.ndarray] | None = None,
+    cell_data: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Write a tetrahedral mesh to an ASCII VTK UnstructuredGrid (.vtu) file.
 
@@ -164,9 +174,9 @@ def write_vtu_tetra(
         path (str | Path): Output file path.
         points (np.ndarray): Node coordinates (N, 3).
         tets (np.ndarray): Tetrahedron connectivity (E, 4).
-        point_data (Optional[Dict[str, np.ndarray]], optional): Dictionary of
+        point_data (dict[str, np.ndarray] | None, optional): Dictionary of
             nodal data arrays (N, ...). Defaults to None.
-        cell_data (Optional[Dict[str, np.ndarray]], optional): Dictionary of
+        cell_data (dict[str, np.ndarray] | None, optional): Dictionary of
             element-wise data arrays (E, ...). Defaults to None.
 
     Raises:
@@ -183,17 +193,17 @@ def write_vtu_tetra(
 
     pts = np.asarray(points)
     if pts.ndim != 2 or pts.shape[1] != 3:
-        raise ValueError('points must have shape (N,3)')
+        raise ValueError("points must have shape (N,3)")
     cells = np.asarray(tets)
     if cells.ndim != 2 or cells.shape[1] != 4:
-        raise ValueError('tets must have shape (E,4)')
+        raise ValueError("tets must have shape (E,4)")
 
     N = pts.shape[0]
     E = cells.shape[0]
 
     pts = pts.astype(np.float32, copy=False)
     conn = cells.astype(np.int32, copy=False).reshape(-1)
-    offsets = (np.arange(1, E + 1, dtype=np.int32) * 4)
+    offsets = np.arange(1, E + 1, dtype=np.int32) * 4
     types = np.full((E,), 10, dtype=np.uint8)
 
     def fmt(a: np.ndarray) -> str:
@@ -201,54 +211,69 @@ def write_vtu_tetra(
 
     lines = []
     lines.append('<?xml version="1.0"?>')
-    lines.append('<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">')
-    lines.append('  <UnstructuredGrid>')
+    lines.append(
+        '<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">'
+    )
+    lines.append("  <UnstructuredGrid>")
     lines.append(f'    <Piece NumberOfPoints="{N}" NumberOfCells="{E}">')
 
-    lines.append('      <Points>')
-    lines.append(f'        <DataArray type="{_vtk_type(pts)}" NumberOfComponents="3" format="ascii">')
-    lines.append('          ' + fmt(pts))
-    lines.append('        </DataArray>')
-    lines.append('      </Points>')
+    lines.append("      <Points>")
+    lines.append(
+        f'        <DataArray type="{_vtk_type(pts)}" '
+        'NumberOfComponents="3" format="ascii">'
+    )
+    lines.append("          " + fmt(pts))
+    lines.append("        </DataArray>")
+    lines.append("      </Points>")
 
-    lines.append('      <Cells>')
+    lines.append("      <Cells>")
     lines.append('        <DataArray type="Int32" Name="connectivity" format="ascii">')
-    lines.append('          ' + fmt(conn))
-    lines.append('        </DataArray>')
+    lines.append("          " + fmt(conn))
+    lines.append("        </DataArray>")
     lines.append('        <DataArray type="Int32" Name="offsets" format="ascii">')
-    lines.append('          ' + fmt(offsets))
-    lines.append('        </DataArray>')
+    lines.append("          " + fmt(offsets))
+    lines.append("        </DataArray>")
     lines.append('        <DataArray type="UInt8" Name="types" format="ascii">')
-    lines.append('          ' + fmt(types))
-    lines.append('        </DataArray>')
-    lines.append('      </Cells>')
+    lines.append("          " + fmt(types))
+    lines.append("        </DataArray>")
+    lines.append("      </Cells>")
 
-    lines.append('      <PointData>')
+    lines.append("      <PointData>")
     for name, arr in point_data.items():
         a = np.asarray(arr)
         if a.shape[0] != N:
             raise ValueError(f"PointData '{name}' length mismatch")
         ncomp = 1 if a.ndim == 1 else a.shape[1]
-        a_out = a.astype(np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False)
-        lines.append(f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">')
-        lines.append('          ' + fmt(a_out))
-        lines.append('        </DataArray>')
-    lines.append('      </PointData>')
+        a_out = a.astype(
+            np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
+        )
+        lines.append(
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
+            f'NumberOfComponents="{ncomp}" format="ascii">'
+        )
+        lines.append("          " + fmt(a_out))
+        lines.append("        </DataArray>")
+    lines.append("      </PointData>")
 
-    lines.append('      <CellData>')
+    lines.append("      <CellData>")
     for name, arr in cell_data.items():
         a = np.asarray(arr)
         if a.shape[0] != E:
             raise ValueError(f"CellData '{name}' length mismatch")
         ncomp = 1 if a.ndim == 1 else a.shape[1]
-        a_out = a.astype(np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False)
-        lines.append(f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">')
-        lines.append('          ' + fmt(a_out))
-        lines.append('        </DataArray>')
-    lines.append('      </CellData>')
+        a_out = a.astype(
+            np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
+        )
+        lines.append(
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
+            f'NumberOfComponents="{ncomp}" format="ascii">'
+        )
+        lines.append("          " + fmt(a_out))
+        lines.append("        </DataArray>")
+    lines.append("      </CellData>")
 
-    lines.append('    </Piece>')
-    lines.append('  </UnstructuredGrid>')
-    lines.append('</VTKFile>')
+    lines.append("    </Piece>")
+    lines.append("  </UnstructuredGrid>")
+    lines.append("</VTKFile>")
 
-    path.write_text("\n".join(lines), encoding='utf-8')
+    path.write_text("\n".join(lines), encoding="utf-8")

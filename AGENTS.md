@@ -12,9 +12,10 @@ A high-performance, matrix-free micromagnetics library built on **JAX**. It solv
 - **Hardware Targets**: Support both `cpu` and `cuda` environments. Prioritize GPU execution for large-scale simulations.
 
 ### Coding Style & Types
-- **Documentation**: All functions must use **Google-style docstrings**.
+- **Documentation**: All functions must use **Google-style docstrings** without type hints in the docstrings. Each parameter must be documented separately.
 - **Type Safety**: Use explicit **Python type hints** for all parameters and return types. Use `jnp.ndarray` (or `Array` alias) for JAX arrays and `np.ndarray` for CPU/IO data.
 - **Floating Point**: Micromagnetic physical verification REQUIRES double precision. Always ensure `jax.config.update("jax_enable_x64", True)` is set in scripts and tests.
+- **Static analysis**: All code must comply with ruff and pre-commit hooks. Adjusting ruff/pre-commit settings is not permitted.
 
 ### JAX Implementation Patterns
 - **Matrix-Free**: NEVER assemble a global stiffness matrix. Operations must be computed element-wise.

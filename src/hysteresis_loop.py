@@ -1,4 +1,4 @@
-"""hysteresis_loop.py
+"""hysteresis_loop.py.
 
 Driver module for running micromagnetic hysteresis loop simulations.
 Handles field sweeps, energy minimization at each step, and result export.
@@ -9,19 +9,24 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Literal, Optional, List, Any
-
 import time
-import numpy as np
+from dataclasses import dataclass
+from typing import Any, Literal
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from fem_utils import TetGeom
 from curvilinear_bb_minimizer import make_minimizer
-from io_utils import ensure_dir, write_hysteresis_header, append_hysteresis_row, write_vtu_tetra
+from fem_utils import TetGeom
+from io_utils import (
+    append_hysteresis_row,
+    ensure_dir,
+    write_hysteresis_header,
+    write_vtu_tetra,
+)
 
-GradBackend = Literal['stored_grad_phi', 'stored_JinvT', 'on_the_fly']
+GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 
 
 @dataclass
@@ -47,6 +52,7 @@ class LoopParams:
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
     """
+
     h_dir: np.ndarray
     B_start: float
     B_end: float
@@ -68,8 +74,8 @@ class LoopParams:
     ls_s0: float = 0.01
     ls_max_evals: int = 15
 
-    out_dir: str = 'hyst_out'
-    csv_name: str = 'hysteresis.csv'
+    out_dir: str = "hyst_out"
+    csv_name: str = "hysteresis.csv"
     snapshot_every: int = 1
     verbose: bool = False
     Js_ref: float = 1.0
@@ -89,7 +95,7 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
         np.ndarray: Array of field magnitudes.
     """
     if dH == 0:
-        raise ValueError('dH must be nonzero')
+        raise ValueError("dH must be nonzero")
     if (H_end - H_start) * dH < 0:
         dH = -dH
     n = int(np.floor((H_end - H_start) / dH + 1e-12))
@@ -100,6 +106,7 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
         return vals_up
     return np.concatenate([vals_up, vals_up[-2::-1]])
 
+
 @jax.jit
 def jax_compute_volume_averaged_J_parallel(
     m_nodes: jnp.ndarray,
@@ -107,7 +114,7 @@ def jax_compute_volume_averaged_J_parallel(
     volume: jnp.ndarray,
     mat_id: jnp.ndarray,
     Js_lookup: jnp.ndarray,
-    h_dir: jnp.ndarray
+    h_dir: jnp.ndarray,
 ) -> jnp.ndarray:
     """Compute volume-averaged magnetic polarization parallel to h_dir (JAX version).
 
@@ -125,12 +132,12 @@ def jax_compute_volume_averaged_J_parallel(
     h = h_dir / (jnp.linalg.norm(h_dir) + 1e-30)
 
     # Average m over tets
-    m_e = m_nodes[conn] # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1) # (E, 3)
+    m_e = m_nodes[conn]  # (E, 4, 3)
+    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties
-    Js_e = Js_lookup[mat_id - 1] # (E,)
-    J_e = Js_e[:, None] * m_avg # (E, 3)
+    Js_e = Js_lookup[mat_id - 1]  # (E,)
+    J_e = Js_e[:, None] * m_avg  # (E, 3)
 
     # Magnetic volume (only where Js > 0)
     Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
@@ -162,15 +169,20 @@ def jax_compute_volume_averaged_m(
         jnp.ndarray: Average unit vector (3,).
     """
     # Average m over tets
-    m_e = m_nodes[conn] # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1) # (E, 3)
+    m_e = m_nodes[conn]  # (E, 4, 3)
+    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties: only average over magnetic parts
-    Js_e = Js_lookup[mat_id - 1] # (E,)
+    Js_e = Js_lookup[mat_id - 1]  # (E,)
     Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
 
-    m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
+    m_vol_avg = (
+        jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0)
+        / Vmag
+    )
     return m_vol_avg
+
+
 def run_hysteresis_loop(
     *,
     points: np.ndarray,
@@ -184,16 +196,16 @@ def run_hysteresis_loop(
     V_mag: float,
     node_volumes: jnp.ndarray,
     M_nodal: jnp.ndarray,
-    precond_type: str = 'jacobi',
+    precond_type: str = "jacobi",
     order: int = 3,
-    energy_assembly: str = 'segment_sum',
-    grad_backend: GradBackend = 'stored_grad_phi',
+    energy_assembly: str = "segment_sum",
+    grad_backend: GradBackend = "stored_grad_phi",
     chunk_elems: int = 200_000,
     cg_maxiter: int = 400,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
-    boundary_mask: Optional[jnp.ndarray] = None,
-) -> Dict[str, Any]:
+    boundary_mask: jnp.ndarray | None = None,
+) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
     Args:
@@ -208,21 +220,22 @@ def run_hysteresis_loop(
         V_mag (float): Total magnetic volume.
         node_volumes (jnp.ndarray): Lumped nodal volumes.
         M_nodal (jnp.ndarray): Nodal magnetic moments.
-        precond_type (str, optional): Poisson solver preconditioner. Defaults to 'jacobi'.
+        precond_type (str, optional): Poisson solver preconditioner.
+            Defaults to 'jacobi'.
         order (int, optional): Chebyshev order. Defaults to 3.
         energy_assembly (str, optional): assembly method. Defaults to 'segment_sum'.
-        grad_backend (GradBackend, optional): Strategy for gradients. 
+        grad_backend (GradBackend, optional): Strategy for gradients.
             Defaults to 'stored_grad_phi'.
         chunk_elems (int, optional): Loop chunk size. Defaults to 200_000.
         cg_maxiter (int, optional): Solver iterations. Defaults to 400.
         cg_tol (float, optional): Solver tolerance. Defaults to 1e-8.
         poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
-        boundary_mask (Optional[jnp.ndarray], optional): Dirichlet mask. Defaults to None.
+        boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
+            Defaults to None.
 
     Returns:
-        Dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
+        dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
     """
-
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
     write_hysteresis_header(csv_path)
@@ -260,7 +273,7 @@ def run_hysteresis_loop(
     history = []
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
-        
+
         start_step = time.time()
         m, U, info = minimize(
             m,
@@ -289,7 +302,12 @@ def run_hysteresis_loop(
 
         # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
-            m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
+            m,
+            geom.conn,
+            geom.volume,
+            geom.mat_id,
+            jnp.asarray(Js_lookup),
+            jnp.asarray(h),
         )
         m_avg = jax_compute_volume_averaged_m(
             m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup)
@@ -298,12 +316,18 @@ def run_hysteresis_loop(
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref
         mx, my, mz = map(float, m_avg)
-        E_si = float(info.get('E', np.nan)) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
+        E_si = float(info.get("E", np.nan)) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
 
         # Record history row: (B_ext_T, J_par_T, mx, my, mz, E_si)
         history.append([B_tesla, J_tesla, mx, my, mz, E_si])
 
-        append_hysteresis_row(csv_path, B_tesla, J_tesla, float(info.get('E', np.nan)), float(info.get('gnorm', np.nan)))
+        append_hysteresis_row(
+            csv_path,
+            B_tesla,
+            J_tesla,
+            float(info.get("E", np.nan)),
+            float(info.get("gnorm", np.nan)),
+        )
 
         if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
             vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
@@ -313,17 +337,25 @@ def run_hysteresis_loop(
                 vtu_path,
                 points,
                 np.array(geom.conn),
-                point_data={'m': m_np.astype(np.float32), 'U': np.array(U).astype(np.float32)},
-                cell_data={'mat_id': np.array(geom.mat_id).astype(np.int32)},
+                point_data={
+                    "m": m_np.astype(np.float32),
+                    "U": np.array(U).astype(np.float32),
+                },
+                cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
             )
 
-        print(f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  it={info.get('iters', 0):.0f}  t/it={step_duration/max(1.0, info.get('iters', 1.0)):.3e}s")
+        print(
+            f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
+            f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
+            f"it={info.get('iters', 0):.0f}  "
+            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
+        )
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")
     return {
-        'out_dir': str(out_dir),
-        'csv_path': str(csv_path),
-        'last_m': np.array(m),
-        'last_U': np.array(U),
-        'history': np.array(history)
+        "out_dir": str(out_dir),
+        "csv_path": str(csv_path),
+        "last_m": np.array(m),
+        "last_U": np.array(U),
+        "history": np.array(history),
     }
