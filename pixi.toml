@@ -18,6 +18,7 @@ neper = "*"
 pip = "*"
 pytest = "*"
 ruff = "*"
+pre-commit = ">=4.6.0,<5"
 
 [pypi-dependencies]
 jaxopt = "*"
