@@ -1,4 +1,4 @@
-"""fem_utils.py
+"""fem_utils.py.
 
 Core FEM utilities and data container.
 
@@ -25,9 +25,9 @@ class TetGeom:
         conn (Array): Topology connectivity (E, 4) of node indices.
         volume (Array): Element volumes (E,).
         mat_id (Array): Material identifiers (E,).
-        grad_phi (Optional[Array]): Precomputed shape function gradients (E, 4, 3).
-        JinvT (Optional[Array]): Precomputed inverse Jacobian transpose (E, 3, 3).
-        x_nodes (Optional[Array]): Node coordinates (N, 3).
+        grad_phi (Array | None): Precomputed shape function gradients (E, 4, 3).
+        JinvT (Array | None): Precomputed inverse Jacobian transpose (E, 3, 3).
+        x_nodes (Array | None): Node coordinates (N, 3).
     """
 
     conn: Array
@@ -76,7 +76,7 @@ def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> tuple[TetGeom, int
         chunk_elems (int): The chunk size for elements.
 
     Returns:
-        Tuple[TetGeom, int]: A tuple containing the padded TetGeom and the
+        tuple[TetGeom, int]: A tuple containing the padded TetGeom and the
             original number of elements.
 
     Example:

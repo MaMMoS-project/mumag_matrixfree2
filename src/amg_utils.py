@@ -1,4 +1,4 @@
-"""amg_utils.py
+"""amg_utils.py.
 
 Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
@@ -28,7 +28,7 @@ def assemble_poisson_matrix_cpu(
         conn (np.ndarray): Tetrahedron connectivity (E, 4).
         volume (np.ndarray): Element volumes (E,).
         grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
-        boundary_mask (Optional[np.ndarray], optional): Mask where 1.0 is interior
+        boundary_mask (np.ndarray | None, optional): Mask where 1.0 is interior
             and 0.0 is Dirichlet boundary. Defaults to None.
         reg (float, optional): Regularization constant for the diagonal.
             Defaults to 1e-12.
@@ -36,11 +36,11 @@ def assemble_poisson_matrix_cpu(
     Returns:
         sp.csr_matrix: The assembled sparse stiffness matrix.
     """
-    E = conn.shape[0]
     N = np.max(conn) + 1
 
     # Each tet adds 4x4 = 16 entries to the global matrix
     # Local element stiffness matrix: Ke_ab = Ve * (grad_phi_a . grad_phi_b)
+
     Ke = volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
 
     # Indices for global assembly
@@ -131,7 +131,7 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
         max_levels (int, optional): Maximum number of levels. Defaults to 10.
 
     Returns:
-        List[Dict]: A list of dictionaries, one per level, containing matrices
+        list[dict]: A list of dictionaries, one per level, containing matrices
             (A, P, R) and preconditioner diagonals.
     """
     ml = pyamg.smoothed_aggregation_solver(A_cpu, max_levels=max_levels)
@@ -242,19 +242,51 @@ class AMGHierarchy:
     """
 
     def __init__(self, levels):
+        """Initialize the hierarchy.
+
+        Args:
+            levels (list): List of dictionaries containing level data.
+        """
         self.levels = levels
 
     def tree_flatten(self):
+        """Flatten the hierarchy for JAX.
+
+        Returns:
+            tuple: (levels, aux_data).
+        """
         return (tuple(self.levels), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Unflatten the hierarchy for JAX.
+
+        Args:
+            aux_data: Auxiliary data.
+            children: The flattened components.
+
+        Returns:
+            AMGHierarchy: The unflattened hierarchy.
+        """
         return cls(list(children))
 
     def __len__(self):
+        """Return the number of levels.
+
+        Returns:
+            int: Number of levels.
+        """
         return len(self.levels)
 
     def __getitem__(self, i):
+        """Get a specific level.
+
+        Args:
+            i (int): Level index.
+
+        Returns:
+            dict: Level data.
+        """
         return self.levels[i]
 
 

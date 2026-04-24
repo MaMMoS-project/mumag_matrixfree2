@@ -1,4 +1,4 @@
-"""curvilinear_bb_minimizer.py
+"""curvilinear_bb_minimizer.py.
 
 Curvilinear + Barzilai-Borwein (BB) minimizer for micromagnetics.
 Ensures unit-length magnetization constraints via Cayley transforms and
@@ -118,25 +118,19 @@ def armijo_weak_line_search(
     s = float(s0)
     s_min = 0.0
 
-    it_exp = 0
     for _ in range(max_evals):
         d = D(s)
         if abs(1.0 - d) < eta2:
             s_min = s
             s = C * s
-            it_exp += 1
         else:
             break
 
-    it_con = 0
-    final_d = 0.0
     for _ in range(max_evals):
         d = D(s)
-        final_d = d
         if d >= eta1:
             return s
         s = s_min + c * (s - s_min)
-        it_con += 1
 
     return s
 
@@ -164,15 +158,29 @@ class MinimState:
 
     def tree_flatten(
         self,
-    ) -> Tuple[Tuple[Array, Array, Array, Array, Array, Array], Any]:
+    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], Any]:
+        """Flatten the state for JAX.
+
+        Returns:
+            tuple: (children, aux_data).
+        """
         children = (self.m, self.U_prev, self.g_prev, self.m_prev, self.tau, self.it)
         aux_data = None
         return (children, aux_data)
 
     @classmethod
     def tree_unflatten(
-        cls, aux_data: Any, children: Tuple[Array, Array, Array, Array, Array, Array]
+        cls, aux_data: Any, children: tuple[Array, Array, Array, Array, Array, Array]
     ) -> MinimState:
+        """Unflatten the state for JAX.
+
+        Args:
+            aux_data: Auxiliary data.
+            children: Flattened components.
+
+        Returns:
+            MinimState: The unflattened state.
+        """
         return cls(*children)
 
 
@@ -195,7 +203,7 @@ def make_minimizer(
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
     boundary_mask: Array | None = None,
-) -> Callable[..., Tuple[Array, Array, dict[str, Any]]]:
+) -> Callable[..., tuple[Array, Array, dict[str, Any]]]:
     """Create a high-level micromagnetic minimizer.
 
     Args:
@@ -207,16 +215,18 @@ def make_minimizer(
         V_mag (float): Magnetic volume.
         node_volumes (Array): Total nodal volumes.
         M_nodal (Array): Nodal magnetic moments.
-        precond_type (str, optional): Poisson solver preconditioner. Defaults to 'jacobi'.
+        precond_type (str, optional): Poisson solver preconditioner.
+            Defaults to 'jacobi'.
         order (int, optional): Chebyshev order. Defaults to 3.
         chunk_elems (int, optional): loop chunk size. Defaults to 200_000.
-        energy_assembly (str, optional): 'scatter' or 'segment_sum'. Defaults to 'scatter'.
+        energy_assembly (str, optional): 'scatter' or 'segment_sum'.
+            Defaults to 'scatter'.
         cg_maxiter (int, optional): Poisson solver iterations. Defaults to 400.
         cg_tol (float, optional): Poisson solver tolerance. Defaults to 1e-8.
         poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
         grad_backend (GradBackend, optional): Strategy for gradients.
             Defaults to 'stored_grad_phi'.
-        boundary_mask (Optional[Array], optional): Dirichlet mask. Defaults to None.
+        boundary_mask (Array | None, optional): Dirichlet mask. Defaults to None.
 
     Returns:
         Callable: minimize(m0, B_ext, **kwargs) -> (m_final, U_final, info_dict).
@@ -278,7 +288,12 @@ def make_minimizer(
             U_base (Array): current potential.
             B_ext (Array): external field.
             phi_tol (Array): Poisson tolerance.
-            eta1, eta2, C, c, s0, max_evals: search parameters.
+            eta1 (float): Sufficient decrease parameter.
+            eta2 (float): Expansion parameter.
+            C (float): Expansion factor.
+            c (float): Contraction factor.
+            s0 (float): Initial step size.
+            max_evals (int): Maximum evaluations.
 
         Returns:
             Array: Step size tau.
@@ -291,13 +306,13 @@ def make_minimizer(
             return (E_trial - E0) / (s * pg + 1e-30)
 
         # Expansion phase
-        def exp_cond(state: Tuple[Array, Array, jnp.int32, bool]) -> bool:
+        def exp_cond(state: tuple[Array, Array, jnp.int32, bool]) -> bool:
             s, s_min, it, done = state
             return (it < max_evals) & (~done)
 
         def exp_body(
-            state: Tuple[Array, Array, jnp.int32, bool],
-        ) -> Tuple[Array, Array, jnp.int32, bool]:
+            state: tuple[Array, Array, jnp.int32, bool],
+        ) -> tuple[Array, Array, jnp.int32, bool]:
             s, s_min, it, done = state
             d = D(s)
             stop = jnp.abs(1.0 - d) >= eta2
@@ -310,13 +325,13 @@ def make_minimizer(
         s_exp, s_min_exp, _, _ = lax.while_loop(exp_cond, exp_body, init_exp)
 
         # Contraction phase
-        def con_cond(state: Tuple[Array, jnp.int32, bool]) -> bool:
+        def con_cond(state: tuple[Array, jnp.int32, bool]) -> bool:
             s, it, done = state
             return (it < max_evals) & (~done)
 
         def con_body(
-            state: Tuple[Array, jnp.int32, bool],
-        ) -> Tuple[Array, jnp.int32, bool]:
+            state: tuple[Array, jnp.int32, bool],
+        ) -> tuple[Array, jnp.int32, bool]:
             s, it, done = state
             d = D(s)
             stop = d >= eta1
@@ -336,17 +351,18 @@ def make_minimizer(
         tau_min: float,
         tau_max: float,
         cg_tol_base: float,
-    ) -> Tuple[MinimState, Array, Array]:
+    ) -> tuple[MinimState, Array, Array]:
         """Take one Barzilai-Borwein step with unit-length constraint.
 
         Args:
             state (MinimState): Input state.
             B_ext (Array): External field.
-            tau_min, tau_max (float): Step size limits.
+            tau_min (float): Minimum step size.
+            tau_max (float): Maximum step size.
             cg_tol_base (float): Poisson tolerance.
 
         Returns:
-            Tuple[MinimState, Array, Array]: (New State, Energy, Gradient Norm).
+            tuple[MinimState, Array, Array]: (New State, Energy, Gradient Norm).
         """
         m = state.m
         U = solve_U(m, state.U_prev, cg_tol_base)
@@ -417,23 +433,32 @@ def make_minimizer(
         ls_s0: float = 1.0,
         ls_max_evals: int = 15,
         verbose: bool = True,
-    ) -> Tuple[Array, Array, dict[str, Any]]:
+    ) -> tuple[Array, Array, dict[str, Any]]:
         """Minimize the micromagnetic energy using BB and line search.
 
         Args:
             m0 (Array): Initial unit magnetization (N, 3).
             B_ext (Array): external field (3,).
-            U0 (Optional[Array]): initial scalar potential.
-            gamma (int, optional): number of initial line-search steps. Defaults to 5.
+            U0 (Array | None): initial scalar potential.
+            gamma (int, optional): number of initial line-search steps.
+                Defaults to 5.
             max_iter (int, optional): maximum iterations. Defaults to 200.
             tau_f (float): relative energy tolerance.
             eps_a (float): absolute tangent gradient tolerance.
-            tau0, tau_min, tau_max (float): step size parameters.
-            ls_...: line search parameters.
+            tau0 (float): Initial step size.
+            tau_min (float): Minimum step size.
+            tau_max (float): Maximum step size.
+            ls_eta1 (float): Line search eta1.
+            ls_eta2 (float): Line search eta2.
+            ls_C (float): Line search C.
+            ls_c (float): Line search c.
+            ls_s0 (float): Line search s0.
+            ls_max_evals (int): Line search max_evals.
             verbose (bool): logging toggle.
 
         Returns:
-            Tuple[Array, Array, Dict[str, Any]]: (m_final, U_final, history_info).
+            tuple[Array, Array, dict[str, Any]]: (m_final, U_final,
+                                                   history_info).
         """
         m = jnp.asarray(m0, dtype=jnp.float64)
         m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
@@ -560,7 +585,8 @@ def make_minimizer(
 
             if verbose and (k % 10 == 0 or converged):
                 print(
-                    f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  tau={float(state.tau):.3e}"
+                    f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                    f"tau={float(state.tau):.3e}"
                 )
 
             t_bb_total += time.time() - start_bb

@@ -1,4 +1,4 @@
-"""test_stoner_wohlfarth_inp.py
+"""test_stoner_wohlfarth_inp.py.
 
 Stoner-Wohlfarth (SW) verification script using an external .inp mesh.
 Simulates a single-domain particle under different field angles.
@@ -9,13 +9,11 @@ Sweeps field from 8T to -8T and identifies the switching field.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 import jax
-import numpy as np
-
-jax.config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
 
 from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
@@ -24,15 +22,17 @@ from fem_utils import TetGeom, compute_node_volumes
 from io_utils import ensure_dir
 from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
+jax.config.update("jax_enable_x64", True)
 
-def parse_inp(path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+
+def parse_inp(path: str) -> tuple[np.ndarray | None, np.ndarray | None]:
     """Parse an AVS UCD (.inp) tetrahedral mesh file.
 
     Args:
         path (str): Path to the .inp file.
 
     Returns:
-        Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        tuple[np.ndarray | None, np.ndarray | None]:
             (Nodes N x 3, Elements E x 5) or (None, None) if empty.
     """
     print(f"Parsing INP file: {path}")
@@ -101,7 +101,7 @@ def make_minimizer_no_demag(
 
     def _bb_step(
         state: MinimState, B_ext: jnp.ndarray, tau_min: float, tau_max: float
-    ) -> Tuple[MinimState, jnp.ndarray]:
+    ) -> tuple[MinimState, jnp.ndarray]:
         m = state.m
         U = jnp.zeros(m.shape[0], dtype=m.dtype)
         _, g_raw = energy_and_grad(m, U, B_ext)
@@ -147,7 +147,7 @@ def make_minimizer_no_demag(
             it=jnp.int32(0),
         )
 
-        for k in range(max_iter):
+        for _k in range(max_iter):
             state, g_tan = bb_step(state, B_ext, 1e-6, 1.0)
             if jnp.max(jnp.abs(g_tan)) < eps_a:
                 break
@@ -269,7 +269,8 @@ def run_sw_test_inp(inp_path: str) -> None:
 
         results.append({"angle": theta_deg, "exp": B_sw_exp, "theory": B_sw_theory})
         print(
-            f"  Exp: {B_sw_exp:.3f} T | Theory: {B_sw_theory:.3f} T | Err: {abs(B_sw_exp - B_sw_theory):.3f} T"
+            f"  Exp: {B_sw_exp:.3f} T | Theory: {B_sw_theory:.3f} T | "
+            f"Err: {abs(B_sw_exp - B_sw_theory):.3f} T"
         )
 
         with open(csv_results_path, "a") as f:

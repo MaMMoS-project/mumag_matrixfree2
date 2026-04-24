@@ -1,4 +1,4 @@
-"""loop.py
+"""loop.py.
 
 Main driver script:
   1) Read a FEM mesh (.npz with knt, ijk)
@@ -22,17 +22,18 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import jax
-import numpy as np
-
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
+import numpy as np
 
 import add_shell
 from fem_utils import TetGeom
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 from io_utils import write_mh
+
+jax.config.update("jax_enable_x64", True)
 
 # Reference tetra gradients
 _GRAD_HAT = np.array(
@@ -48,7 +49,7 @@ _GRAD_HAT = np.array(
 
 def compute_volume_JinvT(
     knt: np.ndarray, conn: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute volume and inverse Jacobian transpose for P1 tetrahedra.
 
     Ensures positive orientation by swapping nodes (1,2) for elements
@@ -59,7 +60,8 @@ def compute_volume_JinvT(
         conn (np.ndarray): Element connectivity (E, 4).
 
     Returns:
-        Tuple[np.ndarray, np.ndarray, np.ndarray]: (Oriented connectivity, Volumes, JinvT).
+        tuple[np.ndarray, np.ndarray, np.ndarray]: (Oriented connectivity,
+                                                   Volumes, JinvT).
     """
     knt = np.asarray(knt, dtype=np.float64)
     conn = np.asarray(conn, dtype=np.int64)
@@ -102,7 +104,7 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
 
 def load_materials_krn(
     krn_path: str, G: int, mesh_unit: float = 1e-9
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Expects columns: theta, phi, K1, K2, Js, A, ...
@@ -116,7 +118,8 @@ def load_materials_krn(
             Used to scale the exchange constant A. Defaults to 1e-9 (nm).
 
     Returns:
-        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js, easy_axis).
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
+                                                               easy_axis).
     """
     data = np.loadtxt(krn_path)
     if data.ndim == 1:
@@ -150,7 +153,7 @@ def load_materials_krn(
     return A, K1, Js, k_easy
 
 
-def load_params_p2(p2_path: str | Path) -> Dict[str, Any]:
+def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
     """Basic parser for MaMMoS-mumag .p2 configuration files.
 
     Extracts field sweep parameters and minimizer tolerances.
@@ -159,7 +162,7 @@ def load_params_p2(p2_path: str | Path) -> Dict[str, Any]:
         p2_path (str | Path): Path to the .p2 file.
 
     Returns:
-        Dict[str, Any]: Dictionary of configuration overrides.
+        dict[str, Any]: Dictionary of configuration overrides.
     """
     import configparser
 
@@ -206,7 +209,7 @@ def load_params_p2(p2_path: str | Path) -> Dict[str, Any]:
 
 def load_materials(
     mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load intrinsic magnetic properties for G materials.
 
     Priority:
@@ -215,13 +218,15 @@ def load_materials(
     3. Default properties (generic hard magnetic material).
 
     Args:
-        mat_path (Optional[str]): Explicit path to a .krn file.
+        mat_path (str | None): Explicit path to a .krn file.
         G (int): Number of material groups.
-        mesh_path (Optional[str]): Path to the mesh file (for discovery).
-        mesh_unit (float, optional): Length of one mesh unit in meters. Defaults to 1e-9.
+        mesh_path (str | None): Path to the mesh file (for discovery).
+        mesh_unit (float, optional): Length of one mesh unit in meters.
+            Defaults to 1e-9.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js, easy_axis).
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
+                                                               easy_axis).
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
@@ -331,7 +336,8 @@ def main() -> None:
         "--materials",
         type=str,
         default=None,
-        help="Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per material group.",
+        help="Path to a .krn file with intrinsic properties "
+        "(theta, phi, K1, K2, Js, A, ...) per material group.",
     )
 
     # preconditioning
@@ -340,7 +346,8 @@ def main() -> None:
         type=str,
         default="amgcl",
         choices=["jacobi", "chebyshev", "amg", "amgcl"],
-        help="Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.",
+        help="Poisson solver preconditioner: amgcl (default), jacobi, "
+        "chebyshev, or amg.",
     )
 
     # gradient backend selection
@@ -350,7 +357,9 @@ def main() -> None:
         type=str,
         default="stored_JinvT",
         choices=["stored_JinvT", "stored_grad_phi", "on_the_fly"],
-        help="Strategy for providing gradient info: stored_JinvT (efficient storage), stored_grad_phi (precomputed), or on_the_fly (recompute from coordinates).",
+        help="Strategy for providing gradient info: "
+        "stored_JinvT (efficient storage), stored_grad_phi (precomputed), "
+        "or on_the_fly (recompute from coordinates).",
     )
 
     # solver settings
@@ -358,7 +367,8 @@ def main() -> None:
         "--chunk-elems",
         type=int,
         default=200_000,
-        help="Number of elements processed per loop iteration (chunking to control GPU memory).",
+        help="Number of elements processed per loop iteration "
+        "(chunking to control GPU memory).",
     )
     ap.add_argument(
         "--cg-maxiter",
@@ -411,7 +421,8 @@ def main() -> None:
         "--eps-a",
         type=float,
         default=1e-10,
-        help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+        help="Absolute tangent gradient norm tolerance for the "
+        "minimizer (reduced units).",
     )
 
     ap.add_argument(

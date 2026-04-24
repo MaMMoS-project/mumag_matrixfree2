@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Module for plotting magnetization curves from CSV data."""
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt

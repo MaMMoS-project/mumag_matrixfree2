@@ -1,4 +1,4 @@
-"""io_utils.py
+"""io_utils.py.
 
 Simple output utilities including ASCII VTK UnstructuredGrid (.vtu) writer.
 
@@ -174,9 +174,9 @@ def write_vtu_tetra(
         path (str | Path): Output file path.
         points (np.ndarray): Node coordinates (N, 3).
         tets (np.ndarray): Tetrahedron connectivity (E, 4).
-        point_data (Optional[Dict[str, np.ndarray]], optional): Dictionary of
+        point_data (dict[str, np.ndarray] | None, optional): Dictionary of
             nodal data arrays (N, ...). Defaults to None.
-        cell_data (Optional[Dict[str, np.ndarray]], optional): Dictionary of
+        cell_data (dict[str, np.ndarray] | None, optional): Dictionary of
             element-wise data arrays (E, ...). Defaults to None.
 
     Raises:
@@ -219,7 +219,8 @@ def write_vtu_tetra(
 
     lines.append("      <Points>")
     lines.append(
-        f'        <DataArray type="{_vtk_type(pts)}" NumberOfComponents="3" format="ascii">'
+        f'        <DataArray type="{_vtk_type(pts)}" '
+        'NumberOfComponents="3" format="ascii">'
     )
     lines.append("          " + fmt(pts))
     lines.append("        </DataArray>")
@@ -247,7 +248,8 @@ def write_vtu_tetra(
             np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
         )
         lines.append(
-            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">'
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
+            f'NumberOfComponents="{ncomp}" format="ascii">'
         )
         lines.append("          " + fmt(a_out))
         lines.append("        </DataArray>")
@@ -263,7 +265,8 @@ def write_vtu_tetra(
             np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
         )
         lines.append(
-            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">'
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
+            f'NumberOfComponents="{ncomp}" format="ascii">'
         )
         lines.append("          " + fmt(a_out))
         lines.append("        </DataArray>")

@@ -1,4 +1,4 @@
-"""poisson_solve.py
+"""poisson_solve.py.
 
 Matrix-free Poisson operator and PCG solver with support for multiple
 preconditioners (Jacobi, Chebyshev, AMG) and warm starts.
@@ -140,11 +140,11 @@ def make_poisson_ops(
         grad_backend (GradBackend, optional): Strategy for shape function gradients.
             Defaults to 'stored_grad_phi'.
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
-        boundary_mask (Optional[Array], optional): Dirichlet boundary mask (0.0 at boundary).
-            Defaults to None.
+        boundary_mask (Array | None, optional): Dirichlet boundary mask
+            (0.0 at boundary). Defaults to None.
 
     Returns:
-        Tuple[Callable, Callable, Callable]: (apply_A, rhs_from_m, assemble_diag).
+        tuple[Callable, Callable, Callable]: (apply_A, rhs_from_m, assemble_diag).
             apply_A: Computes matrix-vector product A @ U.
             rhs_from_m: Computes demag RHS from magnetization m.
             assemble_diag: Computes the diagonal of A.
@@ -284,7 +284,7 @@ def estimate_spectral_radius(
     Args:
         apply_A (Callable): Matrix-vector product.
         Mdiag (Array): Preconditioning diagonal.
-        boundary_mask (Optional[Array]): Dirichlet boundary mask.
+        boundary_mask (Array | None): Dirichlet boundary mask.
         N (int): Number of nodes.
         n_iters (int, optional): Power method iterations. Defaults to 15.
 
@@ -326,19 +326,19 @@ def make_pcg_solve(
         Mdiag (Array): Jacobi preconditioning diagonal.
         precond_type (PrecondType, optional): Preconditioning strategy.
             Defaults to 'none'.
-        apply_Minv_amg (Optional[Callable], optional): AMG V-cycle function.
-            Required for 'amg' or 'amgcl' preconditioning. Defaults to None.
+        apply_Minv_amg: Callable | None = None,
         order (int, optional): Polynomial order for Chebyshev preconditioner.
             Defaults to 3.
         maxiter (int, optional): Maximum solver iterations. Defaults to 500.
         tol (float, optional): Default relative tolerance. Defaults to 1e-8.
-        boundary_mask (Optional[Array], optional): Dirichlet boundary mask.
+        boundary_mask (Array | None, optional): Dirichlet boundary mask.
             Defaults to None.
         l_max (float, optional): Spectral radius for Chebyshev preconditioning.
             Defaults to 2.0.
 
     Returns:
-        Callable: solve(rhs, x0, tol, hierarchy) -> (solution, iterations, residual_norm_squared).
+        Callable: solve(rhs, x0, tol, hierarchy) -> (solution, iterations,
+                                                     residual_norm_squared).
     """
     default_tol = float(tol)
 
@@ -366,7 +366,7 @@ def make_pcg_solve(
             y = alpha * z0
             y_prev = jnp.zeros_like(y)
             curr_alpha = alpha
-            for k in range(1, order):
+            for _k in range(1, order):
                 res = r - apply_A(y)
                 if boundary_mask is not None:
                     res = res * boundary_mask
@@ -474,9 +474,8 @@ def make_solve_U(
         poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
         grad_backend (GradBackend, optional): Strategy for shape function gradients.
             Defaults to 'stored_grad_phi'.
-        enforce_zero_mean (Optional[bool], optional): Project solution to zero mean.
-            Required for pure Neumann problems. Defaults to True if no boundary mask.
-        boundary_mask (Optional[Array], optional): Dirichlet boundary mask.
+        enforce_zero_mean: bool | None = None,
+        boundary_mask (Array | None, optional): Dirichlet boundary mask.
             Defaults to None.
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
 
@@ -599,13 +598,12 @@ def make_solve_U(
         Args:
             m (Array): Nodal unit magnetization vectors (N, 3).
             x0 (Array): Initial guess for the potential U (N,).
-            tol (Optional[float], optional): PCG relative tolerance.
-                Defaults to the closure's cg_tol.
+            tol: float | None = None,
             return_info (bool, optional): If True, return (U, iterations, residual).
                 Defaults to False.
 
         Returns:
-            Array | Tuple[Array, int, float]: Potential U (N,) or solver info.
+            Array | tuple[Array, int, float]: Potential U (N,) or solver info.
         """
         b = rhs_from_m(m)
         bnorm2 = jnp.vdot(b, b)

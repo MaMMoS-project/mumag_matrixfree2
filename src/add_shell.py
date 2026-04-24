@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
+"""Module for adding graded exterior tetrahedral layers using MeshPy/TetGen."""
+
 from __future__ import annotations
+
+import argparse
+import math
+from pathlib import Path
+
+import numpy as np
+from meshpy.tet import MeshInfo, Options, build  # MeshPy -> TetGen
+
+# Optional: VTU export
+try:
+    import meshio
+
+    HAVE_meshio = True
+except Exception:
+    HAVE_meshio = False
 
 """
 Add graded tetrahedral layers *outside* an existing body mesh using MeshPy (TetGen),
@@ -13,13 +30,16 @@ This module provides a pure in-memory API:
 Key features
 ------------
 - Preserves the original body's surface triangles as the *inner* interface by
-  supplying them as PLC facets and using TetGen region attributes and volume constraints.
-- Builds homothetic shells S_l = K^l * S_0, l=0..L, and per-layer region seeds with
-  per-region max volume constraints (derived from target h_l).
-- Ties mesh size scaling to geometry with exponent beta: h_l = h0 * (K**beta)^(l+1),
+  supplying them as PLC facets and using TetGen region attributes and
+  volume constraints.
+- Builds homothetic shells S_layer_idx = K**layer_idx * S_0, layer_idx=0..L, and
+  per-layer region seeds with per-region max volume constraints
+  (derived from target h_layer_idx).
+- Ties mesh size scaling to geometry with exponent beta:
+  h_layer_idx = h0 * (K**beta)**(layer_idx+1),
   unless you give --hmax explicitly (then growth is inferred from hmax/h0).
-- Merges body & shell, welds duplicate nodes (0-based, consecutive IDs), reorients tets
-  to positive volume, and removes degenerate/duplicate elements.
+- Merges body & shell, welds duplicate nodes (0-based, consecutive IDs),
+  reorients tets to positive volume, and removes degenerate/duplicate elements.
 
 Inputs (NPZ)
 ------------
@@ -37,20 +57,6 @@ Requirements
 - TetGen manual on PLC, quality, attributes, volume constraints:
   https://www.wias-berlin.de/software/tetgen/1.5/doc/manual
 """
-import argparse
-import math
-from pathlib import Path
-
-import numpy as np
-from meshpy.tet import MeshInfo, Options, build  # MeshPy -> TetGen
-
-# Optional: VTU export
-try:
-    import meshio
-
-    HAVE_meshio = True
-except Exception:
-    HAVE_meshio = False
 
 
 # ------------------------------- utilities -------------------------------
@@ -72,7 +78,7 @@ def parse_csv3(s: str) -> tuple[float, float, float]:
         s (str): string like "x,y,z".
 
     Returns:
-        Tuple[float, float, float]: (x, y, z).
+        tuple[float, float, float]: (x, y, z).
 
     Raises:
         ValueError: if string does not contain exactly 3 components.
@@ -141,7 +147,8 @@ def weld_points(
         tol (float, optional): welding tolerance. Defaults to 1e-12.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray, int]: (Fused nodes, remapped connectivity, number of merged nodes).
+        tuple[np.ndarray, np.ndarray, int]: (Fused nodes, remapped connectivity,
+                                            number of merged nodes).
     """
     if knt.size == 0:
         return knt, ijk, 0
@@ -250,7 +257,9 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
 def build_layer_nodes(
     knt0: np.ndarray, surf_verts: np.ndarray, center: np.ndarray, K: float, layers: int
 ) -> tuple[np.ndarray, dict[tuple[int, int], int], list[np.ndarray]]:
-    """Create node copies for each surface vertex across layers at geometric scales K^l.
+    """Create node copies for each surface vertex across layers.
+
+    Geometric scales are K**layer_idx.
 
     Args:
         knt0 (np.ndarray): original body nodes.
@@ -260,7 +269,7 @@ def build_layer_nodes(
         layers (int): number of shell layers.
 
     Returns:
-        Tuple: (All nodes, node map (vid, layer) -> id, list of scaling vectors).
+        tuple: (All nodes, node map (vid, layer) -> id, list of scaling vectors).
     """
     knt = knt0.copy()
 
@@ -284,9 +293,9 @@ def build_layer_nodes(
     print("-" * 5 + "-+-" + "-" * 10 + "-+-" + "-" * 10 + "-+-" + "-" * 10)
 
     svecs_layer = []
-    for l in range(1, layers + 1):
-        s = K**l
-        t = l / layers if layers > 1 else 1.0
+    for layer_idx in range(1, layers + 1):
+        s = K**layer_idx
+        t = layer_idx / layers if layers > 1 else 1.0
         L_target = s * Lmax
         sx = np.array(
             [L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float
@@ -302,12 +311,12 @@ def build_layer_nodes(
             sv = g * (sv / g) ** (1.0 / alpha)
 
         # pts = c + s * v0
-        print(f"{l:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
+        print(f"{layer_idx:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
         pts = c + v0 * sv.reshape(1, 3)
         start = knt.shape[0]
         knt = np.vstack([knt, pts])
         for i, vid in enumerate(surf_verts):
-            node_map[(int(vid), l)] = start + i
+            node_map[(int(vid), layer_idx)] = start + i
 
         svecs_layer.append(sv.copy())
 
@@ -331,7 +340,8 @@ def make_shell_plc_from_surface(
         center: ray origin.
 
     Returns:
-        Tuple: (All nodes, facets, seeds, surface vertex indices, node map, scaling vectors).
+        tuple: (All nodes, facets, seeds, surface vertex indices, node map,
+                scaling vectors).
     """
     center = np.asarray(center, dtype=np.float64)
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
@@ -342,12 +352,12 @@ def make_shell_plc_from_surface(
     )
 
     facets: list[list[int]] = []
-    for l in range(0, layers + 1):
+    for layer_idx in range(0, layers + 1):
         for tri in tris0:
             v = [
-                node_map[(int(tri[0]), l)],
-                node_map[(int(tri[1]), l)],
-                node_map[(int(tri[2]), l)],
+                node_map[(int(tri[0]), layer_idx)],
+                node_map[(int(tri[1]), layer_idx)],
+                node_map[(int(tri[2]), layer_idx)],
             ]
             facets.append(v)
 
@@ -360,8 +370,8 @@ def make_shell_plc_from_surface(
 
     seeds = np.vstack(
         [
-            0.5 * (centroid_at(l) + centroid_at(l + 1))  # one seed per layer
-            for l in range(layers)
+            0.5 * (centroid_at(layer_idx) + centroid_at(layer_idx + 1))
+            for layer_idx in range(layers)
         ]
     ).astype(np.float64)
 
@@ -390,15 +400,22 @@ def add_shell_with_meshpy(
     """Invoke TetGen to mesh exterior shell layers and merge with the body.
 
     Args:
-        knt0, ijk0: body nodes and connectivity.
-        layers, K, beta: geometry and size scaling.
-        center: ray origin.
-        h0, hmax: size targets.
-        minratio, max_steiner, no_exact, verbose: TetGen options.
-        same_scaling: shortcut toggle for linear scaling.
+        knt0 (np.ndarray): Body nodes.
+        ijk0 (np.ndarray): Body connectivity.
+        layers (int): Number of shell layers.
+        K (float): Geometric factor.
+        beta (float): Size scaling exponent.
+        center (tuple[float, float, float]): Ray origin.
+        h0 (float | None): Target edge length at interface.
+        hmax (float | None): Target edge length at boundary.
+        minratio (float): TetGen quality constraint.
+        max_steiner (int | None): Limit on Steiner points.
+        no_exact (bool): Suppress exact arithmetic.
+        verbose (bool): Verbose logging.
+        same_scaling (bool): Use linear size scaling.
 
     Returns:
-        Tuple: (Merged nodes, Merged connectivity).
+        tuple[np.ndarray, np.ndarray]: (Merged nodes, Merged connectivity).
     """
     # Ensure we have mat_id column
     if ijk0.shape[1] >= 5:
@@ -440,7 +457,7 @@ def add_shell_with_meshpy(
             "Internal error: h0 must be resolved before calling add_shell_with_meshpy."
         )
 
-    # New: drive h_l from the actual sv used for S_{l+1}
+    # New: drive h_layer_idx from the actual sv used for S_{layer_idx+1}
     gms = [
         float(np.exp(np.log(sv).mean())) for sv in svecs_layer
     ]  # geometric means (length 'layers')
@@ -453,11 +470,18 @@ def add_shell_with_meshpy(
         scale = float(hmax) / denom
 
     mi.regions.resize(layers)
-    for l in range(layers):
-        h_l = scale * h0 * (gms[l] ** beta)  # region l is between S_l and S_{l+1}
-        max_vol = approx_max_volume_from_edge(h_l)
-        x, y, z = seeds[l]
-        mi.regions[l] = (float(x), float(y), float(z), float(shell_mat), float(max_vol))
+    for layer_idx in range(layers):
+        # region layer_idx is between S_layer_idx and S_{layer_idx+1}
+        h_layer_idx = scale * h0 * (gms[layer_idx] ** beta)
+        max_vol = approx_max_volume_from_edge(h_layer_idx)
+        x, y, z = seeds[layer_idx]
+        mi.regions[layer_idx] = (
+            float(x),
+            float(y),
+            float(z),
+            float(shell_mat),
+            float(max_vol),
+        )
 
     # TetGen options: PLC (-p), quality (-q), region attrs (-A), volume (-a)
     switches = "pqAaY"  # -Y preserve PLC facets
@@ -530,21 +554,24 @@ def run_add_shell_pipeline(
 
     Args:
         in_npz (str): Path to input NPZ mesh.
-        layers (int): number of layers.
-        K (float): geometric factor.
-        KL (float): outermost geometric scale.
-        auto_layers (bool): derive layers from KL and K.
-        auto_K (bool): derive K from KL and layers.
-        beta (float): size coupling factor.
-        same_scaling (bool): use linear size scaling.
-        center (str | Tuple): ray origin.
-        h0 (float): size near body.
-        hmax (float): size at boundary.
-        body_h (float): override for body surface size.
-        minratio, max_steiner, no_exact, verbose: TetGen options.
+        layers (int | None): Number of layers.
+        K (float | None): Geometric factor.
+        KL (float | None): Outermost geometric scale.
+        auto_layers (bool): Derive layers from KL and K.
+        auto_K (bool): Derive K from KL and layers.
+        beta (float): Size coupling factor.
+        same_scaling (bool): Use linear size scaling.
+        center (str | tuple[float, float, float]): Ray origin.
+        h0 (float | None): Size near body.
+        hmax (float | None): Size at boundary.
+        body_h (float | None): Override for body surface size.
+        minratio (float): TetGen quality constraint.
+        max_steiner (int | None): Limit on Steiner points.
+        no_exact (bool): Suppress exact arithmetic.
+        verbose (bool): Verbose logging.
 
     Returns:
-        Tuple: (fused nodes, fused connectivity).
+        tuple[np.ndarray, np.ndarray]: (fused nodes, fused connectivity).
     """
     # Load input
     data = np.load(in_npz)
@@ -595,7 +622,8 @@ def run_add_shell_pipeline(
         # Neither auto; require at least L and K
         if (L is None) or (K_val is None):
             raise ValueError(
-                "Provide layers and K, or use auto_layers (KL & K) or auto_K (KL & layers)."
+                "Provide layers and K, or use auto_layers (KL & K) "
+                "or auto_K (KL & layers)."
             )
         if L < 1 or K_val <= 1.0:
             raise ValueError("Require layers>=1 and K>1.")
@@ -630,16 +658,19 @@ def run_add_shell_pipeline(
     if verbose:
         log(
             f"[info] Geometry: L={L}, K={K_val:.6g}, "
-            f"KL(req)={'-' if KL_val is None else f'{KL_val:.6g}'}, KL(achieved)={(K_val**L):.6g}"
+            f"KL(req)={'-' if KL_val is None else f'{KL_val:.6g}'}, "
+            f"KL(achieved)={(K_val**L):.6g}"
         )
     if verbose:
         log(
             f"[info] Mesh-size: beta={1.0 if same_scaling else beta}, "
-            f"h0={h0_val:.6g}, hmax={'(derived)' if hmax_val is None else f'{hmax_val:.6g}'}"
+            f"h0={h0_val:.6g}, "
+            f"hmax={'(derived)' if hmax_val is None else f'{hmax_val:.6g}'}"
         )
         log(
             f"[info] center=({cx},{cy},{cz}), minratio={minratio}, "
-            f"max_steiner={'-' if max_steiner is None else max_steiner}, no_exact={bool(no_exact)}"
+            f"max_steiner={'-' if max_steiner is None else max_steiner}, "
+            f"no_exact={bool(no_exact)}"
         )
 
     # ---- Build shells & mesh them ----
@@ -671,7 +702,8 @@ def main():
     Parses command line arguments and invokes run_add_shell_pipeline.
     """
     ap = argparse.ArgumentParser(
-        description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory)."
+        description="Add graded exterior tetrahedral layers using "
+        "MeshPy/TetGen (in-memory)."
     )
     ap.add_argument(
         "--in",
@@ -711,12 +743,12 @@ def main():
         "--beta",
         type=float,
         default=1.0,
-        help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)). Defaults to 1.0.",
+        help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)).",
     )
     ap.add_argument(
         "--same-scaling",
         action="store_true",
-        help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K^L.",
+        help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K**L.",
     )
     ap.add_argument(
         "--center",
@@ -728,7 +760,7 @@ def main():
         "--h0",
         type=float,
         default=None,
-        help="Target edge length for the first shell layer (mesh units). Defaults to 1.5 * body_h.",
+        help="Target edge length for first shell layer. Defaults to 1.5 * body_h.",
     )
     ap.add_argument(
         "--hmax",
@@ -740,7 +772,7 @@ def main():
         "--body-h",
         type=float,
         default=None,
-        help="Characteristic size of the input body mesh. If omitted, derived from median surface edge length.",
+        help="Body mesh size override. If omitted, derived from surface edge length.",
     )
     ap.add_argument(
         "--minratio",
@@ -801,9 +833,8 @@ def main():
     if args.out_vtu:
         out_vtu = str(Path(args.out_vtu).with_suffix(".vtu"))
         if not HAVE_meshio:
-            print(
-                "[warn] meshio not installed; skipping VTU export. Install with: pip install meshio"
-            )
+            msg = "[warn] meshio not installed; skipping VTU export. pip install meshio"
+            print(msg)
         else:
             cells = [("tetra", ijk[:, :4].astype(np.int32))]
             cell_data = {"mat_id": [ijk[:, 4].astype(np.int32)]}

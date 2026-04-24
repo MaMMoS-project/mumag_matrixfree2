@@ -1,4 +1,4 @@
-"""plot_sw.py
+"""plot_sw.py.
 
 Plotting script for Stoner-Wohlfarth verification.
 Reads sw_summary.csv using numpy and creates a comparison plot.

@@ -1,4 +1,4 @@
-"""hysteresis_loop.py
+"""hysteresis_loop.py.
 
 Driver module for running micromagnetic hysteresis loop simulations.
 Handles field sweeps, energy minimization at each step, and result export.
@@ -220,7 +220,8 @@ def run_hysteresis_loop(
         V_mag (float): Total magnetic volume.
         node_volumes (jnp.ndarray): Lumped nodal volumes.
         M_nodal (jnp.ndarray): Nodal magnetic moments.
-        precond_type (str, optional): Poisson solver preconditioner. Defaults to 'jacobi'.
+        precond_type (str, optional): Poisson solver preconditioner.
+            Defaults to 'jacobi'.
         order (int, optional): Chebyshev order. Defaults to 3.
         energy_assembly (str, optional): assembly method. Defaults to 'segment_sum'.
         grad_backend (GradBackend, optional): Strategy for gradients.
@@ -229,10 +230,11 @@ def run_hysteresis_loop(
         cg_maxiter (int, optional): Solver iterations. Defaults to 400.
         cg_tol (float, optional): Solver tolerance. Defaults to 1e-8.
         poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
-        boundary_mask (Optional[jnp.ndarray], optional): Dirichlet mask. Defaults to None.
+        boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
+            Defaults to None.
 
     Returns:
-        Dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
+        dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
     """
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
@@ -343,7 +345,10 @@ def run_hysteresis_loop(
             )
 
         print(
-            f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  it={info.get('iters', 0):.0f}  t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
+            f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
+            f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
+            f"it={info.get('iters', 0):.0f}  "
+            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
         )
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")

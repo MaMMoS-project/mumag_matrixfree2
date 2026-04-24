@@ -1,4 +1,4 @@
-"""test_hysteresis_x_axis.py
+"""test_hysteresis_x_axis.py.
 
 Test for magnetization curve along the hard axis (X).
 Easy axis is Z. Field is applied along X.
@@ -7,14 +7,12 @@ Uses AMGCL preconditioner on a 20nm cube (NdFeB-like properties).
 
 from __future__ import annotations
 
-import jax
-import numpy as np
-
-jax.config.update("jax_enable_x64", True)
 import time
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 import add_shell
 import mesh
@@ -22,6 +20,8 @@ from fem_utils import TetGeom, compute_node_volumes
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 from io_utils import ensure_dir
 from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
+
+jax.config.update("jax_enable_x64", True)
 
 
 def write_inp(path: str, nodes_arr: np.ndarray, elements_arr: np.ndarray) -> None:
