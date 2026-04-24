@@ -134,6 +134,7 @@ def test_exchange_gradient(setup_geom):
     n_test = 5
     for i in range(n_test):
         for j in range(3):
+
             def e_func(m_val):
                 e, _ = energy_and_grad(
                     m_val, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3)
@@ -175,6 +176,7 @@ def test_anisotropy_gradient(setup_geom):
     n_test = 5
     for i in range(n_test):
         for j in range(3):
+
             def e_func(m_val):
                 e, _ = energy_and_grad(m_val, u, jnp.zeros(3))
                 return float(e)
@@ -215,6 +217,7 @@ def test_zeeman_gradient(setup_geom):
     n_test = 5
     for i in range(n_test):
         for j in range(3):
+
             def e_func(m_val):
                 e, _ = energy_and_grad(m_val, u, b_ext)
                 return float(e)
@@ -256,6 +259,7 @@ def test_demag_gradient(setup_geom):
     n_test = 5
     for i in range(n_test):
         for j in range(3):
+
             def e_func(m_val):
                 # Note: for demag, U depends on m.
                 # However, make_energy_kernels treats U as an input.
