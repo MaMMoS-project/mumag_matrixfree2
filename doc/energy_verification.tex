@@ -1,0 +1,112 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\geometry{a4paper, margin=1in}
+
+\title{Verification of Micromagnetic Energy Calculations}
+\author{MaMMoS-MuMag Project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This document provides a detailed theoretical derivation and verification of the energy calculations implemented in the MaMMoS-MuMag simulator. We compare the numerical results from \texttt{tests/test\_energy.py} with analytic SI-unit expressions to ensure physical correctness.
+
+\section{Dimensionless Scaling}
+The simulator operates in dimensionless units. The reference scale for energy density is the dipolar constant:
+\begin{equation}
+    K_d = \frac{J_{s,\text{max}}^2}{2\mu_0}
+\end{equation}
+where $J_{s,\text{max}}$ is the maximum saturation polarization in the mesh. All other properties are scaled relative to $K_d$:
+\begin{itemize}
+    \item Saturation: $J_{s,\text{red}} = J_s / J_{s,\text{max}}$
+    \item Anisotropy: $K_{\text{red}} = K / K_d$
+    \item Exchange: $A_{\text{red}} = (A \cdot 10^{18}) / K_d$ (assuming nm mesh units)
+    \item External Field: $\mathbf{B}_{\text{red}} = \mathbf{B}_{\text{ext}} / (J_{s,\text{max}}/\mu_0)$
+\end{itemize}
+The total dimensionless energy returned by the kernels is normalized by the magnetic volume $V_{\text{mag}}$:
+\begin{equation}
+    e_{\text{red}} = \frac{E_{\text{tot}}}{K_d V_{\text{mag}}}
+\end{equation}
+
+\section{Numerical Implementation}
+The unit magnetization $\mathbf{m}$ is discretized using linear P1 tetrahedral elements: $\mathbf{m}(\mathbf{r}) = \sum_i \mathbf{m}_i \phi_i(\mathbf{r})$. The energy is computed using a quadratic form:
+\begin{equation}
+    E = \frac{1}{2} \sum_i \mathbf{m}_i \cdot \left( \mathbf{g}_{i,\text{quad}} + 2\mathbf{g}_{i,\text{lin}} \right)
+\end{equation}
+where $\mathbf{g}_{i}$ is the energy gradient at node $i$. For quadratic terms (Exchange, Anisotropy, Demag), the nodal gradient contribution from element $e$ involves the consistent mass matrix:
+\begin{equation}
+    \int_{V_e} \phi_i \phi_j dV = \frac{V_e}{20} (1 + \delta_{ij})
+\end{equation}
+For a uniform magnetization state $\mathbf{m}_i = \mathbf{m}$, the summation over the element nodes yields:
+\begin{equation}
+    \frac{1}{2} \sum_{i=1}^4 \mathbf{m} \cdot \left( \sum_{j=1}^4 \frac{\partial e}{\partial \mathbf{m}} \frac{V_e}{20} (1 + \delta_{ij}) \right) = \frac{1}{2} \mathbf{m} \cdot \frac{\partial e}{\partial \mathbf{m}} \frac{V_e}{20} (16 + 4) = \frac{1}{2} \mathbf{m} \cdot \frac{\partial e}{\partial \mathbf{m}} V_e
+\end{equation}
+
+\section{Energy Term Derivations}
+
+\subsection{Exchange Energy}
+Reference: $E_{\text{ex}} = \int A (\nabla \mathbf{m})^2 dV$. For a helical state $\mathbf{m} = (\cos kx, \sin kx, 0)$:
+\begin{equation}
+    E_{\text{ex, analytic}} = A k^2 V_{\text{mag}}
+\end{equation}
+
+\subsection{Zeeman Energy}
+Reference: $E_{\text{z}} = -\int \frac{J_s}{\mu_0} \mathbf{m} \cdot \mathbf{B} dV$. In our dimensionless form, the gradient is $\mathbf{g}_{i,\text{lin}} = -2 M_{i} \mathbf{B}_{\text{red}}$ where $M_i$ is the lumped magnetic moment. For uniform $\mathbf{m}$:
+\begin{equation}
+    E_{\text{z, red}} = \mathbf{m} \cdot \mathbf{g}_{\text{lin}} = -2 J_{s,\text{red}} \mathbf{m} \cdot \mathbf{B}_{\text{red}} V_{\text{mag, red}}
+\end{equation}
+This corresponds to an SI energy of:
+\begin{equation}
+    E_{\text{z, expected}} = -\frac{J_s}{\mu_0} (\mathbf{m} \cdot \mathbf{B}_{\text{ext}}) V_{\text{mag}}
+\end{equation}
+
+\subsection{Uniaxial Anisotropy ($K_1$)}
+The code implements the gradient $\mathbf{g}_{i} = -2 K_1 (\mathbf{m}_i \cdot \mathbf{e}_z) \mathbf{e}_z$ (integrated). The numerical energy density for uniform magnetization is:
+\begin{equation}
+    e_{\text{uniax, num}} = \frac{1}{2} \mathbf{m} \cdot \left( -2 K_1 (\mathbf{m} \cdot \mathbf{e}_z) \mathbf{e}_z \right) = -K_1 m_z^2
+\end{equation}
+This is related to the standard form $e = K_1(1 - m_z^2)$ by a constant offset $-K_1$.
+
+\subsection{Orthorhombic Anisotropy ($K_{1p}$)}
+The orthorhombic energy density in the local crystal frame $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$ is:
+\begin{equation}
+    e_{\text{ortho}} = K_{1p} (m_x^2 - m_y^2)
+\end{equation}
+This is implemented via gradients $\mathbf{g}_x = 2 K_{1p} m_x \mathbf{e}_x$ and $\mathbf{g}_y = -2 K_{1p} m_y \mathbf{e}_y$.
+
+\section{Test Parameters and Results}
+
+\subsection{Standard Case (20 nm Cube)}
+Parameters: $L=20$ nm, $J_s=1.6$ T, $K_1=4.3 \times 10^6$ J/m$^3$, $A=7.7 \times 10^{-12}$ J/m, $B_{\text{ext}}=0.1$ T.
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+Term & State & Analytic Expression & Expected SI Value (J) \\ \midrule
+Exchange & Helical ($k=\pi/L$) & $A k^2 V$ & $1.5199 \times 10^{-18}$ \\
+Zeeman & Uniform $\mathbf{m} \parallel \mathbf{B}$ & $-(J_s B / \mu_0) V$ & $-1.0186 \times 10^{-18}$ \\
+Uniaxial & $\theta = 45^\circ$ & $-0.5 K_1 V$ & $-1.7200 \times 10^{-17}$ \\ \bottomrule
+\end{tabular}
+\caption{Analytic vs Numerical comparison for the standard energy test.}
+\end{table}
+
+\subsection{Orthorhombic Isolation Case}
+Parameters: $J_s=1.0$, $K_d=1.0$, $K_{1p}=1.0$, $K_1=0$, Identity Axes.
+\begin{itemize}
+    \item $\mathbf{m} = (1,0,0) \implies e = +1.0$. Result: \textbf{Passed}.
+    \item $\mathbf{m} = (0,1,0) \implies e = -1.0$. Result: \textbf{Passed}.
+\end{itemize}
+
+\subsection{Combined Rotated Case}
+Parameters: $K_1=4.0, K_{1p}=1.0$. Crystal rotated $90^\circ$ about Z ($\mathbf{e}_x = \hat{\mathbf{y}}, \mathbf{e}_y = -\hat{\mathbf{x}}$).
+Lab state $\mathbf{m} = (1,0,0) \implies$ Crystal state $\mathbf{m}_c = (0, -1, 0)$.
+Expected energy density: $e = -K_1(0)^2 + K_{1p}(0^2 - (-1)^2) = -1.0$. Result: \textbf{Passed}.
+
+\end{document}

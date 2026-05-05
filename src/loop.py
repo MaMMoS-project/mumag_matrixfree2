@@ -150,7 +150,7 @@ def bunge_to_axes(phi1: float, Phi: float, phi2: float) -> np.ndarray:
 
 def load_materials_krn(
     krn_path: str, G: int, mesh_unit: float = 1e-9
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Supports two orientation formats:
@@ -164,8 +164,9 @@ def load_materials_krn(
             Used to scale the exchange constant A. Defaults to 1e-9 (nm).
 
     Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
-                                                               axes_lookup).
+        tuple[
+            np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+        ]: (A, K1, K1p, Js, axes_lookup).
             axes_lookup has shape (G, 3, 3) where axes_lookup[g, i, :] is axis i.
     """
     data = np.loadtxt(krn_path)
@@ -178,6 +179,7 @@ def load_materials_krn(
     # Initialize arrays for G material groups
     A = np.zeros(G, dtype=np.float64)
     K1 = np.zeros(G, dtype=np.float64)
+    K1p = np.zeros(G, dtype=np.float64)
     Js = np.zeros(G, dtype=np.float64)
     axes_lookup = np.zeros((G, 3, 3), dtype=np.float64)
     for g in range(G):
@@ -192,9 +194,10 @@ def load_materials_krn(
         Phi = data[:n_fill, 1]
         phi2 = data[:n_fill, 2]
         K1[:n_fill] = data[:n_fill, 3]
+        K1p[:n_fill] = data[:n_fill, 4]
         Js[:n_fill] = data[:n_fill, 5]
         A_val = data[:n_fill, 6]
-        
+
         for i in range(n_fill):
             axes_lookup[i] = bunge_to_axes(phi1[i], Phi[i], phi2[i])
     else:
@@ -202,9 +205,9 @@ def load_materials_krn(
         theta = data[:n_fill, 0]
         phi = data[:n_fill, 1]
         K1[:n_fill] = data[:n_fill, 2]
+        K1p[:n_fill] = data[:n_fill, 3]
         Js[:n_fill] = data[:n_fill, 4]
         A_val = data[:n_fill, 5]
-
         for i in range(n_fill):
             # ez from spherical
             ez = np.array([
@@ -283,7 +286,7 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
 
 def load_materials(
     mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load intrinsic magnetic properties for G materials.
 
     Priority:
@@ -298,8 +301,9 @@ def load_materials(
         mesh_unit (float, optional): Length of one mesh unit in meters.
 
     Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
-                                                               axes_lookup).
+        tuple[
+            np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+        ]: (A, K1, K1p, Js, axes_lookup).
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
@@ -316,11 +320,12 @@ def load_materials(
     A_scale = (1.0 / mesh_unit) ** 2
     A = np.ones((G,), dtype=np.float64) * 1e-11 * A_scale
     K1 = np.zeros((G,), dtype=np.float64)
+    K1p = np.zeros((G,), dtype=np.float64)
     Js = np.ones((G,), dtype=np.float64)  # 1.0 Tesla
     axes_lookup = np.zeros((G, 3, 3), dtype=np.float64)
     for g in range(G):
         axes_lookup[g] = np.eye(3)
-    return A, K1, Js, axes_lookup
+    return A, K1, K1p, Js, axes_lookup
 
 
 def main() -> None:
@@ -596,7 +601,7 @@ def main() -> None:
             p2_overrides = load_params_p2(p2_path)
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
-    A_lookup, K1_lookup, Js_lookup, axes_lookup = load_materials(
+    A_lookup, K1_lookup, K1p_lookup, Js_lookup, axes_lookup = load_materials(
         args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
     )
 
@@ -621,6 +626,7 @@ def main() -> None:
     # Reduced properties:
     A_red = A_lookup / Kd_ref
     K1_red = K1_lookup / Kd_ref
+    K1p_red = K1p_lookup / Kd_ref
     Js_red = Js_lookup / Js_ref
 
     # Build TetGeom depending on backend
@@ -719,6 +725,7 @@ def main() -> None:
         geom=geom,
         A_lookup=A_red,
         K1_lookup=K1_red,
+        K1p_lookup=K1p_red,
         Js_lookup=Js_red,
         axes_lookup=axes_lookup,
         m0=m0,

@@ -189,6 +189,7 @@ def run_hysteresis_loop(
     geom: TetGeom,
     A_lookup: np.ndarray,
     K1_lookup: np.ndarray,
+    K1p_lookup: np.ndarray,
     Js_lookup: np.ndarray,
     axes_lookup: np.ndarray,
     m0: np.ndarray,
@@ -213,6 +214,7 @@ def run_hysteresis_loop(
         geom (TetGeom): Geometry data.
         A_lookup (np.ndarray): Exchange constants.
         K1_lookup (np.ndarray): Anisotropy constants.
+        K1p_lookup (np.ndarray): Orthorhombic anisotropy contribution.
         Js_lookup (np.ndarray): Saturation polarization constants.
         axes_lookup (np.ndarray): 3x3 rotation matrices per material group.
         m0 (np.ndarray): Initial magnetization state.
@@ -252,6 +254,7 @@ def run_hysteresis_loop(
         V_mag=V_mag,
         node_volumes=node_volumes,
         M_nodal=M_nodal,
+        K1p_lookup=jnp.asarray(K1p_lookup, dtype=jnp.float64),
         precond_type=precond_type,
         order=order,
         chunk_elems=chunk_elems,

@@ -113,6 +113,7 @@ def make_energy_kernels(
     V_mag: float,
     M_nodal: Array,
     *,
+    K1p_lookup: Array | None = None,
     k1me: Array | None = None,
     k1me_p: Array | None = None,
     chunk_elems: int = 200_000,
@@ -137,6 +138,8 @@ def make_energy_kernels(
             Each row i is a crystal unit vector e_i in the lab frame.
         V_mag (float): Total magnetic volume in mesh units (e.g., nm^3).
         M_nodal (Array): Nodal magnetic moment scaling (N,).
+        K1p_lookup (Array | None, optional): Dimensionless orthorhombic anisotropy
+            contribution for each material. Defaults to None.
         k1me (Array | None, optional): Per-element magnetoelastic constant Kx.
             These are added to the material-wide K1 anisotropy.
         k1me_p (Array | None, optional): Per-element magnetoelastic constant Ky.
@@ -163,6 +166,9 @@ def make_energy_kernels(
     g_ids = mat_id - 1
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
+    K1p_Ve_base = (
+        2.0 * K1p_lookup[g_ids] * Ve / 20.0 if K1p_lookup is not None else 0.0
+    )
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
 
     # Magnetoelastic terms (per element)
@@ -177,6 +183,15 @@ def make_energy_kernels(
         Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
         Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
     else:
+        Kx_Ve = 0.0
+        Ky_Ve = 0.0
+
+    # Add material-level K1p as orthorhombic contribution (Kx = +K1p, Ky = -K1p)
+    Kx_Ve = Kx_Ve + K1p_Ve_base
+    Ky_Ve = Ky_Ve - K1p_Ve_base
+
+    # Force Kx_Ve/Ky_Ve to None if both base and padded are zero to skip block 4
+    if k1me is None and (K1p_lookup is None or jnp.all(K1p_lookup == 0)):
         Kx_Ve = None
         Ky_Ve = None
 
@@ -198,6 +213,8 @@ def make_energy_kernels(
 
     A_lookup = jnp.asarray(A_lookup)
     K1_lookup = jnp.asarray(K1_lookup)
+    if K1p_lookup is not None:
+        K1p_lookup = jnp.asarray(K1p_lookup)
     Js_lookup = jnp.asarray(Js_lookup)
     axes_lookup = jnp.asarray(axes_lookup)
 

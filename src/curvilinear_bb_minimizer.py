@@ -194,6 +194,7 @@ def make_minimizer(
     node_volumes: Array,
     M_nodal: Array,
     *,
+    K1p_lookup: Array | None = None,
     precond_type: str = "jacobi",
     order: int = 3,
     chunk_elems: int = 200_000,
@@ -215,6 +216,8 @@ def make_minimizer(
         V_mag (float): Magnetic volume.
         node_volumes (Array): Total nodal volumes.
         M_nodal (Array): Nodal magnetic moments.
+        K1p_lookup (Array | None, optional): Orthorhombic anisotropy contribution.
+            Defaults to None.
         precond_type (str, optional): Poisson solver preconditioner.
             Defaults to 'jacobi'.
         order (int, optional): Chebyshev order. Defaults to 3.
@@ -243,6 +246,7 @@ def make_minimizer(
         axes_lookup=axes_lookup,
         V_mag=V_mag,
         M_nodal=M_nodal,
+        K1p_lookup=K1p_lookup,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
