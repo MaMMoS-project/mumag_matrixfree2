@@ -265,3 +265,73 @@ def test_orthorhombic_rotation():
     
     assert abs(float(e_actual) - e_expected) < 1e-7
 
+
+def test_per_element_anisotropy():
+    """Test per-element (magnetoelastic) anisotropy contribution."""
+    # 1. Setup mesh with TWO tetrahedra
+    # Tet 0: nodes 0,1,2,3
+    # Tet 1: nodes 1,2,3,4
+    knt = np.array([
+        [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]
+    ], dtype=np.float64)
+    tets = np.array([
+        [0, 1, 2, 3],
+        [1, 2, 3, 4]
+    ], dtype=np.int64)
+    mat_id = np.array([1, 1], dtype=np.int32) # Same material
+    
+    conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
+    grad_phi = compute_grad_phi_from_JinvT(JinvT)
+    geom = TetGeom(
+        conn=jnp.asarray(conn32, dtype=jnp.int32),
+        volume=jnp.asarray(volume, dtype=jnp.float64),
+        mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
+        grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
+    )
+    V_mag = float(np.sum(volume))
+    
+    # Js=1 for moments
+    vol_Js = volume * 1.0
+    M_nodal = compute_node_volumes(
+        TetGeom(geom.conn, jnp.asarray(vol_Js), geom.mat_id), chunk_elems=10
+    )
+
+    # 2. Per-element constants
+    # Element 0: k1me=1.0, k1me_p=0.5 -> Kx=1.5, Ky=0.5
+    # Element 1: k1me=2.0, k1me_p=1.0 -> Kx=3.0, Ky=1.0
+    k1me = jnp.array([1.0, 2.0])
+    k1me_p = jnp.array([0.5, 1.0])
+    
+    # Material-level constants (zeros)
+    K1_red = 0.0; K1p_red = 0.0
+    axes_lookup = jnp.eye(3)[None, ...] # Identity
+    
+    eg, _, _ = make_energy_kernels(
+        geom, jnp.array([0.0]), jnp.array([K1_red]), 
+        jnp.array([1.0]), axes_lookup, V_mag, M_nodal, 
+        K1p_lookup=jnp.array([K1p_red]),
+        k1me=k1me, k1me_p=k1me_p
+    )
+    
+    # Test State: Uniform mx=1
+    m_unif_x = jnp.zeros((5, 3)).at[:, 0].set(1.0)
+    
+    # Expected Energy: (Kx0 * V0 + Kx1 * V1) / V_mag
+    # Here Kx0 = 1.5, Kx1 = 3.0
+    v0, v1 = float(volume[0]), float(volume[1])
+    e_expected = (1.5 * v0 + 3.0 * v1) / (v0 + v1)
+    
+    e_actual, _ = eg(m_unif_x, jnp.zeros(5), jnp.zeros(3))
+    assert abs(float(e_actual) - e_expected) < 1e-7
+    
+    # Test State: Uniform my=1
+    m_unif_y = jnp.zeros((5, 3)).at[:, 1].set(1.0)
+    
+    # Expected Energy: (Ky0 * V0 + Ky1 * V1) / V_mag
+    # Here Ky0 = 0.5, Ky1 = 1.0
+    e_expected_y = (0.5 * v0 + 1.0 * v1) / (v0 + v1)
+    
+    e_actual_y, _ = eg(m_unif_y, jnp.zeros(5), jnp.zeros(3))
+    assert abs(float(e_actual_y) - e_expected_y) < 1e-7
+
+

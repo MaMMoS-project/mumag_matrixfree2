@@ -70,16 +70,24 @@ This corresponds to an SI energy of:
 \subsection{Uniaxial Anisotropy ($K_1$)}
 The code implements the gradient $\mathbf{g}_{i} = -2 K_1 (\mathbf{m}_i \cdot \mathbf{e}_z) \mathbf{e}_z$ (integrated). The numerical energy density for uniform magnetization is:
 \begin{equation}
-    e_{\text{uniax, num}} = \frac{1}{2} \mathbf{m} \cdot \left( -2 K_1 (\mathbf{m} \cdot \mathbf{e}_z) \mathbf{e}_z \right) = -K_1 m_z^2
+    e_{\text{uniax, num}} = \frac{1}{2} \mathbf{m} \cdot \left( -2 K_1 (\mathbf{m}_i \cdot \mathbf{e}_z) \mathbf{e}_z \right) = -K_1 m_z^2
 \end{equation}
 This is related to the standard form $e = K_1(1 - m_z^2)$ by a constant offset $-K_1$.
 
-\subsection{Orthorhombic Anisotropy ($K_{1p}$)}
+\subsection{Orthorhombic Anisotropy ($K_{1p}, k_{1\text{me}}$)}
 The orthorhombic energy density in the local crystal frame $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$ is:
 \begin{equation}
-    e_{\text{ortho}} = K_{1p} (m_x^2 - m_y^2)
+    e_{\text{ortho}} = K_x m_x^2 + K_y m_y^2
 \end{equation}
-This is implemented via gradients $\mathbf{g}_x = 2 K_{1p} m_x \mathbf{e}_x$ and $\mathbf{g}_y = -2 K_{1p} m_y \mathbf{e}_y$.
+where $K_x$ and $K_y$ combine material-level and per-element contributions:
+\begin{align}
+    K_x^{(e)} &= K_{1p} + (k_{1\text{me}}^{(e)} + k'_{1\text{me}, e}) \\
+    K_y^{(e)} &= -K_{1p} + (k_{1\text{me}}^{(e)} - k'_{1\text{me}, e})
+\end{align}
+The total numerical energy for multiple elements is the volume-weighted average:
+\begin{equation}
+    E_{\text{ortho, tot}} = \sum_e (K_x^{(e)} m_x^2 + K_y^{(e)} m_y^2) V_e
+\end{equation}
 
 \section{Test Parameters and Results}
 
@@ -108,5 +116,17 @@ Parameters: $J_s=1.0$, $K_d=1.0$, $K_{1p}=1.0$, $K_1=0$, Identity Axes.
 Parameters: $K_1=4.0, K_{1p}=1.0$. Crystal rotated $90^\circ$ about Z ($\mathbf{e}_x = \hat{\mathbf{y}}, \mathbf{e}_y = -\hat{\mathbf{x}}$).
 Lab state $\mathbf{m} = (1,0,0) \implies$ Crystal state $\mathbf{m}_c = (0, -1, 0)$.
 Expected energy density: $e = -K_1(0)^2 + K_{1p}(0^2 - (-1)^2) = -1.0$. Result: \textbf{Passed}.
+
+\subsection{Per-Element Anisotropy Case}
+Two elements with volumes $V_0, V_1$ and identity crystal orientation.
+\begin{itemize}
+    \item Element 0: $k_{1\text{me}}=1.0, k'_{1\text{me}}=0.5 \implies K_x=1.5, K_y=0.5$.
+    \item Element 1: $k_{1\text{me}}=2.0, k'_{1\text{me}}=1.0 \implies K_x=3.0, K_y=1.0$.
+\end{itemize}
+For uniform $\mathbf{m}=(1,0,0)$, expected total energy density:
+\begin{equation}
+    e = \frac{1.5 V_0 + 3.0 V_1}{V_0 + V_1}
+\end{equation}
+Result: \textbf{Passed}.
 
 \end{document}
