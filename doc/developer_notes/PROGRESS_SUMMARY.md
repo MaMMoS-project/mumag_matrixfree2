@@ -1,7 +1,7 @@
 # Micromagnetics JAX-to-C++ Porting Progress
 
-**Date:** March 9, 2026
-**Status:** In Progress (Steps 4.1 & 4.2 Completed)
+**Date:** May 5, 2026
+**Status:** In Progress (Grain Rotation Implemented in Python)
 
 ---
 
@@ -9,6 +9,11 @@
 Port the JAX-based micromagnetic simulator to C++ using **VexCL** for GPU acceleration and **AMGCL** for the Poisson solver. The C++ version uses a pre-assembled sparse matrix approach instead of matrix-free kernels.
 
 ## 2. Completed Steps
+
+### 5.1: Grain Rotation (Python/JAX)
+- **`src/loop.py`**: Implemented Bunge Euler angle (Z-X-Z) parsing in `.krn` files. Supports backward compatibility for spherical angles.
+- **`src/energy_kernels.py`**: Updated energy/gradient kernels to project magnetization onto local crystal frame axes. Uniaxial ($K_1$) and Orthorhombic ($K, K'$) anisotropies now correctly rotate with the grain.
+- **`tests/`**: All core unit tests updated and passing.
 
 ### 4.1: Core Physics & Assembly
 - **`src_cpp/fem_utils.hpp/cpp`**: Implements CPU-side FEM assembly for:
@@ -24,6 +29,7 @@ Port the JAX-based micromagnetic simulator to C++ using **VexCL** for GPU accele
 ---
 
 ## 3. Current Architecture Decisions
+- **Grain Orientation:** Defined via Bunge Euler angles (passive intrinsic) in Python. Rotation matrices are propagated to the kernels for local projection.
 - **Anisotropy:** Assembled into the $3N \times 3N$ internal matrix as node-wise $3 \times 3$ block contributions: $-2 K_1 V_i (\mathbf{k} \mathbf{k}^T)$.
 - **Exchange:** Part of the $3N \times 3N$ internal matrix, based on the stiffness matrix $L$ weighted by $2A$.
 - **Demag:** Solved using the potential $U$ via the Poisson equation. Coupling is handled by $G_{div}$ (source) and $G_{grad}$ (field).
@@ -32,9 +38,10 @@ Port the JAX-based micromagnetic simulator to C++ using **VexCL** for GPU accele
 ---
 
 ## 4. Next Steps
-1. **Verify Poisson Solve:** Run `./test_poisson_convergence` on the new GPU machine.
-2. **Step 4.3: `test_energy.cpp`**: Create a C++ version of `test_energy.py` to validate $E_{ex}, E_{ani}, E_{zee}, E_{demag}$ against analytic results.
-3. **Step 4.4: `test_minimizer_relaxation.cpp`**: Port the Barzilai-Borwein minimizer.
+1. **Port Grain Rotation to C++**: The C++ assembly logic needs to be updated to handle arbitrary local frames (3x3 rotation matrices) for both uniaxial and orthorhombic anisotropy.
+2. **Verify Poisson Solve:** Run `./test_poisson_convergence` on the new GPU machine.
+3. **Step 4.3: `test_energy.cpp`**: Create a C++ version of `test_energy.py` to validate $E_{ex}, E_{ani}, E_{zee}, E_{demag}$ against analytic results.
+4. **Step 4.4: `test_minimizer_relaxation.cpp`**: Port the Barzilai-Borwein minimizer.
 
 ---
 

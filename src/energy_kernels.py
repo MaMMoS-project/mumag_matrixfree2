@@ -231,8 +231,11 @@ def make_energy_kernels(
             q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
             j_ve_c = lax.dynamic_slice(Js_Ve, (s,), (chunk_elems,)) * mask
 
-            # Crystal axes for this chunk
-            # axes_c shape: (chunk_elems, 3, 3) where axes_c[e, i] is crystal axis i
+            # Local frame projection:
+            # We project the laboratory-frame magnetization onto the local crystal 
+            # axes (ex, ey, ez) obtained from Bunge Euler angles. All anisotropy
+            # terms (uniaxial and orthorhombic) are then calculated in this
+            # crystal frame to ensure they rotate correctly with the grain.
             axes_c = axes_lookup[mat_c - 1].astype(dtype)
             ex_c = axes_c[:, 0, :]
             ey_c = axes_c[:, 1, :]

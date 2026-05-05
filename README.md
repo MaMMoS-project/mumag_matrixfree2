@@ -55,6 +55,12 @@ Convergence is determined by the criteria established by *Gill, Murray, and Wrig
 ### Matrix-Free Poisson Solver
 To solve the magnetic scalar potential $U$, we use a **Preconditioned Conjugate Gradient (PCG)** method. Instead of assembling a global stiffness matrix $A$, the operator-vector product $A u$ is computed element-wise in JAX.
 
+### Grain Orientation & Local Anisotropy
+The package supports arbitrary grain orientations and local orthorhombic (magnetoelastic) anisotropy.
+- **Euler Angles**: Rotations follow the **Bunge (Z-X-Z) passive intrinsic** convention. This represents a rotation from the laboratory coordinate system to the local crystal frame.
+- **Local Frame Projection**: Energy terms (Uniaxial $K_1$ and Orthorhombic $K, K'$) are calculated by projecting the magnetization vector $\mathbf{m}$ onto the rotated local crystal axes $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$.
+- **Orthorhombic Anisotropy**: Supported via per-element data in `.inp` files (using labels `k1me` and `k1me_p`), allowing for heterogeneous strain-induced effects that rotate with the grain.
+
 ### GPU Memory & Batching
 To handle meshes with millions of elements on GPUs with limited memory, element-wise operations are **batched (chunked)**. 
 - The parameter `--chunk-elems` (default: 200,000) controls how many elements are processed in a single JAX loop iteration. 
@@ -91,6 +97,20 @@ loop = false        ; If true, runs a full hysteresis cycle back to hstart
 [minimizer]
 tol_fun = 1e-6      ; tau_f tolerance
 precond_iter = 400  ; Poisson solver max iterations
+```
+
+### Material Properties (.krn file)
+Intrinsic properties are defined in a `.krn` file. The package automatically detects the orientation format based on the number of columns:
+
+1. **Classic (Spherical)**: `theta phi K1 K2 Js A ...` (6 or 8 columns)
+   - Defines the easy axis ($\mathbf{e}_z$) orientation.
+2. **Full Rotation (Bunge)**: `phi1 Phi phi2 K1 K2 Js A ...` (9+ columns)
+   - Defines the full orientation matrix (Z-X-Z) for the crystal axes.
+
+Example Bunge row (Rotated 45° around Z and 10° tilt):
+```text
+# phi1     Phi       phi2      K1        K2    Js    A
+  0.78539  0.17453   0.0       4.3e5     0.0   1.6   7.7e-12
 ```
 
 ## 4. CLI Reference
