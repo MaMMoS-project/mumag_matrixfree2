@@ -60,6 +60,7 @@ The package supports arbitrary grain orientations and local orthorhombic (magnet
 - **Euler Angles**: Rotations follow the **Bunge (Z-X-Z) passive intrinsic** convention. This represents a rotation from the laboratory coordinate system to the local crystal frame.
 - **Local Frame Projection**: Energy terms (Uniaxial $K_1$ and Orthorhombic $K, K'$) are calculated by projecting the magnetization vector $\mathbf{m}$ onto the rotated local crystal axes $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$.
 - **Orthorhombic Anisotropy**: Supported via per-element data in `.inp` files (using labels `k1me` and `k1me_p`), allowing for heterogeneous strain-induced effects that rotate with the grain.
+- **Additive Behavior**: Per-element magnetoelastic constants (`k1me`, `k1me_p`) are **added** to the material-wide magnetocrystalline anisotropy (`K1`). This allows for local perturbations of the primary anisotropy within a single grain or material group.
 
 ### GPU Memory & Batching
 To handle meshes with millions of elements on GPUs with limited memory, element-wise operations are **batched (chunked)**. 

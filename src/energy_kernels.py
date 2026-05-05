@@ -138,7 +138,9 @@ def make_energy_kernels(
         V_mag (float): Total magnetic volume in mesh units (e.g., nm^3).
         M_nodal (Array): Nodal magnetic moment scaling (N,).
         k1me (Array | None, optional): Per-element magnetoelastic constant Kx.
+            These are added to the material-wide K1 anisotropy.
         k1me_p (Array | None, optional): Per-element magnetoelastic constant Ky.
+            These are added to the material-wide K1 anisotropy.
         chunk_elems (int, optional): Elements processed per loop iteration.
             Defaults to 200_000.
         assembly (Assembly, optional): Nodal assembly method
@@ -279,6 +281,7 @@ def make_energy_kernels(
             contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
 
             # 4. Magnetoelastic (Orthorhombic) Anisotropy
+            # Note: This is ADDED to the material-level uniaxial K1 anisotropy above.
             if Kx_Ve is not None:
                 kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
                 ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
@@ -295,8 +298,12 @@ def make_energy_kernels(
                     + m_e[:, :, 2] * ey_c[:, None, 2]
                 )
 
-                sum_mx = (mx_local[:, 0] + mx_local[:, 1] + mx_local[:, 2] + mx_local[:, 3])[:, None]
-                sum_my = (my_local[:, 0] + my_local[:, 1] + my_local[:, 2] + my_local[:, 3])[:, None]
+                sum_mx = (
+                    mx_local[:, 0] + mx_local[:, 1] + mx_local[:, 2] + mx_local[:, 3]
+                )[:, None]
+                sum_my = (
+                    my_local[:, 0] + my_local[:, 1] + my_local[:, 2] + my_local[:, 3]
+                )[:, None]
 
                 gx_me = kx_ve_c[:, None] * (sum_mx + mx_local)
                 gy_me = ky_ve_c[:, None] * (sum_my + my_local)
