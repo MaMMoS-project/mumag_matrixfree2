@@ -69,7 +69,7 @@ def setup_geom():
     Js_lookup = jnp.array([Js_red, 0.0])
     K1_lookup = jnp.array([K1_red, 0.0])
     A_lookup = jnp.array([A_red, 0.0])
-    k_easy_lookup = jnp.array([k_easy, k_easy])
+    axes_lookup = jnp.stack([jnp.eye(3), jnp.eye(3)], axis=0)
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     M_nodal = compute_node_volumes(
@@ -83,7 +83,7 @@ def setup_geom():
         "Js_lookup": Js_lookup,
         "K1_lookup": K1_lookup,
         "A_lookup": A_lookup,
-        "k_easy_lookup": k_easy_lookup,
+        "axes_lookup": axes_lookup,
         "V_mag": float(V_mag_nm),
         "M_nodal": M_nodal,
         "boundary_mask": boundary_mask,
@@ -123,11 +123,10 @@ def test_exchange_gradient(setup_geom):
         d["A_lookup"],
         jnp.zeros_like(d["K1_lookup"]),
         jnp.zeros_like(d["Js_lookup"]),
-        d["k_easy_lookup"],
+        d["axes_lookup"],
         d["V_mag"],
         d["M_nodal"],
     )
-
     _, g_sim = energy_and_grad(m_hel, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3))
 
     # Test only first 5 nodes for speed
@@ -165,7 +164,8 @@ def test_anisotropy_gradient(setup_geom):
         jnp.zeros_like(d["A_lookup"]),
         d["K1_lookup"],
         jnp.zeros_like(d["Js_lookup"]),
-        d["k_easy_lookup"],
+        d["axes_lookup"],
+
         d["V_mag"],
         d["M_nodal"],
     )
@@ -206,7 +206,8 @@ def test_zeeman_gradient(setup_geom):
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),
         d["Js_lookup"],
-        d["k_easy_lookup"],
+        d["axes_lookup"],
+
         d["V_mag"],
         d["M_nodal"],
     )
@@ -246,7 +247,8 @@ def test_demag_gradient(setup_geom):
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),
         d["Js_lookup"],
-        d["k_easy_lookup"],
+        d["axes_lookup"],
+
         d["V_mag"],
         d["M_nodal"],
     )

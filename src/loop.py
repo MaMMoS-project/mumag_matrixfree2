@@ -102,14 +102,60 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
     return np.einsum("eij,aj->eai", JinvT, _GRAD_HAT)
 
 
+def bunge_to_axes(phi1: float, Phi: float, phi2: float) -> np.ndarray:
+    """Convert Bunge Euler angles (Z-X-Z passive intrinsic) to crystal axes.
+
+    The rows of the returned 3x3 matrix are the crystal axes (ex, ey, ez)
+    expressed in the laboratory coordinate system.
+
+    Args:
+        phi1 (float): First rotation about Z (radians).
+        Phi (float): Second rotation about X' (radians).
+        phi2 (float): Third rotation about Z'' (radians).
+
+    Returns:
+        np.ndarray: 3x3 matrix where rows are [ex, ey, ez].
+    """
+    c1, s1 = np.cos(phi1), np.sin(phi1)
+    cP, sP = np.cos(Phi), np.sin(Phi)
+    c2, s2 = np.cos(phi2), np.sin(phi2)
+
+    # Bunge matrix R (passive: v_crystal = R * v_lab)
+    # The rows are the unit vectors of the crystal axes in the lab frame.
+    # Row 0: ex_crystal in lab
+    # Row 1: ey_crystal in lab
+    # Row 2: ez_crystal in lab
+    R = np.array(
+        [
+            [
+                c1 * c2 - s1 * s2 * cP,
+                s1 * c2 + c1 * s2 * cP,
+                s2 * sP,
+            ],
+            [
+                -c1 * s2 - s1 * c2 * cP,
+                -s1 * s2 + c1 * c2 * cP,
+                c2 * sP,
+            ],
+            [
+                s1 * sP,
+                -c1 * sP,
+                cP,
+            ],
+        ],
+        dtype=np.float64,
+    )
+    return R
+
+
 def load_materials_krn(
     krn_path: str, G: int, mesh_unit: float = 1e-9
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
-    Expects columns: theta, phi, K1, K2, Js, A, ...
-    If the mesh has more material groups than the file has rows,
-    the additional groups are initialized as air (Js=0).
+    Supports two orientation formats:
+    - 2-angle header (6/8 columns): theta, phi, K1, K2, Js, A, ...
+    - 3-angle header (9+ columns): phi1, Phi, phi2, K1, K2, Js, A, ...
 
     Args:
         krn_path (str): Path to the .krn file.
@@ -119,38 +165,66 @@ def load_materials_krn(
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
-                                                               easy_axis).
+                                                               axes_lookup).
+            axes_lookup has shape (G, 3, 3) where axes_lookup[g, i, :] is axis i.
     """
     data = np.loadtxt(krn_path)
     if data.ndim == 1:
         data = data[None, :]
 
     n_rows = data.shape[0]
+    n_cols = data.shape[1]
 
     # Initialize arrays for G material groups
     A = np.zeros(G, dtype=np.float64)
     K1 = np.zeros(G, dtype=np.float64)
     Js = np.zeros(G, dtype=np.float64)
-    k_easy = np.zeros((G, 3), dtype=np.float64)
-    k_easy[:, 2] = 1.0  # default easy axis along z
+    axes_lookup = np.zeros((G, 3, 3), dtype=np.float64)
+    for g in range(G):
+        axes_lookup[g] = np.eye(3)
 
     # Only fill up to what we have in the file
     n_fill = min(G, n_rows)
 
-    theta = data[:n_fill, 0]
-    phi = data[:n_fill, 1]
-    K1[:n_fill] = data[:n_fill, 2]
-    Js[:n_fill] = data[:n_fill, 4]
+    # Detection logic: Bunge Euler if >= 9 columns
+    if n_cols >= 9:
+        phi1 = data[:n_fill, 0]
+        Phi = data[:n_fill, 1]
+        phi2 = data[:n_fill, 2]
+        K1[:n_fill] = data[:n_fill, 3]
+        Js[:n_fill] = data[:n_fill, 5]
+        A_val = data[:n_fill, 6]
+        
+        for i in range(n_fill):
+            axes_lookup[i] = bunge_to_axes(phi1[i], Phi[i], phi2[i])
+    else:
+        # Classic theta, phi
+        theta = data[:n_fill, 0]
+        phi = data[:n_fill, 1]
+        K1[:n_fill] = data[:n_fill, 2]
+        Js[:n_fill] = data[:n_fill, 4]
+        A_val = data[:n_fill, 5]
+
+        for i in range(n_fill):
+            # ez from spherical
+            ez = np.array([
+                np.sin(theta[i]) * np.cos(phi[i]),
+                np.sin(theta[i]) * np.sin(phi[i]),
+                np.cos(theta[i])
+            ])
+            # Construct orthogonal ex, ey
+            if abs(ez[0]) < 0.9:
+                ex = np.cross(ez, [1, 0, 0])
+            else:
+                ex = np.cross(ez, [0, 1, 0])
+            ex /= (np.linalg.norm(ex) + 1e-30)
+            ey = np.cross(ez, ex)
+            axes_lookup[i] = np.stack([ex, ey, ez], axis=0)
 
     A_scale = (1.0 / mesh_unit) ** 2
-    A[:n_fill] = data[:n_fill, 5] * A_scale
+    A[:n_fill] = A_val * A_scale
 
-    kx = np.sin(theta) * np.cos(phi)
-    ky = np.sin(theta) * np.sin(phi)
-    kz = np.cos(theta)
-    k_easy[:n_fill] = np.column_stack([kx, ky, kz])
-
-    return A, K1, Js, k_easy
+    return A, K1, Js, axes_lookup
 
 
 def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
@@ -222,11 +296,10 @@ def load_materials(
         G (int): Number of material groups.
         mesh_path (str | None): Path to the mesh file (for discovery).
         mesh_unit (float, optional): Length of one mesh unit in meters.
-            Defaults to 1e-9.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
-                                                               easy_axis).
+                                                               axes_lookup).
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
@@ -244,9 +317,10 @@ def load_materials(
     A = np.ones((G,), dtype=np.float64) * 1e-11 * A_scale
     K1 = np.zeros((G,), dtype=np.float64)
     Js = np.ones((G,), dtype=np.float64)  # 1.0 Tesla
-    k_easy = np.zeros((G, 3), dtype=np.float64)
-    k_easy[:, 2] = 1.0
-    return A, K1, Js, k_easy
+    axes_lookup = np.zeros((G, 3, 3), dtype=np.float64)
+    for g in range(G):
+        axes_lookup[g] = np.eye(3)
+    return A, K1, Js, axes_lookup
 
 
 def main() -> None:
@@ -522,7 +596,7 @@ def main() -> None:
             p2_overrides = load_params_p2(p2_path)
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
-    A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(
+    A_lookup, K1_lookup, Js_lookup, axes_lookup = load_materials(
         args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
     )
 
@@ -646,7 +720,7 @@ def main() -> None:
         A_lookup=A_red,
         K1_lookup=K1_red,
         Js_lookup=Js_red,
-        k_easy_lookup=k_easy_lookup,
+        axes_lookup=axes_lookup,
         m0=m0,
         params=params,
         V_mag=float(V_mag),

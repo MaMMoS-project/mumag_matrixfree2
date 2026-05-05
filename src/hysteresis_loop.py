@@ -190,7 +190,7 @@ def run_hysteresis_loop(
     A_lookup: np.ndarray,
     K1_lookup: np.ndarray,
     Js_lookup: np.ndarray,
-    k_easy_lookup: np.ndarray,
+    axes_lookup: np.ndarray,
     m0: np.ndarray,
     params: LoopParams,
     V_mag: float,
@@ -214,7 +214,7 @@ def run_hysteresis_loop(
         A_lookup (np.ndarray): Exchange constants.
         K1_lookup (np.ndarray): Anisotropy constants.
         Js_lookup (np.ndarray): Saturation polarization constants.
-        k_easy_lookup (np.ndarray): Easy axis vectors.
+        axes_lookup (np.ndarray): 3x3 rotation matrices per material group.
         m0 (np.ndarray): Initial magnetization state.
         params (LoopParams): Loop control parameters.
         V_mag (float): Total magnetic volume.
@@ -248,7 +248,7 @@ def run_hysteresis_loop(
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
         Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
-        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        axes_lookup=jnp.asarray(axes_lookup, dtype=jnp.float64),
         V_mag=V_mag,
         node_volumes=node_volumes,
         M_nodal=M_nodal,

@@ -70,7 +70,7 @@ def make_minimizer_no_demag(
     A_lookup: jnp.ndarray,
     K1_lookup: jnp.ndarray,
     Js_lookup: jnp.ndarray,
-    k_easy_lookup: jnp.ndarray,
+    axes_lookup: jnp.ndarray,
     V_mag: float,
     M_nodal: jnp.ndarray,
 ) -> Callable:
@@ -81,7 +81,7 @@ def make_minimizer_no_demag(
         A_lookup (jnp.ndarray): Exchange constants.
         K1_lookup (jnp.ndarray): Anisotropy constants.
         Js_lookup (jnp.ndarray): Saturation polarization.
-        k_easy_lookup (jnp.ndarray): Easy axis vectors.
+        axes_lookup (jnp.ndarray): 3x3 rotation matrices.
         V_mag (float): Magnetic volume.
         M_nodal (jnp.ndarray): Nodal magnetic moments.
 
@@ -94,7 +94,7 @@ def make_minimizer_no_demag(
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
         Js_lookup=Js_lookup,
-        k_easy_lookup=k_easy_lookup,
+        axes_lookup=axes_lookup,
         V_mag=V_mag,
         M_nodal=M_nodal,
     )
@@ -197,19 +197,19 @@ def run_sw_test_inp(inp_path: str) -> None:
     Js_lookup = np.zeros(max_mat)
     K1_lookup = np.zeros(max_mat)
     A_lookup = np.zeros(max_mat)
-    k_easy_lookup = np.zeros((max_mat, 3))
+    axes_lookup = np.zeros((max_mat, 3, 3))
 
     # Assume mat_id=1 is the only magnetic material
     if max_mat >= 1:
         Js_lookup[0] = Js_red
         K1_lookup[0] = K1_red
         A_lookup[0] = A_red
-        k_easy_lookup[0] = [0.0, 0.0, 1.0]
+        axes_lookup[0] = np.eye(3)
 
     Js_lookup = jnp.asarray(Js_lookup)
     K1_lookup = jnp.asarray(K1_lookup)
     A_lookup = jnp.asarray(A_lookup)
-    k_easy_lookup = jnp.asarray(k_easy_lookup)
+    axes_lookup = jnp.asarray(axes_lookup)
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     from dataclasses import replace
@@ -225,7 +225,7 @@ def run_sw_test_inp(inp_path: str) -> None:
     print(f"Theoretical Bk: {Bk_si:.4f} T")
 
     minimize = make_minimizer_no_demag(
-        geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
+        geom, A_lookup, K1_lookup, Js_lookup, axes_lookup, V_mag, M_nodal
     )
 
     angles_deg = [1, 15, 30, 45, 60, 75, 89]

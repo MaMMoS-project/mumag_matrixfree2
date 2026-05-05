@@ -109,7 +109,7 @@ def make_energy_kernels(
     A_lookup: Array,
     K1_lookup: Array,
     Js_lookup: Array,
-    k_easy_lookup: Array,
+    axes_lookup: Array,
     V_mag: float,
     M_nodal: Array,
     *,
@@ -133,7 +133,8 @@ def make_energy_kernels(
         A_lookup (Array): Dimensionless exchange constants for each material.
         K1_lookup (Array): Dimensionless anisotropy constants for each material.
         Js_lookup (Array): Dimensionless saturation polarization for each material.
-        k_easy_lookup (Array): Easy axis vectors (unit length) for each material (G, 3).
+        axes_lookup (Array): 3x3 rotation matrices per material group (G, 3, 3).
+            Each row i is a crystal unit vector e_i in the lab frame.
         V_mag (float): Total magnetic volume in mesh units (e.g., nm^3).
         M_nodal (Array): Nodal magnetic moment scaling (N,).
         k1me (Array | None, optional): Per-element magnetoelastic constant Kx.
@@ -156,22 +157,14 @@ def make_energy_kernels(
     # Inverse volume normalization
     inv_Vmag = 1.0 / V_mag
 
-    # Pre-calculate material-weighted geometry terms to save multiplications
-    # in the loop.
-    # Choice: Multiplying materials by volumes here reduces the operations inside
-    # the JAX loop, which is critical for minimizing register pressure on GPUs.
+    # Pre-calculate material-weighted geometry terms
     g_ids = mat_id - 1
-    # Scale factors for each energy term (Factor 2.0 for quadratic gradients).
-    # Mathematical Choice: For quadratic forms (A*m^2), the gradient is 2*A*m.
-    # Pre-applying the 2.0 and the 1/20 (mass matrix factor) here simplifies
-    # the inner loop.
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
 
     # Magnetoelastic terms (per element)
     if k1me is not None:
-        # Pad k1me/k1me_p if provided
         k1me_padded = jnp.zeros(conn.shape[0])
         k1me_padded = k1me_padded.at[: k1me.shape[0]].set(k1me)
         k1mep_padded = jnp.zeros(conn.shape[0])
@@ -179,7 +172,6 @@ def make_energy_kernels(
             k1mep_padded = k1mep_padded.at[: k1me_p.shape[0]].set(k1me_p)
 
         # Kx = k1me + k1mep, Ky = k1me - k1mep
-        # Scale by 2.0 (quadratic) and Ve / 20.0 (consistent mass matrix)
         Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
         Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
     else:
@@ -187,20 +179,14 @@ def make_energy_kernels(
         Ky_Ve = None
 
     if grad_backend == "stored_grad_phi":
-        if geom_p.grad_phi is None:
-            raise ValueError("stored_grad_phi requires geom.grad_phi")
         grad_phi = geom_p.grad_phi
         JinvT = None
         x_nodes = None
     elif grad_backend == "stored_JinvT":
-        if geom_p.JinvT is None:
-            raise ValueError("stored_JinvT requires geom.JinvT")
         grad_phi = None
         JinvT = geom_p.JinvT
         x_nodes = None
     else:
-        if geom_p.x_nodes is None:
-            raise ValueError("on_the_fly requires geom.x_nodes")
         grad_phi = None
         JinvT = None
         x_nodes = geom_p.x_nodes
@@ -211,7 +197,7 @@ def make_energy_kernels(
     A_lookup = jnp.asarray(A_lookup)
     K1_lookup = jnp.asarray(K1_lookup)
     Js_lookup = jnp.asarray(Js_lookup)
-    k_easy_lookup = jnp.asarray(k_easy_lookup)
+    axes_lookup = jnp.asarray(axes_lookup)
 
     def _get_B(conn_c: Array, s: int, dtype: Any) -> Array:
         if grad_backend == "stored_grad_phi":
@@ -229,19 +215,8 @@ def make_energy_kernels(
             return _B_from_JinvT(JinvT_c, dtype)
 
     def energy_and_grad(m: Array, U: Array, B_ext: Array) -> tuple[Array, Array]:
-        """Compute the total dimensionless energy and gradient.
-
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            U (Array): Nodal scalar potential (N,).
-            B_ext (Array): Dimensionless external field vector (3,).
-
-        Returns:
-            tuple[Array, Array]: (Total Energy, Total Gradient N, 3).
-        """
         N = m.shape[0]
         dtype = m.dtype
-        # B_ext is expected to be reduced: b_ext = B_ext / Js_ref
         B_ext = jnp.asarray(B_ext, dtype=dtype)
 
         def body(i: int, g_acc: Array) -> Array:
@@ -252,71 +227,80 @@ def make_energy_kernels(
 
             mask = chunk_mask(E_orig, s, chunk_elems, dtype)
 
-            # Slice pre-scaled properties and apply mask
             a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
             q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
             j_ve_c = lax.dynamic_slice(Js_Ve, (s,), (chunk_elems,)) * mask
 
-            k_c = k_easy_lookup[mat_c - 1].astype(dtype)
+            # Crystal axes for this chunk
+            # axes_c shape: (chunk_elems, 3, 3) where axes_c[e, i] is crystal axis i
+            axes_c = axes_lookup[mat_c - 1].astype(dtype)
+            ex_c = axes_c[:, 0, :]
+            ey_c = axes_c[:, 1, :]
+            ez_c = axes_c[:, 2, :]
 
             m_e = m[conn_c]
             U_e = U[conn_c]
 
-            # 1. Exchange Gradient (Quadratic)
-            # grad_m [e, i, k] = sum_a m_eai * B_eak
+            # 1. Exchange Gradient
             G = (
                 m_e[:, 0, :, None] * B_c[:, 0, None, :]
                 + m_e[:, 1, :, None] * B_c[:, 1, None, :]
                 + m_e[:, 2, :, None] * B_c[:, 2, None, :]
                 + m_e[:, 3, :, None] * B_c[:, 3, None, :]
             )
-
-            # Km [e, a, i] = sum_k G_eik * B_eak
             Km = (
                 G[:, :, 0][:, None, :] * B_c[:, :, 0][:, :, None]
                 + G[:, :, 1][:, None, :] * B_c[:, :, 1][:, :, None]
                 + G[:, :, 2][:, None, :] * B_c[:, :, 2][:, :, None]
             )
-
             contrib = a_ve_c[:, None, None] * Km
 
-            # 2. Uniaxial Anisotropy Gradient (Quadratic)
+            # 2. Uniaxial Anisotropy Gradient
+            # v_e is projection of m onto ez (crystal z-axis)
             v_e = (
-                m_e[:, :, 0] * k_c[:, None, 0]
-                + m_e[:, :, 1] * k_c[:, None, 1]
-                + m_e[:, :, 2] * k_c[:, None, 2]
+                m_e[:, :, 0] * ez_c[:, None, 0]
+                + m_e[:, :, 1] * ez_c[:, None, 1]
+                + m_e[:, :, 2] * ez_c[:, None, 2]
             )
-
             sum_v = (v_e[:, 0] + v_e[:, 1] + v_e[:, 2] + v_e[:, 3])[:, None]
             factor = -q_ve_c[:, None] * (sum_v + v_e)
-            contrib = contrib + factor[..., None] * k_c[:, None, :]
+            contrib = contrib + factor[..., None] * ez_c[:, None, :]
 
-            # 3. Demag Gradient (Quadratic)
+            # 3. Demag Gradient
             grad_u = (
                 U_e[:, 0, None] * B_c[:, 0, :]
                 + U_e[:, 1, None] * B_c[:, 1, :]
                 + U_e[:, 2, None] * B_c[:, 2, :]
                 + U_e[:, 3, None] * B_c[:, 3, :]
             )
-
             contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
 
-            # 4. Magnetoelastic Anisotropy (Quadratic)
+            # 4. Magnetoelastic (Orthorhombic) Anisotropy
             if Kx_Ve is not None:
                 kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
                 ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
 
-                mx_e = m_e[:, :, 0]
-                my_e = m_e[:, :, 1]
+                # Project m onto local crystal x and y axes
+                mx_local = (
+                    m_e[:, :, 0] * ex_c[:, None, 0]
+                    + m_e[:, :, 1] * ex_c[:, None, 1]
+                    + m_e[:, :, 2] * ex_c[:, None, 2]
+                )
+                my_local = (
+                    m_e[:, :, 0] * ey_c[:, None, 0]
+                    + m_e[:, :, 1] * ey_c[:, None, 1]
+                    + m_e[:, :, 2] * ey_c[:, None, 2]
+                )
 
-                sum_mx = (mx_e[:, 0] + mx_e[:, 1] + mx_e[:, 2] + mx_e[:, 3])[:, None]
-                sum_my = (my_e[:, 0] + my_e[:, 1] + my_e[:, 2] + my_e[:, 3])[:, None]
+                sum_mx = (mx_local[:, 0] + mx_local[:, 1] + mx_local[:, 2] + mx_local[:, 3])[:, None]
+                sum_my = (my_local[:, 0] + my_local[:, 1] + my_local[:, 2] + my_local[:, 3])[:, None]
 
-                gx_me = kx_ve_c[:, None] * (sum_mx + mx_e)
-                gy_me = ky_ve_c[:, None] * (sum_my + my_e)
+                gx_me = kx_ve_c[:, None] * (sum_mx + mx_local)
+                gy_me = ky_ve_c[:, None] * (sum_my + my_local)
 
-                contrib = contrib.at[:, :, 0].add(gx_me)
-                contrib = contrib.at[:, :, 1].add(gy_me)
+                # Add contributions back to lab components
+                contrib = contrib + gx_me[..., None] * ex_c[:, None, :]
+                contrib = contrib + gy_me[..., None] * ey_c[:, None, :]
 
             if assembly == "scatter":
                 g_acc = assemble_scatter(g_acc, conn_c, contrib)
@@ -325,24 +309,10 @@ def make_energy_kernels(
 
             return g_acc
 
-        # Compute sum of quadratic gradients (Ex + An + Demag)
         g_quad = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
-
-        # 4. Zeeman Gradient (Linear)
         g_z = -2.0 * M_nodal[:, None] * B_ext[None, :]
-
-        # Total Gradient
         g_total = g_quad + g_z
-
-        # Total Energy calculation choice.
-        # Mathematical Trick:
-        # For quadratic terms (Ex, An, Demag): m^T * g_quad = 2 * E_quad
-        # For linear terms (Zeeman): m^T * g_z = E_z
-        # Total F = E_quad + E_z = 0.5 * (2 * E_quad + 2 * E_z)
-        # Therefore, F = 0.5 * m^T * (g_quad + 2 * g_z) = 0.5 * m^T * (g_total + g_z)
-        # This avoids separate energy integrations and ensures consistency.
         E = 0.5 * jnp.sum(m * (g_total + g_z))
-
         return E * inv_Vmag, g_total * inv_Vmag
 
     def energy_only(m: Array, U: Array, B_ext: Array) -> Array:

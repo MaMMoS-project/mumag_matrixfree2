@@ -61,7 +61,7 @@ def test_minimizer_relaxation():
     A_lookup = jnp.array([A_red, 0.0])
     K1_lookup = jnp.array([K1_red, 0.0])
     Js_lookup = jnp.array([Js_red, 0.0])
-    k_easy_lookup = jnp.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+    axes_lookup = jnp.stack([jnp.eye(3), jnp.eye(3)], axis=0)
 
     V_mag_nm = np.sum(volume[mat_id == 1])
     node_vols = compute_node_volumes(geom, chunk_elems=100000)
@@ -71,7 +71,7 @@ def test_minimizer_relaxation():
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
         Js_lookup=Js_lookup,
-        k_easy_lookup=k_easy_lookup,
+        axes_lookup=axes_lookup,
         V_mag=float(V_mag_nm),
         node_volumes=node_vols,
         M_nodal=node_vols,  # Simplified for test

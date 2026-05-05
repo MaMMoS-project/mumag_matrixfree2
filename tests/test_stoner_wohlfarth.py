@@ -18,11 +18,11 @@ from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
 def make_minimizer_no_demag(
-    geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
+    geom, A_lookup, K1_lookup, Js_lookup, axes_lookup, V_mag, M_nodal
 ):
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
     energy_and_grad, _, _ = make_energy_kernels(
-        geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
+        geom, A_lookup, K1_lookup, Js_lookup, axes_lookup, V_mag, M_nodal
     )
 
     def _bb_step(state, B_ext):
@@ -108,7 +108,8 @@ def test_stoner_wohlfarth_switching(angle_deg):
     Js_lookup = jnp.array([1.0])
     K1_lookup = jnp.array([K1_red])
     A_lookup = jnp.array([A_red])
-    k_easy_lookup = jnp.array([[0.0, 0.0, 1.0]])
+    axes_lookup = jnp.zeros((1, 3, 3), dtype=jnp.float64)
+    axes_lookup = axes_lookup.at[0].set(jnp.eye(3))
     M_nodal = compute_node_volumes(
         TetGeom(conn=geom.conn, volume=jnp.asarray(volume), mat_id=geom.mat_id), 100_000
     )
@@ -117,7 +118,7 @@ def test_stoner_wohlfarth_switching(angle_deg):
         A_lookup,
         K1_lookup,
         Js_lookup,
-        k_easy_lookup,
+        axes_lookup,
         float(np.sum(volume)),
         M_nodal,
     )

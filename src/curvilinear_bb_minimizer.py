@@ -189,7 +189,7 @@ def make_minimizer(
     A_lookup: Array,
     K1_lookup: Array,
     Js_lookup: Array,
-    k_easy_lookup: Array,
+    axes_lookup: Array,
     V_mag: float,
     node_volumes: Array,
     M_nodal: Array,
@@ -211,7 +211,7 @@ def make_minimizer(
         A_lookup (Array): Exchange constants.
         K1_lookup (Array): Anisotropy constants.
         Js_lookup (Array): Saturation polarization.
-        k_easy_lookup (Array): Easy axis vectors.
+        axes_lookup (Array): 3x3 rotation matrices per material group.
         V_mag (float): Magnetic volume.
         node_volumes (Array): Total nodal volumes.
         M_nodal (Array): Nodal magnetic moments.
@@ -240,7 +240,7 @@ def make_minimizer(
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
         Js_lookup=Js_lookup,
-        k_easy_lookup=k_easy_lookup,
+        axes_lookup=axes_lookup,
         V_mag=V_mag,
         M_nodal=M_nodal,
         chunk_elems=chunk_elems,

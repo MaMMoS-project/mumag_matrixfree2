@@ -78,7 +78,7 @@ def make_minimizer_no_demag(
     A_lookup: jnp.ndarray,
     K1_lookup: jnp.ndarray,
     Js_lookup: jnp.ndarray,
-    k_easy_lookup: jnp.ndarray,
+    axes_lookup: jnp.ndarray,
     V_mag: float,
     M_nodal: jnp.ndarray,
     k1me: jnp.ndarray,
@@ -89,7 +89,7 @@ def make_minimizer_no_demag(
     # Pass k1me and k1me_p to kernels
     energy_and_grad, _, _ = make_energy_kernels(
         geom, A_lookup=A_lookup, K1_lookup=K1_lookup, Js_lookup=Js_lookup, 
-        k_easy_lookup=k_easy_lookup, V_mag=V_mag, M_nodal=M_nodal,
+        axes_lookup=axes_lookup, V_mag=V_mag, M_nodal=M_nodal,
         k1me=k1me, k1me_p=k1me_p
     )
 
@@ -153,13 +153,13 @@ def run_sw_me_test(inp_path: str, phi_deg: float = 0.0):
     
     max_mat = int(np.max(mat_id))
     Js_lookup = np.zeros(max_mat); K1_lookup = np.zeros(max_mat); A_lookup = np.zeros(max_mat)
-    k_easy_lookup = np.zeros((max_mat, 3))
+    axes_lookup = np.zeros((max_mat, 3, 3))
     if max_mat >= 1:
         Js_lookup[0] = Js_red; K1_lookup[0] = K1_red; A_lookup[0] = A_red
-        k_easy_lookup[0] = [0.0, 0.0, 1.0]
+        axes_lookup[0] = np.eye(3)
 
     Js_lookup = jnp.asarray(Js_lookup); K1_lookup = jnp.asarray(K1_lookup)
-    A_lookup = jnp.asarray(A_lookup); k_easy_lookup = jnp.asarray(k_easy_lookup)
+    A_lookup = jnp.asarray(A_lookup); axes_lookup = jnp.asarray(axes_lookup)
     k1me = jnp.asarray(k1me_arr); k1me_p = jnp.asarray(k1mep_arr)
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
@@ -167,7 +167,7 @@ def run_sw_me_test(inp_path: str, phi_deg: float = 0.0):
     M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=100_000)
     V_mag = float(np.sum(volume[mat_id == 1]))
 
-    minimize = make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal, k1me, k1me_p)
+    minimize = make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, axes_lookup, V_mag, M_nodal, k1me, k1me_p)
 
     angles_deg = [1, 15, 30, 45, 60, 75, 89]
     B_vals = np.arange(8.0, -9.0, -0.1)

@@ -74,7 +74,7 @@ def test_micromagnetic_energies():
     Js_lookup = jnp.array([Js_red, 0.0])
     K1_lookup = jnp.array([K1_red, 0.0])
     A_lookup = jnp.array([A_red, 0.0])
-    k_easy_lookup = jnp.array([k_easy, k_easy])
+    axes_lookup = jnp.stack([jnp.eye(3), jnp.eye(3)], axis=0)
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     M_nodal = compute_node_volumes(
@@ -115,7 +115,7 @@ def test_micromagnetic_energies():
         A_lookup,
         K1_lookup,
         Js_lookup,
-        k_easy_lookup,
+        axes_lookup,
         float(V_mag_nm),
         M_nodal,
         chunk_elems=200_000,
