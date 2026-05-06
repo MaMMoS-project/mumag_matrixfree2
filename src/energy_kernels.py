@@ -17,11 +17,13 @@ Dimensionless variables:
     u = (mu0 / Js_ref) * u_calc (Dimensionless potential)
 
 Energy Normalization (E_dimensionless = E_SI / (Kd_ref * Vmag)):
-    1. Exchange:   E_ex  = (1/Vmag) * Integral( A_red * |grad m|^2 ) dV
-    2. Anisotropy: E_an  = (1/Vmag) * Integral( K1_red * [1 - (m.k)^2] ) dV
-    3. Zeeman:     E_z   = (1/Vmag) * Integral( -2 * Js_red * m . B_red ) dV
-    4. Demag:      E_dem = (1/Vmag) * Integral( Js_red * m . grad(u) ) dV
+    1. Exchange:      E_ex  = (1/Vmag) * Integral( A_red * |grad m|^2 ) dV
+    2. Uniaxial An.:  E_an  = (1/Vmag) * Integral( -K1_red * (m.k)^2 ) dV
+    3. Zeeman:        E_z   = (1/Vmag) * Integral( -2 * Js_red * m . B_red ) dV
+    4. Demag:         E_dem = (1/Vmag) * Integral( Js_red * m . grad(u) ) dV
+    5. Orthorhombic:  E_or  = (1/Vmag) * Integral( Kx*mx^2 + Ky*my^2 ) dV
 
+    Note: Uniaxial energy omits the constant offset K1_red for performance.
     Note: The factor '2' in Zeeman arises because 1/Kd_ref = 2*mu0/Js_ref^2.
     Note: The factor '1/2' in physical Demag (0.5 * M . Hd) is cancelled
     by the '2' in the denominator of Kd_ref, resulting in a factor of 1.
