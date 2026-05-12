@@ -117,7 +117,28 @@ The file expects 6 columns (Classic format):
 - **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
 - **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
 
-## 4. CLI Reference
+## 4. Output Files
+
+The simulation results are saved in the directory specified by `--out-dir` (default: `hyst_out`).
+
+### Hysteresis Data (`hysteresis.csv`)
+A CSV file containing the global results of the field sweep. Columns include:
+- **`config`**: The configuration index. This increments only when a new snapshot (VTU) is saved (via `mstep` or `--snapshot-every`).
+- **`B_ext_T`**: The external magnetic field in Tesla.
+- **`J_par_T`**: The volume-averaged magnetic polarization parallel to the field direction in Tesla.
+- **`E`**: The total dimensionless energy.
+- **`gnorm`**: The norm of the energy gradient (convergence indicator).
+
+### Compatibility Data (`*.mh`)
+A space-separated text file compatible with other MaMMoS tools. It records the magnetization history with columns: `B_ext [T]`, `J_parallel [T]`, `mx`, `my`, `mz`, and `E [J/m³]`.
+
+### Visualization Files (`*.vtu`)
+Snapshots of the magnetic state in VTK format, viewable in ParaView.
+**Filename Convention**: `state_cfgXXXXX_B+Y.YYYYe+00T.vtu`
+- **`cfgXXXXX`**: The configuration index (5 digits). The first file is always `cfg00000` (the initial state at $B_{start}$).
+- **`B+Y.YYYYe+00T`**: The external field value in Tesla at which the snapshot was taken.
+
+## 5. CLI Reference
 
 ### `src/loop.py` (Main Driver)
 The primary entry point for running hysteresis loop simulations.

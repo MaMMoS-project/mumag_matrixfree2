@@ -45,7 +45,7 @@ def test_krn_validation_and_header(tmp_path):
         f.write("0.0 0.0 0.0 0.0 0.0 0.0\n")
         f.write("0.0 0.0 0.0 0.0 0.0 0.0\n")
     
-    with pytest.raises(ValueError, match="has 3 rows, but the mesh only has 2 material groups"):
+    with pytest.raises(ValueError, match="has 3 rows, but the mesh only requires 2 material definitions"):
         loop.load_materials_krn(str(krn_path), G=2)
 
     # 4. Create a .krn with exactly 2 rows (should PASS)

@@ -434,6 +434,7 @@ def make_minimizer(
         ls_max_evals: int = 15,
         h: Array | None = None,
         mfinal: float | None = None,
+        Js_ref: float = 1.0,
         verbose: bool = True,
     ) -> tuple[Array, Array, dict[str, Any]]:
         """Minimize the micromagnetic energy using BB and line search.
@@ -477,12 +478,9 @@ def make_minimizer(
                 B_norm > 1e-20, B_ext / B_norm, jnp.array([0.0, 0.0, 1.0])
             )
 
-        def check_mfinal(m_current: Array) -> bool:
-            if mfinal is None:
-                return False
+        def get_m_par(m_current: Array) -> float:
             # Volume averaged m parallel to h
-            m_avg_par = jnp.sum(jnp.dot(m_current, h_jax) * M_nodal) / V_mag
-            return m_avg_par <= mfinal
+            return float(jnp.sum(jnp.dot(m_current, h_jax) * M_nodal) / V_mag)
 
         # Derived Poisson base tolerance: must satisfy all stopping criteria
         cg_tol_base = float(min(cg_tol, tau_f * 0.1, eps_a * 0.1))
@@ -532,8 +530,35 @@ def make_minimizer(
 
             history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 0.0})
 
-            if verbose:
-                print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}")
+            if mfinal is not None and get_m_par(state.m) <= mfinal:
+                if verbose:
+                    mh_tesla = get_m_par(state.m) * Js_ref
+                    print(
+                        f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                        f"mh={mh_tesla:+.4f} T"
+                    )
+                    print(f"[LS {k:03d}] mfinal reached, stopping early.")
+                return (
+                    state.m,
+                    U,
+                    {
+                        "E": float(E),
+                        "gnorm": gnorm_inf,
+                        "iters": float(k),
+                        "mfinal_reached": True,
+                        "history": history,
+                        "t_ls": t_ls_total,
+                        "t_bb": t_bb_total,
+                    },
+                )
+
+            if verbose and (k % 10 == 0):
+                mh_tesla = get_m_par(state.m) * Js_ref
+                print(
+                    f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                    f"mh={mh_tesla:+.4f} T"
+                )
+
             if converged:
                 t_ls_total += time.time() - start_ls
                 if verbose:
@@ -591,8 +616,13 @@ def make_minimizer(
         for k in range(gamma, max_iter):
             start_bb = time.time()
 
-            if check_mfinal(state.m):
+            if mfinal is not None and get_m_par(state.m) <= mfinal:
                 if verbose:
+                    mh_tesla = get_m_par(state.m) * Js_ref
+                    print(
+                        f"[BB {k:03d}] E={float(E_prev):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                        f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
+                    )
                     print(f"[BB {k:03d}] mfinal reached, stopping early.")
                 return (
                     state.m,
@@ -622,9 +652,10 @@ def make_minimizer(
             history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 1.0})
 
             if verbose and (k % 10 == 0 or converged):
+                mh_tesla = get_m_par(state.m) * Js_ref
                 print(
                     f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                    f"tau={float(state.tau):.3e}"
+                    f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
                 )
 
             t_bb_total += time.time() - start_bb

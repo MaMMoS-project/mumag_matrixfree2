@@ -103,19 +103,21 @@ def compute_grad_phi_from_JinvT(JinvT: np.ndarray) -> np.ndarray:
 
 
 def load_materials_krn(
-    krn_path: str, G: int, mesh_unit: float = 1e-9
+    krn_path: str, G: int, mesh_unit: float = 1e-9, shell_added: bool = False
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Expects columns: theta, phi, K1, K2, Js, A, ...
-    If the mesh has more material groups than the file has rows,
-    the additional groups are initialized as air (Js=0).
+    
+    If shell_added is True, the last material group (G) is treated as air 
+    automatically and should not have a line in the .krn file.
 
     Args:
         krn_path (str): Path to the .krn file.
         G (int): Number of material groups in the mesh.
         mesh_unit (float, optional): Physical length of one mesh unit in meters.
             Used to scale the exchange constant A. Defaults to 1e-9 (nm).
+        shell_added (bool): If True, group G is air and not in the .krn file.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
@@ -126,6 +128,22 @@ def load_materials_krn(
         data = data[None, :]
 
     n_rows = data.shape[0]
+    
+    # Required rows in .krn
+    G_required = G - 1 if shell_added else G
+
+    # strict material id check
+    if n_rows < G_required:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh has {G} "
+            f"material groups ({'including' if shell_added else 'no'} added airbox). "
+            f"The .krn file must have {G_required} rows."
+        )
+    if n_rows > G_required:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh only "
+            f"requires {G_required} material definitions. Unused lines are not allowed."
+        )
 
     # Initialize arrays for G material groups
     A = np.zeros(G, dtype=np.float64)
@@ -134,22 +152,8 @@ def load_materials_krn(
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0  # default easy axis along z
 
-    # strict material id check
-    if n_rows < G:
-        raise ValueError(
-            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh has {G} "
-            "material groups. Every material ID in the mesh must have a "
-            "corresponding line in the .krn file."
-        )
-    if n_rows > G:
-        raise ValueError(
-            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh only "
-            f"has {G} material groups. Unused lines in the .krn file are "
-            "not allowed."
-        )
-
-    # All material groups will be filled
-    n_fill = G
+    # Only fill up to what we have in the file (G_required)
+    n_fill = G_required
 
     theta = data[:n_fill, 0]
     phi = data[:n_fill, 1]
@@ -239,7 +243,11 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
 
 
 def load_materials(
-    mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9
+    mat_path: str | None,
+    G: int,
+    mesh_path: str | None = None,
+    mesh_unit: float = 1e-9,
+    shell_added: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load intrinsic magnetic properties for G materials.
 
@@ -254,6 +262,7 @@ def load_materials(
         mesh_path (str | None): Path to the mesh file (for discovery).
         mesh_unit (float, optional): Length of one mesh unit in meters.
             Defaults to 1e-9.
+        shell_added (bool): If True, group G is air automatically.
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: (A, K1, Js,
@@ -261,14 +270,18 @@ def load_materials(
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
-        return load_materials_krn(mat_path, G, mesh_unit=mesh_unit)
+        return load_materials_krn(
+            mat_path, G, mesh_unit=mesh_unit, shell_added=shell_added
+        )
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
         krn_path = Path(mesh_path).with_suffix(".krn")
         if krn_path.exists():
             print(f"[materials] Found auto-krn: {krn_path}")
-            return load_materials_krn(str(krn_path), G, mesh_unit=mesh_unit)
+            return load_materials_krn(
+                str(krn_path), G, mesh_unit=mesh_unit, shell_added=shell_added
+            )
 
     # Priority 3: Default (NdFeB-like)
     A_scale = (1.0 / mesh_unit) ** 2
@@ -513,7 +526,9 @@ def main() -> None:
         if mat_id.min() == 0:
             mat_id = mat_id + 1
 
+    shell_added = False
     if args.add_shell:
+        shell_added = True
         tmp_npz = Path(args.mesh).with_suffix(".tmp_body.npz")
         np.savez(
             tmp_npz,
@@ -554,7 +569,11 @@ def main() -> None:
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
     A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(
-        args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
+        args.materials,
+        G,
+        mesh_path=args.mesh,
+        mesh_unit=mesh_unit,
+        shell_added=shell_added,
     )
 
     # Use volume from compute_volume_JinvT later, but we need V_mag now or soon.
