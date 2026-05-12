@@ -1,0 +1,143 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\geometry{a4paper, margin=1in}
+
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegray},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{Implementation of Bunge (Z-X-Z) Passive Intrinsic Rotations}
+\author{MaMMoS-MuMag Project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+As per standard crystallographic conventions, grain orientations in MaMMoS-MuMag are implemented using the \textbf{Bunge (Z-X-Z) passive intrinsic} standard. This convention ensures compatibility with experimental data (e.g., EBSD) and provides a clear mapping between the laboratory coordinate system and the local crystal frame.
+
+\section{The Bunge Orientation Matrix}
+The orientation of a grain is described by three Euler angles $(\phi_1, \Phi, \phi_2)$. The orientation matrix $R$ (also known as the $g$-matrix) transforms a vector from the laboratory frame $\mathbf{v}_l$ to the crystal frame $\mathbf{v}_c$:
+\begin{equation}
+    \mathbf{v}_c = R \mathbf{v}_l
+\end{equation}
+For the Z-X-Z passive intrinsic convention, $R$ is defined as the product of three successive rotations:
+\begin{enumerate}
+    \item A rotation $\phi_1$ about the laboratory $Z$-axis.
+    \item A rotation $\Phi$ about the intermediate $X'$-axis.
+    \item A rotation $\phi_2$ about the intermediate $Z''$-axis.
+\end{enumerate}
+
+The resulting matrix $R$ is:
+\begin{equation}
+R = \begin{bmatrix} 
+c_1 c_2 - s_1 s_2 c_P & s_1 c_2 + c_1 s_2 c_P & s_2 s_P \\ 
+-c_1 s_2 - s_1 c_2 c_P & -s_1 s_2 + c_1 c_2 c_P & c_2 s_P \\ 
+s_1 s_P & -c_1 s_P & c_P 
+\end{bmatrix}
+\end{equation}
+where $c_i = \cos(\text{angle}_i)$ and $s_i = \sin(\text{angle}_i)$.
+
+\section{Physical Interpretation of Matrix Rows}
+In the passive Bunge convention, the orientation matrix $R$ transforms laboratory coordinates to crystal coordinates. Crucially, the \textbf{rows} of this matrix represent the unit vectors of the local crystal axes expressed in laboratory coordinates:
+\begin{itemize}
+    \item \textbf{Row 0}: Direction cosines of the crystal $x$-axis: $[\cos(x_c, x), \cos(x_c, y), \cos(x_c, z)]$
+    \item \textbf{Row 1}: Direction cosines of the crystal $y$-axis: $[\cos(y_c, x), \cos(y_c, y), \cos(y_c, z)]$
+    \item \textbf{Row 2}: Direction cosines of the crystal $z$-axis ($c$-axis): $[\cos(c, x), \cos(c, y), \cos(c, z)]$
+\end{itemize}
+
+Expanding the last row (Row 2), we find the direction cosines for the easy axis. Starting from the three basic passive rotation matrices:
+\begin{equation*}
+    R_{z1} = \begin{bmatrix} c_1 & s_1 & 0 \\ -s_1 & c_1 & 0 \\ 0 & 0 & 1 \end{bmatrix}, \quad
+    R_{x} = \begin{bmatrix} 1 & 0 & 0 \\ 0 & c_P & s_P \\ 0 & -s_P & c_P \end{bmatrix}, \quad
+    R_{z2} = \begin{bmatrix} c_2 & s_2 & 0 \\ -s_2 & c_2 & 0 \\ 0 & 0 & 1 \end{bmatrix}
+\end{equation*}
+
+The orientation matrix is $R = R_{z2} R_{x} R_{z1}$. To find the third row (Row 2), we first multiply $R_{x}$ and $R_{z1}$ to get the intermediate matrix $M$. The third row of $M$ is:
+\begin{align*}
+    M_{31} &= (0)c_1 + (-s_P)(-s_1) + (c_P)(0) = s_1 s_P \\
+    M_{32} &= (0)s_1 + (-s_P)(c_1) + (c_P)(0) = -c_1 s_P \\
+    M_{33} &= (0)(0) + (-s_P)(0) + (c_P)(1) = c_P
+\end{align*}
+
+Because the third row of $R_{z2}$ is $[0, 0, 1]$, the third row of the final matrix $R$ is identical to the third row of $M$:
+\begin{align}
+    \mathbf{e}_z \cdot \hat{\mathbf{x}} &= \sin\phi_1 \sin\Phi \\
+    \mathbf{e}_z \cdot \hat{\mathbf{y}} &= -\cos\phi_1 \sin\Phi \\
+    \mathbf{e}_z \cdot \hat{\mathbf{z}} &= \cos\Phi
+\end{align}
+This mapping ensures that the $c$-axis is correctly oriented in laboratory space as defined by the Bunge angles.
+
+\section{Implementation in \texttt{src/loop.py}}
+The function \texttt{bunge\_to\_axes} implements this matrix exactly.
+\begin{lstlisting}[language=Python]
+# src/loop.py
+R = np.array([
+    [c1 * c2 - s1 * s2 * cP,   s1 * c2 + c1 * s2 * cP,   s2 * sP],  # Row 0 (ex)
+    [-c1 * s2 - s1 * c2 * cP, -s1 * s2 + c1 * c2 * cP,   c2 * sP],  # Row 1 (ey)
+    [s1 * sP,                 -c1 * sP,                  cP     ]   # Row 2 (ez)
+], dtype=np.float64)
+\end{lstlisting}
+
+\section{Local Frame Projection in Kernels}
+The rotation information is stored in the \texttt{axes\_lookup} table. During energy and gradient calculations in \texttt{src/energy\_kernels.py}, the laboratory magnetization $\mathbf{m}$ is projected onto these local axes.
+
+\subsection{Axis Retrieval}
+For each element, the kernel retrieves the crystal unit vectors by indexing the \textbf{rows} of the orientation matrix. In Python/JAX, indices 0, 1, and 2 correspond to Row 0, 1, and 2 respectively:
+\begin{lstlisting}[language=Python]
+# src/energy_kernels.py
+# axes_c shape: (chunk_elems, 3, 3)
+# axes_c[:, row_index, :]
+axes_c = axes_lookup[mat_c - 1]
+ex_c = axes_c[:, 0, :]  # Index 0: Crystal X in Lab
+ey_c = axes_c[:, 1, :]  # Index 1: Crystal Y in Lab
+ez_c = axes_c[:, 2, :]  # Index 2: Crystal Z in Lab (c-axis)
+\end{lstlisting}
+This implementation correctly maps the derived direction cosines to the calculation of anisotropy energy.
+
+\subsection{Energy Calculation}
+The local frame components $(m_x, m_y, m_z)$ are calculated via dot products:
+\begin{align}
+    m_z &= \mathbf{m} \cdot \mathbf{e}_z \quad \text{(Projection onto uniaxial easy axis)} \\
+    m_x &= \mathbf{m} \cdot \mathbf{e}_x \quad \text{(Projection onto orthorhombic X)} \\
+    m_y &= \mathbf{m} \cdot \mathbf{e}_y \quad \text{(Projection onto orthorhombic Y)}
+\end{align}
+
+These projected values are then used to compute the anisotropy contributions:
+\begin{itemize}
+    \item \textbf{Uniaxial}: $E_{\text{un}} \propto -K_1 m_z^2$
+    \item \textbf{Orthorhombic}: $E_{\text{or}} \propto K_x m_x^2 + K_y m_y^2$
+\end{itemize}
+
+\section{Conclusion}
+By explicitly projecting the magnetization onto the unit vectors derived from the Bunge Orientation Matrix, the implementation ensures that all anisotropy terms rotate correctly with the grain. This approach is mathematically equivalent to rotating the laboratory magnetization into the crystal frame, calculating the energy, and then rotating the resulting gradient back to the laboratory frame.
+
+\end{document}
