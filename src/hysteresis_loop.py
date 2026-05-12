@@ -379,7 +379,8 @@ def run_hysteresis_loop(
 
         if info.get("mfinal_reached", False):
             print(
-                f"\n[loop] mfinal reached ({mx:.4f} <= {params.mfinal:.4f}). "
+                f"\n[loop] mfinal reached ({J_tesla:.4f} T <= "
+                f"{params.mfinal * params.Js_ref:.4f} T). "
                 "Stopping sweep."
             )
             break
