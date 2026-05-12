@@ -47,10 +47,12 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import jax
-import jax.numpy as jnp
-from jax import lax
 
-from fem_utils import (
+jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp  # noqa: E402
+from jax import lax  # noqa: E402
+
+from fem_utils import (  # noqa: E402
     TetGeom,
     assemble_scatter,
     assemble_segment_sum,

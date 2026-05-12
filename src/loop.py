@@ -134,8 +134,22 @@ def load_materials_krn(
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0  # default easy axis along z
 
-    # Only fill up to what we have in the file
-    n_fill = min(G, n_rows)
+    # strict material id check
+    if n_rows < G:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh has {G} "
+            "material groups. Every material ID in the mesh must have a "
+            "corresponding line in the .krn file."
+        )
+    if n_rows > G:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh only "
+            f"has {G} material groups. Unused lines in the .krn file are "
+            "not allowed."
+        )
+
+    # All material groups will be filled
+    n_fill = G
 
     theta = data[:n_fill, 0]
     phi = data[:n_fill, 1]
@@ -179,12 +193,14 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         f = config["field"]
         # Support both 'h' csv and individual 'hx','hy','hz'
         if "h" in f:
-            overrides["h_dir"] = np.array([float(x) for x in f["h"].split(",")])
+            h_vec = np.array([float(x) for x in f["h"].split(",")])
+            overrides["h_dir"] = h_vec / (np.linalg.norm(h_vec) + 1e-30)
         elif any(k in f for k in ("hx", "hy", "hz")):
             hx = float(f.get("hx", 0.0))
             hy = float(f.get("hy", 0.0))
             hz = float(f.get("hz", 0.0))
-            overrides["h_dir"] = np.array([hx, hy, hz])
+            h_vec = np.array([hx, hy, hz])
+            overrides["h_dir"] = h_vec / (np.linalg.norm(h_vec) + 1e-30)
 
         if "hstart" in f:
             overrides["B_start"] = float(f["hstart"])
@@ -199,20 +215,25 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
 
-    if "m" in config:
-        m_sec = config["m"]
+    if "initial state" in config:
+        m_sec = config["initial state"]
         if all(k in m_sec for k in ("mx", "my", "mz")):
             mx = float(m_sec["mx"])
             my = float(m_sec["my"])
             mz = float(m_sec["mz"])
-            overrides["m0_dir"] = f"{mx},{my},{mz}"
+            m0_vec = np.array([mx, my, mz])
+            m0_vec /= (np.linalg.norm(m0_vec) + 1e-30)
+            overrides["m0_dir"] = f"{m0_vec[0]},{m0_vec[1]},{m0_vec[2]}"
 
     if "minimizer" in config:
-        m = config["minimizer"]
-        if "tol_fun" in m:
-            overrides["tau_f"] = float(m["tol_fun"])
-        if "precond_iter" in m:
-            overrides["cg_maxiter"] = int(m["precond_iter"])
+        m_min = config["minimizer"]
+        if "tol_fun" in m_min:
+            overrides["tau_f"] = float(m_min["tol_fun"])
+
+    if "poisson" in config:
+        p = config["poisson"]
+        if "cg_maxiter" in p:
+            overrides["cg_maxiter"] = int(p["cg_maxiter"])
 
     return overrides
 
@@ -637,13 +658,15 @@ def main() -> None:
 
     # Apply overrides
     if p2_overrides:
-        # Scale field values by Js_ref
+        # Scale field values by Js_ref (they are provided in Tesla)
         if "B_start" in p2_overrides:
             p2_overrides["B_start"] /= Js_ref
         if "B_end" in p2_overrides:
             p2_overrides["B_end"] /= Js_ref
         if "dB" in p2_overrides:
             p2_overrides["dB"] /= Js_ref
+        if "mfinal" in p2_overrides:
+            p2_overrides["mfinal"] /= Js_ref
         if "mstep" in p2_overrides:
             p2_overrides["mstep"] /= Js_ref
 
