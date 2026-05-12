@@ -51,6 +51,8 @@ class LoopParams:
         verbose (bool): If True, print iteration details.
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
+        mfinal (float | None): Magnetization threshold for early stopping.
+        mstep (float | None): Magnetization change threshold for saving snapshots.
     """
 
     h_dir: np.ndarray
@@ -80,6 +82,8 @@ class LoopParams:
     verbose: bool = False
     Js_ref: float = 1.0
     cg_maxiter: int = 400
+    mfinal: float | None = None
+    mstep: float | None = None
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -271,6 +275,11 @@ def run_hysteresis_loop(
     total_time = 0.0
     U = None
     history = []
+    
+    # Track magnetization for mstep snapshots
+    J_par_last_saved = None
+    config_idx = 0
+
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
@@ -292,6 +301,8 @@ def run_hysteresis_loop(
             ls_c=params.ls_c,
             ls_s0=params.ls_s0,
             ls_max_evals=params.ls_max_evals,
+            h=h,
+            mfinal=params.mfinal,
             verbose=params.verbose,
         )
         # Accurate timing: wait for GPU to finish
@@ -321,28 +332,43 @@ def run_hysteresis_loop(
         # Record history row: (B_ext_T, J_par_T, mx, my, mz, E_si)
         history.append([B_tesla, J_tesla, mx, my, mz, E_si])
 
+        # Snapshot trigger logic
+        should_save = False
+        if J_par_last_saved is None:
+            # Always save the very first step
+            should_save = True
+        elif params.mstep is not None:
+            if abs(Jpar - J_par_last_saved) >= params.mstep:
+                should_save = True
+        elif params.snapshot_every > 0 and (step_idx % params.snapshot_every) == 0:
+            should_save = True
+
+        if should_save:
+            if J_par_last_saved is not None:
+                config_idx += 1
+            J_par_last_saved = Jpar
+            
+            if params.snapshot_every > 0:
+                vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
+                write_vtu_tetra(
+                    vtu_path,
+                    points,
+                    np.array(geom.conn),
+                    point_data={
+                        "m": np.array(m).astype(np.float32),
+                        "U": np.array(U).astype(np.float32),
+                    },
+                    cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
+                )
+
         append_hysteresis_row(
             csv_path,
+            config_idx,
             B_tesla,
             J_tesla,
             float(info.get("E", np.nan)),
             float(info.get("gnorm", np.nan)),
         )
-
-        if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
-            vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
-            # m_np is only needed for VTU, we move it inside the if
-            m_np = np.array(m)
-            write_vtu_tetra(
-                vtu_path,
-                points,
-                np.array(geom.conn),
-                point_data={
-                    "m": m_np.astype(np.float32),
-                    "U": np.array(U).astype(np.float32),
-                },
-                cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
-            )
 
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
@@ -350,6 +376,13 @@ def run_hysteresis_loop(
             f"it={info.get('iters', 0):.0f}  "
             f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
         )
+
+        if info.get("mfinal_reached", False):
+            print(
+                f"\n[loop] mfinal reached ({mx:.4f} <= {params.mfinal:.4f}). "
+                "Stopping sweep."
+            )
+            break
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")
     return {

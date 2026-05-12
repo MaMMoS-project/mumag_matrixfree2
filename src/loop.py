@@ -194,8 +194,18 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["dB"] = float(f["hstep"])
         if "mfinal" in f:
             overrides["mfinal"] = float(f["mfinal"])
+        if "mstep" in f:
+            overrides["mstep"] = float(f["mstep"])
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
+
+    if "m" in config:
+        m_sec = config["m"]
+        if all(k in m_sec for k in ("mx", "my", "mz")):
+            mx = float(m_sec["mx"])
+            my = float(m_sec["my"])
+            mz = float(m_sec["mz"])
+            overrides["m0_dir"] = f"{mx},{my},{mz}"
 
     if "minimizer" in config:
         m = config["minimizer"]
@@ -580,9 +590,11 @@ def main() -> None:
                 x_nodes=None,
             )
 
-    # initial magnetisation
-    if args.m0_dir:
-        m0_vec = np.array([float(x) for x in args.m0_dir.split(",")], dtype=np.float64)
+    # Initial magnetization
+    # Priority: p2 override > CLI --m0-dir > CLI --h-dir
+    m0_str = p2_overrides.get("m0_dir", args.m0_dir)
+    if m0_str:
+        m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
     else:
         m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
 
@@ -632,9 +644,12 @@ def main() -> None:
             p2_overrides["B_end"] /= Js_ref
         if "dB" in p2_overrides:
             p2_overrides["dB"] /= Js_ref
+        if "mstep" in p2_overrides:
+            p2_overrides["mstep"] /= Js_ref
 
-        # Remove mesh parameters that are not in LoopParams
+        # Remove parameters handled separately
         p2_overrides.pop("mesh_unit", None)
+        p2_overrides.pop("m0_dir", None)
 
         params_dict.update(p2_overrides)
 
