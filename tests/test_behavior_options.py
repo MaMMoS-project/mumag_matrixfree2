@@ -33,7 +33,7 @@ def test_krn_validation_and_header(tmp_path):
     # 2. Create a .krn with a header and only 1 row (should FAIL)
     krn_path = tmp_path / "test_mesh.krn"
     with open(krn_path, "w") as f:
-        f.write("# theta phi K1 K2 Js A\n")
+        f.write("# theta phi K1 K1p Js A\n")
         f.write("0.0 0.0 4.3e6 0.0 1.6 7.7e-12\n")
     
     with pytest.raises(ValueError, match="has 1 rows, but the mesh has 2 material groups"):
@@ -55,7 +55,8 @@ def test_krn_validation_and_header(tmp_path):
         f.write("# line 2\n")
         f.write("0.0 0.0 1.0e6 0.0 1.0 1.0e-12\n")
     
-    A, K1, Js, k_easy = loop.load_materials_krn(str(krn_path), G=2)
+    # Returns 5 values in orthorhombic branch: A, K1, K1p, Js, axes_lookup
+    A, K1, K1p, Js, axes = loop.load_materials_krn(str(krn_path), G=2)
     assert A.shape == (2,)
     assert Js[1] == 1.0
 
@@ -137,11 +138,16 @@ def test_mfinal_functional(tmp_path):
     # 2. Material: Tilted easy axis (15 deg from X) to ensure rotation.
     Js_lookup = np.array([1.0])
     K1_lookup = np.array([5.0]) 
+    K1p_lookup = np.array([0.0])
     A_lookup = np.array([0.0])
+    
     # Easy axis at 15 deg from X towards Z
     angle = np.deg2rad(15)
-    k_easy = np.array([np.cos(angle), 0.0, np.sin(angle)])
-    k_easy_lookup = np.array([k_easy])
+    ez = np.array([np.cos(angle), 0.0, np.sin(angle)])
+    ex = np.array([-np.sin(angle), 0.0, np.cos(angle)])
+    ey = np.array([0.0, 1.0, 0.0])
+    axes_lookup = np.stack([ex, ey, ez], axis=0)[None, ...] # (1, 3, 3)
+
     M_nodal = compute_node_volumes(geom, chunk_elems=1)
     
     # 3. Parameters: Sweep B_z from 10.0 down to 0.0
@@ -156,7 +162,7 @@ def test_mfinal_functional(tmp_path):
     
     res = run_hysteresis_loop(
         points=knt, geom=geom, A_lookup=A_lookup, K1_lookup=K1_lookup,
-        Js_lookup=Js_lookup, k_easy_lookup=k_easy_lookup, m0=m0,
+        K1p_lookup=K1p_lookup, Js_lookup=Js_lookup, axes_lookup=axes_lookup, m0=m0,
         params=params, V_mag=float(np.sum(volume)),
         node_volumes=M_nodal, M_nodal=M_nodal
     )
@@ -183,9 +189,12 @@ def test_mstep_functional(tmp_path):
     # Material: Tilted easy axis to ensure mz changes with Bz
     Js_lookup = np.array([1.0])
     K1_lookup = np.array([5.0])
+    K1p_lookup = np.array([0.0])
     angle = np.deg2rad(15)
-    k_easy = np.array([np.cos(angle), 0.0, np.sin(angle)])
-    k_easy_lookup = np.array([k_easy])
+    ez = np.array([np.cos(angle), 0.0, np.sin(angle)])
+    ex = np.array([-np.sin(angle), 0.0, np.cos(angle)])
+    ey = np.array([0.0, 1.0, 0.0])
+    axes_lookup = np.stack([ex, ey, ez], axis=0)[None, ...]
 
     # Sweep Bz: 10.0 down to 0.0 in large steps
     # Set mstep = 0.1
@@ -196,8 +205,8 @@ def test_mstep_functional(tmp_path):
     
     m0 = np.tile(np.array([0.0, 0.0, 1.0]), (4, 1))
     run_hysteresis_loop(
-        points=knt, geom=geom, A_lookup=np.array([0.0]), K1_lookup=K1_lookup,
-        Js_lookup=Js_lookup, k_easy_lookup=k_easy_lookup, m0=m0,
+        points=knt, geom=geom, A_lookup=np.array([0.0]), K1_lookup=np.array([5.0]),
+        K1p_lookup=K1p_lookup, Js_lookup=np.array([1.0]), axes_lookup=axes_lookup, m0=m0,
         params=params, V_mag=float(np.sum(volume)),
         node_volumes=M_nodal, M_nodal=M_nodal
     )
@@ -207,12 +216,7 @@ def test_mstep_functional(tmp_path):
     data = np.genfromtxt(csv_path, delimiter=",", skip_header=1)
     configs = data[:, 0]
     
-    # Init state (config 0)
-    # Then each step where mz changes by >= 0.1 should increment config.
-    # Given K1=5.0 and tilted axis, mz will definitely drop from ~1.0 at 10T 
-    # to ~sin(15)=0.25 at 0T.
-    # Total change is ~0.75, so with mstep=0.1 we expect several config changes.
-    assert configs[0] == 0
+    assert configs[0] == 0 # Init state
     assert configs[-1] > 0
     # Config indices should be non-decreasing
     assert np.all(np.diff(configs) >= 0)
