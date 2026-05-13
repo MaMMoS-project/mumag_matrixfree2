@@ -420,7 +420,7 @@ def run_hysteresis_loop(
             if J_par_last_saved is not None:
                 config_idx += 1
             J_par_last_saved = Jpar
-            
+
             if params.snapshot_every > 0:
                 vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla:+.4e}T.vtu"
                 write_vtu_tetra(

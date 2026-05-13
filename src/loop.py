@@ -108,8 +108,8 @@ def load_materials_krn(
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Expects columns: theta, phi, K1, K2, Js, A, ...
-    
-    If shell_added is True, the last material group (G) is treated as air 
+
+    If shell_added is True, the last material group (G) is treated as air
     automatically and should not have a line in the .krn file.
 
     Args:
@@ -128,7 +128,7 @@ def load_materials_krn(
         data = data[None, :]
 
     n_rows = data.shape[0]
-    
+
     # Required rows in .krn
     G_required = G - 1 if shell_added else G
 
@@ -226,7 +226,7 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             my = float(m_sec["my"])
             mz = float(m_sec["mz"])
             m0_vec = np.array([mx, my, mz])
-            m0_vec /= (np.linalg.norm(m0_vec) + 1e-30)
+            m0_vec /= np.linalg.norm(m0_vec) + 1e-30
             overrides["m0_dir"] = f"{m0_vec[0]},{m0_vec[1]},{m0_vec[2]}"
 
     if "minimizer" in config:
