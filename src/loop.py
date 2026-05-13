@@ -273,6 +273,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["mfinal"] = float(f["mfinal"])
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
+        if "no_demag" in f:
+            overrides["no_demag"] = f.getboolean("no_demag")
 
     if "minimizer" in config:
         m = config["minimizer"]
@@ -466,6 +468,12 @@ def main() -> None:
         type=float,
         default=1e-12,
         help="Tikhonov regularization constant for the Poisson operator diagonal.",
+    )
+
+    ap.add_argument(
+        "--no-demag",
+        action="store_true",
+        help="Disable magnetostatic (demagnetization) energy and skip Poisson solving.",
     )
 
     # loop settings
@@ -701,6 +709,7 @@ def main() -> None:
         "snapshot_every": int(args.snapshot_every),
         "verbose": args.verbose,
         "Js_ref": float(Js_ref),
+        "no_demag": args.no_demag,
     }
 
     # Apply overrides
@@ -740,6 +749,7 @@ def main() -> None:
         cg_tol=float(args.cg_tol),
         poisson_reg=float(args.poisson_reg),
         boundary_mask=boundary_mask,
+        no_demag=params.no_demag,
     )
 
     # Write .mh file for mammos-mumag compatibility

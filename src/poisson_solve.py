@@ -456,6 +456,7 @@ def make_solve_U(
     enforce_zero_mean: bool | None = None,
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
+    no_demag: bool = False,
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U.
 
@@ -482,6 +483,17 @@ def make_solve_U(
     Returns:
         Callable: solve_U(m, x0, tol, return_info) -> U or (U, iterations, residual).
     """
+    if no_demag:
+
+        def solve_U_dummy(m, x0=None, tol=None, return_info=False):
+            N = m.shape[0]
+            U = jnp.zeros(N, dtype=m.dtype)
+            if return_info:
+                return U, 0, 0.0
+            return U
+
+        return solve_U_dummy
+
     if enforce_zero_mean is None:
         enforce_zero_mean = boundary_mask is None
 

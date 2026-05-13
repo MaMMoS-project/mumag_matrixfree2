@@ -51,6 +51,7 @@ class LoopParams:
         verbose (bool): If True, print iteration details.
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
+        no_demag (bool): If True, disable magnetostatic energy calculation.
     """
 
     h_dir: np.ndarray
@@ -80,6 +81,7 @@ class LoopParams:
     verbose: bool = False
     Js_ref: float = 1.0
     cg_maxiter: int = 400
+    no_demag: bool = False
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -206,6 +208,7 @@ def run_hysteresis_loop(
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     boundary_mask: jnp.ndarray | None = None,
+    no_demag: bool = False,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -264,6 +267,7 @@ def run_hysteresis_loop(
         poisson_reg=poisson_reg,
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
+        no_demag=no_demag,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)

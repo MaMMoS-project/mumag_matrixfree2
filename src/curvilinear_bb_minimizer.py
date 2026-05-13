@@ -204,6 +204,7 @@ def make_minimizer(
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
     boundary_mask: Array | None = None,
+    no_demag: bool = False,
 ) -> Callable[..., tuple[Array, Array, dict[str, Any]]]:
     """Create a high-level micromagnetic minimizer.
 
@@ -265,6 +266,7 @@ def make_minimizer(
         enforce_zero_mean=True,
         boundary_mask=boundary_mask,
         assembly=energy_assembly,
+        no_demag=no_demag,
     )
 
     def jax_armijo_line_search(
