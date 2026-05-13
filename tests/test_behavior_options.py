@@ -23,7 +23,10 @@ def test_jax_x64_enabled():
 
 
 def test_krn_validation_and_header(tmp_path):
-    """Test that .krn files support headers and enforce strict line counts (#20, #26)."""
+    """Test that .krn files support headers and enforce strict line counts.
+
+    Reference: #20, #26.
+    """
     # 1. Create a dummy mesh with 2 material groups
     mesh_path = tmp_path / "test_mesh.npz"
     knt = np.zeros((4, 3))

@@ -448,18 +448,19 @@ def make_minimizer(
             max_iter (int, optional): maximum iterations. Defaults to 200.
             tau_f (float): relative energy tolerance.
             eps_a (float): absolute tangent gradient tolerance.
-            tau0 (float): Initial step size.
-            tau_min (float): Minimum step size.
-            tau_max (float): Maximum step size.
-            ls_eta1 (float): Line search eta1.
-            ls_eta2 (float): Line search eta2.
-            ls_C (float): Line search C.
-            ls_c (float): Line search c.
-            ls_s0 (float): Line search s0.
-            ls_max_evals (int): Line search max_evals.
-            h (Array | None): unit vector of applied field direction.
-            mfinal (float | None): magnetization threshold for early stopping.
-            verbose (bool): logging toggle.
+            tau0 (float): initial step size for line search.
+            tau_min (float): minimum step size.
+            tau_max (float): maximum step size.
+            ls_eta1 (float): line search parameter eta1.
+            ls_eta2 (float): line search parameter eta2.
+            ls_C (float): line search parameter C.
+            ls_c (float): line search parameter c.
+            ls_s0 (float): line search parameter s0.
+            ls_max_evals (int): maximum line search evaluations.
+            h (Array | None): magnetic field for energy computation.
+            mfinal (float | None): final magnetization threshold for early stopping.
+            Js_ref (float): reference saturation magnetization for scaling.
+            verbose (bool): whether to print iteration progress.
 
         Returns:
             tuple[Array, Array, dict[str, Any]]: (m_final, U_final,
