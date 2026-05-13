@@ -25,6 +25,7 @@ run_simulation() {
     cd ${MODE}
     echo "Step 2: Running hysteresis loop simulation in ${MODE}..."
     python3 ../../src/loop.py cube_${L}nm \
+        --mesh ../cube_${L}nm.npz \
         --out-dir ../${OUT_DIR} \
         --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
         --verbose
