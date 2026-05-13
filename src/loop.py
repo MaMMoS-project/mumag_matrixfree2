@@ -149,19 +149,23 @@ def bunge_to_axes(phi1: float, Phi: float, phi2: float) -> np.ndarray:
 
 
 def load_materials_krn(
-    krn_path: str, G: int, mesh_unit: float = 1e-9
+    krn_path: str, G: int, mesh_unit: float = 1e-9, shell_added: bool = False
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read intrinsic magnetic properties from a MaMMoS .krn file.
 
     Supports two orientation formats:
-    - 2-angle header (6/8 columns): theta, phi, K1, K2, Js, A, ...
-    - 3-angle header (9+ columns): phi1, Phi, phi2, K1, K2, Js, A, ...
+    - 2-angle header (6/8 columns): theta, phi, K1, K1p, Js, A, ...
+    - 3-angle header (9+ columns): phi1, Phi, phi2, K1, K1p, Js, A, ...
+
+    If shell_added is True, the last material group (G) is treated as air
+    automatically and should not have a line in the .krn file.
 
     Args:
         krn_path (str): Path to the .krn file.
         G (int): Number of material groups in the mesh.
         mesh_unit (float, optional): Physical length of one mesh unit in meters.
             Used to scale the exchange constant A. Defaults to 1e-9 (nm).
+        shell_added (bool): If True, group G is air and not in the .krn file.
 
     Returns:
         tuple[
@@ -176,6 +180,22 @@ def load_materials_krn(
     n_rows = data.shape[0]
     n_cols = data.shape[1]
 
+    # Required rows in .krn
+    G_required = G - 1 if shell_added else G
+
+    # strict material id check
+    if n_rows < G_required:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh has {G} "
+            f"material groups ({'including' if shell_added else 'no'} added airbox). "
+            f"Every material ID in the mesh must have a corresponding line in the .krn file."
+        )
+    if n_rows > G_required:
+        raise ValueError(
+            f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh only "
+            f"requires {G_required} material definitions. Unused lines are not allowed."
+        )
+
     # Initialize arrays for G material groups
     A = np.zeros(G, dtype=np.float64)
     K1 = np.zeros(G, dtype=np.float64)
@@ -185,8 +205,8 @@ def load_materials_krn(
     for g in range(G):
         axes_lookup[g] = np.eye(3)
 
-    # Only fill up to what we have in the file
-    n_fill = min(G, n_rows)
+    # Only fill up to what we have in the file (G_required)
+    n_fill = G_required
 
     # Detection logic: Bunge Euler if >= 9 columns
     if n_cols >= 9:
@@ -210,24 +230,26 @@ def load_materials_krn(
         A_val = data[:n_fill, 5]
         for i in range(n_fill):
             # ez from spherical
-            ez = np.array([
-                np.sin(theta[i]) * np.cos(phi[i]),
-                np.sin(theta[i]) * np.sin(phi[i]),
-                np.cos(theta[i])
-            ])
+            ez = np.array(
+                [
+                    np.sin(theta[i]) * np.cos(phi[i]),
+                    np.sin(theta[i]) * np.sin(phi[i]),
+                    np.cos(theta[i]),
+                ]
+            )
             # Construct orthogonal ex, ey
             if abs(ez[0]) < 0.9:
                 ex = np.cross(ez, [1, 0, 0])
             else:
                 ex = np.cross(ez, [0, 1, 0])
-            ex /= (np.linalg.norm(ex) + 1e-30)
+            ex /= np.linalg.norm(ex) + 1e-30
             ey = np.cross(ez, ex)
             axes_lookup[i] = np.stack([ex, ey, ez], axis=0)
 
     A_scale = (1.0 / mesh_unit) ** 2
     A[:n_fill] = A_val * A_scale
 
-    return A, K1, Js, axes_lookup
+    return A, K1, K1p, Js, axes_lookup
 
 
 def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
@@ -256,12 +278,14 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         f = config["field"]
         # Support both 'h' csv and individual 'hx','hy','hz'
         if "h" in f:
-            overrides["h_dir"] = np.array([float(x) for x in f["h"].split(",")])
+            h_vec = np.array([float(x) for x in f["h"].split(",")])
+            overrides["h_dir"] = h_vec / (np.linalg.norm(h_vec) + 1e-30)
         elif any(k in f for k in ("hx", "hy", "hz")):
             hx = float(f.get("hx", 0.0))
             hy = float(f.get("hy", 0.0))
             hz = float(f.get("hz", 0.0))
-            overrides["h_dir"] = np.array([hx, hy, hz])
+            h_vec = np.array([hx, hy, hz])
+            overrides["h_dir"] = h_vec / (np.linalg.norm(h_vec) + 1e-30)
 
         if "hstart" in f:
             overrides["B_start"] = float(f["hstart"])
@@ -271,23 +295,42 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["dB"] = float(f["hstep"])
         if "mfinal" in f:
             overrides["mfinal"] = float(f["mfinal"])
+        if "mstep" in f:
+            overrides["mstep"] = float(f["mstep"])
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
         if "no_demag" in f:
             overrides["no_demag"] = f.getboolean("no_demag")
 
+    if "initial state" in config:
+        m_sec = config["initial state"]
+        if all(k in m_sec for k in ("mx", "my", "mz")):
+            mx = float(m_sec["mx"])
+            my = float(m_sec["my"])
+            mz = float(m_sec["mz"])
+            m0_vec = np.array([mx, my, mz])
+            m0_vec /= np.linalg.norm(m0_vec) + 1e-30
+            overrides["m0_dir"] = f"{m0_vec[0]},{m0_vec[1]},{m0_vec[2]}"
+
     if "minimizer" in config:
-        m = config["minimizer"]
-        if "tol_fun" in m:
-            overrides["tau_f"] = float(m["tol_fun"])
-        if "precond_iter" in m:
-            overrides["cg_maxiter"] = int(m["precond_iter"])
+        m_min = config["minimizer"]
+        if "tol_fun" in m_min:
+            overrides["tau_f"] = float(m_min["tol_fun"])
+
+    if "poisson" in config:
+        p = config["poisson"]
+        if "cg_maxiter" in p:
+            overrides["cg_maxiter"] = int(p["cg_maxiter"])
 
     return overrides
 
 
 def load_materials(
-    mat_path: str | None, G: int, mesh_path: str | None = None, mesh_unit: float = 1e-9
+    mat_path: str | None,
+    G: int,
+    mesh_path: str | None = None,
+    mesh_unit: float = 1e-9,
+    shell_added: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load intrinsic magnetic properties for G materials.
 
@@ -301,6 +344,8 @@ def load_materials(
         G (int): Number of material groups.
         mesh_path (str | None): Path to the mesh file (for discovery).
         mesh_unit (float, optional): Length of one mesh unit in meters.
+            Defaults to 1e-9.
+        shell_added (bool): If True, group G is air automatically.
 
     Returns:
         tuple[
@@ -309,14 +354,18 @@ def load_materials(
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
-        return load_materials_krn(mat_path, G, mesh_unit=mesh_unit)
+        return load_materials_krn(
+            mat_path, G, mesh_unit=mesh_unit, shell_added=shell_added
+        )
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
         krn_path = Path(mesh_path).with_suffix(".krn")
         if krn_path.exists():
             print(f"[materials] Found auto-krn: {krn_path}")
-            return load_materials_krn(str(krn_path), G, mesh_unit=mesh_unit)
+            return load_materials_krn(
+                str(krn_path), G, mesh_unit=mesh_unit, shell_added=shell_added
+            )
 
     # Priority 3: Default (NdFeB-like)
     A_scale = (1.0 / mesh_unit) ** 2
@@ -418,7 +467,7 @@ def main() -> None:
         type=str,
         default=None,
         help="Path to a .krn file with intrinsic properties "
-        "(theta, phi, K1, K2, Js, A, ...) per material group.",
+        "(theta, phi, K1, K1p, Js, A, ...) per material group.",
     )
 
     # preconditioning
@@ -569,7 +618,9 @@ def main() -> None:
         if mat_id.min() == 0:
             mat_id = mat_id + 1
 
+    shell_added = False
     if args.add_shell:
+        shell_added = True
         tmp_npz = Path(args.mesh).with_suffix(".tmp_body.npz")
         np.savez(
             tmp_npz,
@@ -610,7 +661,11 @@ def main() -> None:
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
     A_lookup, K1_lookup, K1p_lookup, Js_lookup, axes_lookup = load_materials(
-        args.materials, G, mesh_path=args.mesh, mesh_unit=mesh_unit
+        args.materials,
+        G,
+        mesh_path=args.mesh,
+        mesh_unit=mesh_unit,
+        shell_added=shell_added,
     )
 
     # Use volume from compute_volume_JinvT later, but we need V_mag now or soon.
@@ -668,9 +723,11 @@ def main() -> None:
                 x_nodes=None,
             )
 
-    # initial magnetisation
-    if args.m0_dir:
-        m0_vec = np.array([float(x) for x in args.m0_dir.split(",")], dtype=np.float64)
+    # Initial magnetization
+    # Priority: p2 override > CLI --m0-dir > CLI --h-dir
+    m0_str = p2_overrides.get("m0_dir", args.m0_dir)
+    if m0_str:
+        m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
     else:
         m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
 
@@ -714,16 +771,21 @@ def main() -> None:
 
     # Apply overrides
     if p2_overrides:
-        # Scale field values by Js_ref
+        # Scale field values by Js_ref (they are provided in Tesla)
         if "B_start" in p2_overrides:
             p2_overrides["B_start"] /= Js_ref
         if "B_end" in p2_overrides:
             p2_overrides["B_end"] /= Js_ref
         if "dB" in p2_overrides:
             p2_overrides["dB"] /= Js_ref
+        if "mfinal" in p2_overrides:
+            p2_overrides["mfinal"] /= Js_ref
+        if "mstep" in p2_overrides:
+            p2_overrides["mstep"] /= Js_ref
 
-        # Remove mesh parameters that are not in LoopParams
+        # Remove parameters handled separately
         p2_overrides.pop("mesh_unit", None)
+        p2_overrides.pop("m0_dir", None)
 
         params_dict.update(p2_overrides)
 

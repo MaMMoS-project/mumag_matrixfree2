@@ -84,37 +84,73 @@ This script will:
 Simulations are controlled via `.p2` files (INI format). Example `cube_20nm.p2`:
 ```ini
 [mesh]
-size = 1e-9    ; Length of one mesh unit in meters (default 1e-9 for nm)
+size = 1e-9         ; Length of one mesh unit in meters (default 1e-9 for nm)
+
+[initial state]
+mx = 0.0            ; Initial magnetization x-component
+my = 0.0            ; Initial magnetization y-component
+mz = 1.0            ; Initial magnetization z-component (Easy axis)
 
 [field]
-hx = 0.0            ; Field x-component
-hy = 0.0            ; Field y-component
-hz = 1.0            ; Field z-component
+hx = 0.0            ; Field direction x
+hy = 0.0            ; Field direction y
+hz = 1.0            ; Field direction z
 hstart = 2.0        ; Start field (Tesla)
 hfinal = -8.0       ; End field (Tesla)
 hstep = -0.5        ; Step size (Tesla)
-loop = false        ; If true, runs a full hysteresis cycle back to hstart
+loop = false        ; If true, runs a full hysteresis cycle
+no_demag = true     ; If true, disables magnetostatic energy calculation
+mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
+mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 
 [minimizer]
-tol_fun = 1e-6      ; tau_f tolerance
-precond_iter = 400  ; Poisson solver max iterations
+tol_fun = 1e-6      ; Energy convergence tolerance
+
+[poisson]
+cg_maxiter = 400    ; Poisson solver max iterations
 ```
 
 ### Material Properties (.krn file)
-Intrinsic properties are defined in a `.krn` file. The package automatically detects the orientation format based on the number of columns:
+The `.krn` file defines the intrinsic magnetic properties for each material group in the mesh. **Each line in the file corresponds to a material ID (Line 1 = ID 1, Line 2 = ID 2, etc.)**. Headers starting with `#` are supported. The package automatically detects the orientation format based on the number of columns:
 
-1. **Classic (Spherical)**: `theta phi K1 K2 Js A ...` (6 or 8 columns)
-   - Defines the easy axis ($\mathbf{e}_z$) orientation.
-2. **Full Rotation (Bunge)**: `phi1 Phi phi2 K1 K2 Js A ...` (9+ columns)
+1. **Classic (Spherical)**: `theta phi K1 K1p Js A ...` (6 or 8 columns)
+   - Defines the easy axis ($\mathbf{e}_z$) orientation via polar/azimuthal angles.
+2. **Full Rotation (Bunge)**: `phi1 Phi phi2 K1 K1p Js A ...` (9+ columns)
    - Defines the full orientation matrix (Z-X-Z) for the crystal axes.
 
 Example Bunge row (Rotated 45° around Z and 10° tilt):
 ```text
-# phi1     Phi       phi2      K1        K2    Js    A
+# phi1     Phi       phi2      K1        K1p   Js    A
   0.78539  0.17453   0.0       4.3e5     0.0   1.6   7.7e-12
 ```
 
-## 4. CLI Reference
+### Key Parameters: mfinal & mstep
+- **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
+- **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
+- **`no_demag` (bool)**: If true, disables magnetostatic (demagnetization) energy calculation and skips Poisson solving. This significantly speeds up simulations where demagnetization can be neglected.
+
+## 4. Output Files
+
+The simulation results are saved in the directory specified by `--out-dir` (default: `hyst_out`).
+
+### Hysteresis Data (`hysteresis.csv`)
+A CSV file containing the global results of the field sweep. Columns include:
+- **`config`**: The configuration index. This increments only when a new snapshot (VTU) is saved (via `mstep` or `--snapshot-every`).
+- **`B_ext_T`**: The external magnetic field in Tesla.
+- **`J_par_T`**: The volume-averaged magnetic polarization parallel to the field direction in Tesla.
+- **`E`**: The total dimensionless energy.
+- **`gnorm`**: The norm of the energy gradient (convergence indicator).
+
+### Compatibility Data (`*.mh`)
+A space-separated text file compatible with other MaMMoS tools. It records the magnetization history with columns: `B_ext [T]`, `J_parallel [T]`, `mx`, `my`, `mz`, and `E [J/m³]`.
+
+### Visualization Files (`*.vtu`)
+Snapshots of the magnetic state in VTK format, viewable in ParaView.
+**Filename Convention**: `state_cfgXXXXX_B+Y.YYYYe+00T.vtu`
+- **`cfgXXXXX`**: The configuration index (5 digits). The first file is always `cfg00000` (the initial state at $B_{start}$).
+- **`B+Y.YYYYe+00T`**: The external field value in Tesla at which the snapshot was taken.
+
+## 5. CLI Reference
 
 ### `src/loop.py` (Main Driver)
 The primary entry point for running hysteresis loop simulations.
@@ -133,7 +169,8 @@ The primary entry point for running hysteresis loop simulations.
 | `--minratio` | float | TetGen quality minratio (-q) for shell tetrahedra (default: 1.4). |
 | `--max-steiner` | int | Limit the number of Steiner points added by TetGen. |
 | `--no-exact` | flag | Suppress exact arithmetic in TetGen (-X). |
-| `--materials` | path | Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...). |
+| `--materials` | path | Path to a .krn file with intrinsic properties (theta, phi, K1, K1p, Js, A, ...). |
+| `--no-demag` | flag | Disable magnetostatic energy calculation. |
 | `--precond-type` | choice | Poisson preconditioner: `amgcl` (default), `jacobi`, `chebyshev`, or `amg`. |
 | `--geom-backend` | choice | Gradient info strategy: `stored_JinvT` (default), `stored_grad_phi`, or `on_the_fly`. |
 | `--chunk-elems` | int | Elements processed per loop iteration (default: 200,000). Controls GPU memory. |
@@ -148,7 +185,7 @@ The primary entry point for running hysteresis loop simulations.
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
 | `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
 | `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
-| `--m0-dir` | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |
+| `--m0-dir" | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |
 | `--verbose` | flag | Print detailed minimizer iterations at each step. |
 
 ### `src/mesh.py` (Meshing Tool)
@@ -189,7 +226,7 @@ Manually add graded exterior tetrahedral layers.
 | `--hmax` | float | Target edge length at the outermost boundary. |
 | `--body-h` | float | Characteristic size of the input body mesh (optional). |
 | `--out-npz` | path | Optional path to save the merged mesh as an NPZ. |
-| `--out-vtu` | path | Optional path to save the merged mesh as a VTU. |
+| `--out-vtu" | path | Optional path to save the merged mesh as a VTU. |
 
 ### `src/mesh_convert.py` (Interoperability)
 Convert between JAX-friendly NPZ and standard formats.
@@ -199,6 +236,6 @@ Convert between JAX-friendly NPZ and standard formats.
 | `--in` | path | **Required**. Input mesh (.npz or .vtu). |
 | `--out` | path | **Required**. Output mesh (.vtu or .npz). |
 
-## 5. Benchmarking & Tests
+## 6. Benchmarking & Tests
 - **Unit Tests**: Run `pixi run test` to verify the physics (energies, gradients, and switching fields).
 - **Performance**: Run `pixi run benchmark` to compare the JAX Poisson solver against the native C++ implementation.
