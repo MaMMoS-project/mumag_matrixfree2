@@ -1,0 +1,25 @@
+[mesh]
+size = 1e-9
+
+[initial state]
+mx = 0.0
+my = 0.0
+mz = 1.0
+
+[field]
+hx = 0.017452
+hy = 0
+hz = 0.999848
+hstart = 2.0
+hfinal = -8.0
+hstep = -0.5
+loop = false
+no_demag = true
+mstep = 0.5
+mfinal = -0.2
+
+[minimizer]
+tol_fun = 1e-6
+
+[poisson]
+cg_maxiter = 400
