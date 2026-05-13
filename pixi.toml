@@ -3,7 +3,7 @@ name = "mumag-matrixfree2"
 version = "0.1.0"
 description = "Matrix-free micromagnetic simulations with JAX"
 authors = ["MaMMoS-project"]
-channels = ["set3mah", "conda-forge"]
+channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 
 [dependencies]
