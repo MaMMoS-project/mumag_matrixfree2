@@ -61,7 +61,6 @@ def test_micromagnetic_energies():
     Js = 1.6  # Tesla
     K1 = 4.3e6  # J/m^3
     A_si = 7.7e-12  # J/m
-    k_easy = np.array([0.0, 0.0, 1.0])
 
     MU0_SI = 4e-7 * np.pi
     Kd = (Js**2) / (2.0 * MU0_SI)
@@ -166,20 +165,28 @@ def test_orthorhombic_energy():
     )
 
     # 2. Properties
-    Js = 1.0; Kd = 1.0; V_mag = float(np.sum(volume))
+    Js = 1.0
+    V_mag = float(np.sum(volume))
     M_nodal = compute_node_volumes(
         TetGeom(geom.conn, geom.volume, geom.mat_id), chunk_elems=1
     )
-    
+
     # K1p isolation test: e = K1p * (mx^2 - my^2)
-    K1p_red = 1.0; K1_red = 0.0
-    axes_lookup = jnp.eye(3)[None, ...] # Identity
-    
+    K1p_red = 1.0
+    K1_red = 0.0
+    axes_lookup = jnp.eye(3)[None, ...]  # Identity
+
     energy_and_grad, _, _ = make_energy_kernels(
-        geom, jnp.array([0.0]), jnp.array([K1_red]), 
-        jnp.array([Js]), axes_lookup, V_mag, M_nodal, K1p_lookup=jnp.array([K1p_red])
+        geom,
+        jnp.array([0.0]),
+        jnp.array([K1_red]),
+        jnp.array([Js]),
+        axes_lookup,
+        V_mag,
+        M_nodal,
+        K1p_lookup=jnp.array([K1p_red]),
     )
-    
+
     # State mx=1 -> E = +1.0
     m_x = jnp.zeros((4, 3)).at[:, 0].set(1.0)
     e_x, _ = energy_and_grad(m_x, jnp.zeros(4), jnp.zeros(3))
@@ -192,16 +199,23 @@ def test_orthorhombic_energy():
 
     # Combined test: e = -K1*mz^2 + K1p*(mx^2 - my^2)
     # Note: our implementation of uniaxial is E = -K1*(m.ez)^2
-    K1_red = 4.3; K1p_red = 1.0
+    K1_red = 4.3
+    K1p_red = 1.0
     energy_and_grad_c, _, _ = make_energy_kernels(
-        geom, jnp.array([0.0]), jnp.array([K1_red]), 
-        jnp.array([Js]), axes_lookup, V_mag, M_nodal, K1p_lookup=jnp.array([K1p_red])
+        geom,
+        jnp.array([0.0]),
+        jnp.array([K1_red]),
+        jnp.array([Js]),
+        axes_lookup,
+        V_mag,
+        M_nodal,
+        K1p_lookup=jnp.array([K1p_red]),
     )
-    
+
     # State mx=1 -> E = 0 + K1p = 1.0
     e_comb_x, _ = energy_and_grad_c(m_x, jnp.zeros(4), jnp.zeros(3))
     assert abs(float(e_comb_x) - K1p_red) < 1e-7
-    
+
     # State mz=1 -> E = -K1 + 0 = -4.3
     m_z = jnp.zeros((4, 3)).at[:, 2].set(1.0)
     e_comb_z, _ = energy_and_grad_c(m_z, jnp.zeros(4), jnp.zeros(3))
@@ -226,13 +240,20 @@ def test_orthorhombic_rotation():
 
     # 1. 90 degree rotation about Z: ex=(0,1,0), ey=(-1,0,0), ez=(0,0,1)
     axes_90 = jnp.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])[None, ...]
-    K1_red = 4.0; K1p_red = 1.0
-    
+    K1_red = 4.0
+    K1p_red = 1.0
+
     eg_90, _, _ = make_energy_kernels(
-        geom, jnp.array([0.0]), jnp.array([K1_red]), 
-        jnp.array([1.0]), axes_90, V_mag, M_nodal, K1p_lookup=jnp.array([K1p_red])
+        geom,
+        jnp.array([0.0]),
+        jnp.array([K1_red]),
+        jnp.array([1.0]),
+        axes_90,
+        V_mag,
+        M_nodal,
+        K1p_lookup=jnp.array([K1p_red]),
     )
-    
+
     # Lab mx=1 is crystal -ey. Energy: 0 + K1p*(0^2 - (-1)^2) = -1.0
     m_lab_x = jnp.zeros((4, 3)).at[:, 0].set(1.0)
     e_90_x, _ = eg_90(m_lab_x, jnp.zeros(4), jnp.zeros(3))
@@ -240,29 +261,36 @@ def test_orthorhombic_rotation():
 
     # 2. Arbitrary 3D rotation: phi1=30, Phi=45, phi2=60 (degrees)
     import loop
+
     p1, P, p2 = np.deg2rad(30), np.deg2rad(45), np.deg2rad(60)
     axes_rot = loop.bunge_to_axes(p1, P, p2)[None, ...]
-    
+
     eg_rot, _, _ = make_energy_kernels(
-        geom, jnp.array([0.0]), jnp.array([K1_red]), 
-        jnp.array([1.0]), axes_rot, V_mag, M_nodal, K1p_lookup=jnp.array([K1p_red])
+        geom,
+        jnp.array([0.0]),
+        jnp.array([K1_red]),
+        jnp.array([1.0]),
+        axes_rot,
+        V_mag,
+        M_nodal,
+        K1p_lookup=jnp.array([K1p_red]),
     )
-    
+
     # Test with random lab-frame magnetization
-    m_rand = jnp.array([0.3, 0.4, 0.866]) # normalized manually-ish
+    m_rand = jnp.array([0.3, 0.4, 0.866])  # normalized manually-ish
     m_rand = m_rand / jnp.linalg.norm(m_rand)
     m_nodes = jnp.tile(m_rand[None, :], (4, 1))
-    
+
     # Manual projection
     ex, ey, ez = axes_rot[0, 0], axes_rot[0, 1], axes_rot[0, 2]
     mx_c = jnp.dot(m_rand, ex)
     my_c = jnp.dot(m_rand, ey)
     mz_c = jnp.dot(m_rand, ez)
-    
+
     # E = -K1*mz_c^2 + K1p*(mx_c^2 - my_c^2)
     e_expected = -K1_red * (mz_c**2) + K1p_red * (mx_c**2 - my_c**2)
     e_actual, _ = eg_rot(m_nodes, jnp.zeros(4), jnp.zeros(3))
-    
+
     assert abs(float(e_actual) - e_expected) < 1e-7
 
 
@@ -271,15 +299,12 @@ def test_per_element_anisotropy():
     # 1. Setup mesh with TWO tetrahedra
     # Tet 0: nodes 0,1,2,3
     # Tet 1: nodes 1,2,3,4
-    knt = np.array([
-        [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]
-    ], dtype=np.float64)
-    tets = np.array([
-        [0, 1, 2, 3],
-        [1, 2, 3, 4]
-    ], dtype=np.int64)
-    mat_id = np.array([1, 1], dtype=np.int32) # Same material
-    
+    knt = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]], dtype=np.float64
+    )
+    tets = np.array([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=np.int64)
+    mat_id = np.array([1, 1], dtype=np.int32)  # Same material
+
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
     geom = TetGeom(
@@ -289,7 +314,7 @@ def test_per_element_anisotropy():
         grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
     )
     V_mag = float(np.sum(volume))
-    
+
     # Js=1 for moments
     vol_Js = volume * 1.0
     M_nodal = compute_node_volumes(
@@ -301,37 +326,52 @@ def test_per_element_anisotropy():
     # Element 1: k1me=2.0, k1me_p=1.0 -> Kx=3.0, Ky=1.0
     k1me = jnp.array([1.0, 2.0])
     k1me_p = jnp.array([0.5, 1.0])
-    
+
     # Material-level constants (zeros)
-    K1_red = 0.0; K1p_red = 0.0
-    axes_lookup = jnp.eye(3)[None, ...] # Identity
-    
+    K1_red = 0.0
+    K1p_red = 0.0
+    axes_lookup = jnp.eye(3)[None, ...]  # Identity
+
     eg, _, _ = make_energy_kernels(
-        geom, jnp.array([0.0]), jnp.array([K1_red]), 
-        jnp.array([1.0]), axes_lookup, V_mag, M_nodal, 
+        geom,
+        jnp.array([0.0]),
+        jnp.array([K1_red]),
+        jnp.array([1.0]),
+        axes_lookup,
+        V_mag,
+        M_nodal,
         K1p_lookup=jnp.array([K1p_red]),
-        k1me=k1me, k1me_p=k1me_p
+        k1me=k1me,
+        k1me_p=k1me_p,
     )
-    
-    # Test State: Uniform mx=1
+
+    # Test State: Uniform mx=1 (mz=0, my=0)
     m_unif_x = jnp.zeros((5, 3)).at[:, 0].set(1.0)
-    
-    # Expected Energy: (Kx0 * V0 + Kx1 * V1) / V_mag
-    # Here Kx0 = 1.5, Kx1 = 3.0
+
+    # Expected Energy: (k1me_p0 * V0 + k1me_p1 * V1) / V_mag
+    # Here k1me_p0 = 0.5, k1me_p1 = 1.0
     v0, v1 = float(volume[0]), float(volume[1])
-    e_expected = (1.5 * v0 + 3.0 * v1) / (v0 + v1)
-    
-    e_actual, _ = eg(m_unif_x, jnp.zeros(5), jnp.zeros(3))
-    assert abs(float(e_actual) - e_expected) < 1e-7
-    
-    # Test State: Uniform my=1
+    e_expected_x = (0.5 * v0 + 1.0 * v1) / (v0 + v1)
+
+    e_actual_x, _ = eg(m_unif_x, jnp.zeros(5), jnp.zeros(3))
+    assert abs(float(e_actual_x) - e_expected_x) < 1e-7
+
+    # Test State: Uniform my=1 (mz=0, mx=0)
     m_unif_y = jnp.zeros((5, 3)).at[:, 1].set(1.0)
-    
-    # Expected Energy: (Ky0 * V0 + Ky1 * V1) / V_mag
-    # Here Ky0 = 0.5, Ky1 = 1.0
-    e_expected_y = (0.5 * v0 + 1.0 * v1) / (v0 + v1)
-    
+
+    # Expected Energy: (-k1me_p0 * V0 - k1me_p1 * V1) / V_mag
+    # e = k1me_p * (mx^2 - my^2) = -k1me_p
+    e_expected_y = (-0.5 * v0 - 1.0 * v1) / (v0 + v1)
+
     e_actual_y, _ = eg(m_unif_y, jnp.zeros(5), jnp.zeros(3))
     assert abs(float(e_actual_y) - e_expected_y) < 1e-7
 
+    # Test State: Uniform mz=1 (mx=0, my=0)
+    m_unif_z = jnp.zeros((5, 3)).at[:, 2].set(1.0)
 
+    # Expected Energy: (-k1me0 * V0 - k1me1 * V1) / V_mag
+    # e = -k1me * mz^2
+    e_expected_z = (-1.0 * v0 - 2.0 * v1) / (v0 + v1)
+
+    e_actual_z, _ = eg(m_unif_z, jnp.zeros(5), jnp.zeros(3))
+    assert abs(float(e_actual_z) - e_expected_z) < 1e-7
