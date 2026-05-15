@@ -170,9 +170,7 @@ def make_energy_kernels(
     g_ids = mat_id - 1
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
-    K1p_Ve_base = (
-        2.0 * K1p_lookup[g_ids] * Ve / 20.0 if K1p_lookup is not None else 0.0
-    )
+    K1p_Ve_base = 2.0 * K1p_lookup[g_ids] * Ve / 20.0 if K1p_lookup is not None else 0.0
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
 
     # Magnetoelastic terms (per element)
@@ -183,9 +181,12 @@ def make_energy_kernels(
         if k1me_p is not None:
             k1mep_padded = k1mep_padded.at[: k1me_p.shape[0]].set(k1me_p)
 
-        # Kx = k1me + k1mep, Ky = k1me - k1mep
-        Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
-        Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
+        # Add k1me (uniaxial-like) directly to K1_Ve.
+        # This removes the constant offset (1-mz^2 vs -mz^2).
+        K1_Ve = K1_Ve + 2.0 * k1me_padded * Ve / 20.0
+        # Use k1mep for orthorhombic contribution (Kx = +k1mep, Ky = -k1mep)
+        Kx_Ve = 2.0 * k1mep_padded * Ve / 20.0
+        Ky_Ve = -Kx_Ve
     else:
         Kx_Ve = 0.0
         Ky_Ve = 0.0
@@ -255,7 +256,7 @@ def make_energy_kernels(
             j_ve_c = lax.dynamic_slice(Js_Ve, (s,), (chunk_elems,)) * mask
 
             # Local frame projection:
-            # We project the laboratory-frame magnetization onto the local crystal 
+            # We project the laboratory-frame magnetization onto the local crystal
             # axes (ex, ey, ez) obtained from Bunge Euler angles. All anisotropy
             # terms (uniaxial and orthorhombic) are then calculated in this
             # crystal frame to ensure they rotate correctly with the grain.

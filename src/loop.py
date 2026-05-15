@@ -33,6 +33,69 @@ from fem_utils import TetGeom
 from hysteresis_loop import LoopParams, run_hysteresis_loop
 from io_utils import write_mh
 
+
+def parse_inp_with_data(path: str):
+    """Parses an AVS UCD (.inp) file including cell data.
+
+    Args:
+        path (str): Path to the .inp file.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+            (Nodes, Elements, Cell Data).
+    """
+    print(f"Parsing INP file: {path}")
+    with open(path) as f:
+        header = f.readline().split()
+        if not header:
+            return None, None, {}
+        num_nodes, num_elems = int(header[0]), int(header[1])
+        num_node_data, num_cell_data = int(header[2]), int(header[3])
+
+        nodes = np.zeros((num_nodes, 3))
+        for i in range(num_nodes):
+            line = f.readline().split()
+            nodes[i] = [float(x) for x in line[1:4]]
+
+        elements = np.zeros((num_elems, 5))
+        for i in range(num_elems):
+            line = f.readline().split()
+            mat_id = int(line[1])
+            nids = [int(x) - 1 for x in line[3:]]  # 0-based
+            elements[i, :4] = nids
+            elements[i, 4] = mat_id
+
+        cell_data = {}
+        if num_cell_data > 0:
+            # Skip node data if present
+            if num_node_data > 0:
+                f.readline()  # Header
+                for _ in range(num_node_data):
+                    f.readline()  # Labels
+                for _ in range(num_nodes):
+                    f.readline()  # Values
+
+            # Read cell data
+            header_cd = f.readline().split()
+            num_vars = int(header_cd[0])
+            labels = []
+            for _ in range(num_vars):
+                labels.append(f.readline().split(",")[0].strip())
+
+            # Initialize data arrays
+            for label in labels:
+                cell_data[label] = np.zeros(num_elems)
+
+            # Read values
+            for _ in range(num_elems):
+                line = f.readline().split()
+                eid_idx = int(line[0]) - 1
+                for j, label in enumerate(labels):
+                    cell_data[label][eid_idx] = float(line[j + 1])
+
+    return nodes, elements, cell_data
+
+
 jax.config.update("jax_enable_x64", True)
 
 # Reference tetra gradients
@@ -188,7 +251,8 @@ def load_materials_krn(
         raise ValueError(
             f"The .krn file '{krn_path}' has {n_rows} rows, but the mesh has {G} "
             f"material groups ({'including' if shell_added else 'no'} added airbox). "
-            f"Every material ID in the mesh must have a corresponding line in the .krn file."
+            "Every material ID in the mesh must have a corresponding line in "
+            "the .krn file."
         )
     if n_rows > G_required:
         raise ValueError(
@@ -591,7 +655,15 @@ def main() -> None:
     modelname = args.modelname
     if modelname:
         if args.mesh is None:
-            args.mesh = str(Path(modelname).with_suffix(".npz"))
+            # Check for .npz first, then .inp
+            npz_path = Path(modelname).with_suffix(".npz")
+            inp_path = Path(modelname).with_suffix(".inp")
+            if npz_path.exists():
+                args.mesh = str(npz_path)
+            elif inp_path.exists():
+                args.mesh = str(inp_path)
+            else:
+                args.mesh = str(npz_path)  # Default to .npz for error message
         if args.materials is None:
             krn_path = Path(modelname).with_suffix(".krn")
             if krn_path.exists():
@@ -602,9 +674,18 @@ def main() -> None:
     if args.mesh is None:
         ap.error("the following arguments are required: --mesh or modelname")
 
-    data = np.load(args.mesh)
-    knt = np.asarray(data["knt"], dtype=np.float64)
-    ijk = np.asarray(data["ijk"])
+    k1me_raw = None
+    k1mep_raw = None
+
+    if args.mesh.lower().endswith(".inp"):
+        knt, ijk, cell_data = parse_inp_with_data(args.mesh)
+        # Check for k1me / k1me_p or kme / kmep labels
+        k1me_raw = cell_data.get("k1me", cell_data.get("kme"))
+        k1mep_raw = cell_data.get("k1me_p", cell_data.get("kmep"))
+    else:
+        data = np.load(args.mesh)
+        knt = np.asarray(data["knt"], dtype=np.float64)
+        ijk = np.asarray(data["ijk"])
 
     if ijk.ndim != 2 or ijk.shape[1] not in (4, 5):
         raise ValueError("ijk must have shape (E,4) or (E,5)")
@@ -649,6 +730,17 @@ def main() -> None:
         conn = ijk_shell[:, :4].astype(np.int64)
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
+        # Update per-element arrays to match the new mesh if shell was added
+        # (Shell elements get 0.0 for k1me)
+        if k1me_raw is not None:
+            new_k1me = np.zeros(conn.shape[0])
+            new_k1me[: k1me_raw.shape[0]] = k1me_raw
+            k1me_raw = new_k1me
+        if k1mep_raw is not None:
+            new_k1mep = np.zeros(conn.shape[0])
+            new_k1mep[: k1mep_raw.shape[0]] = k1mep_raw
+            k1mep_raw = new_k1mep
+
     G = int(mat_id.max())
 
     # Load .p2 overrides early to get mesh_unit
@@ -691,6 +783,14 @@ def main() -> None:
     K1_red = K1_lookup / Kd_ref
     K1p_red = K1p_lookup / Kd_ref
     Js_red = Js_lookup / Js_ref
+
+    # Reduce per-element magnetoelastic arrays
+    k1me_red = None
+    k1mep_red = None
+    if k1me_raw is not None:
+        k1me_red = jnp.asarray(k1me_raw / Kd_ref, dtype=jnp.float64)
+    if k1mep_raw is not None:
+        k1mep_red = jnp.asarray(k1mep_raw / Kd_ref, dtype=jnp.float64)
 
     # Build TetGeom depending on backend
     grad_backend = args.geom_backend
@@ -812,6 +912,8 @@ def main() -> None:
         poisson_reg=float(args.poisson_reg),
         boundary_mask=boundary_mask,
         no_demag=params.no_demag,
+        k1me=k1me_red,
+        k1me_p=k1mep_red,
     )
 
     # Write .mh file for mammos-mumag compatibility

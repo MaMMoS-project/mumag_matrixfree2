@@ -205,6 +205,8 @@ def make_minimizer(
     grad_backend: GradBackend = "stored_grad_phi",
     boundary_mask: Array | None = None,
     no_demag: bool = False,
+    k1me: Array | None = None,
+    k1me_p: Array | None = None,
 ) -> Callable[..., tuple[Array, Array, dict[str, Any]]]:
     """Create a high-level micromagnetic minimizer.
 
@@ -231,6 +233,9 @@ def make_minimizer(
         grad_backend (GradBackend, optional): Strategy for gradients.
             Defaults to 'stored_grad_phi'.
         boundary_mask (Array | None, optional): Dirichlet mask. Defaults to None.
+        no_demag (bool): If True, disable magnetostatic energy.
+        k1me (Array | None): Per-element magnetoelastic constant Kx.
+        k1me_p (Array | None): Per-element magnetoelastic constant Ky.
 
     Returns:
         Callable: minimize(m0, B_ext, **kwargs) -> (m_final, U_final, info_dict).
@@ -248,6 +253,8 @@ def make_minimizer(
         V_mag=V_mag,
         M_nodal=M_nodal,
         K1p_lookup=K1p_lookup,
+        k1me=k1me,
+        k1me_p=k1me_p,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
@@ -465,6 +472,7 @@ def make_minimizer(
             ls_max_evals (int): Line search max_evals.
             h (Array | None): unit vector of applied field direction.
             mfinal (float | None): magnetization threshold for early stopping.
+            Js_ref (float): reference saturation polarization.
             verbose (bool): logging toggle.
 
         Returns:

@@ -215,6 +215,8 @@ def run_hysteresis_loop(
     poisson_reg: float = 1e-12,
     boundary_mask: jnp.ndarray | None = None,
     no_demag: bool = False,
+    k1me: jnp.ndarray | None = None,
+    k1me_p: jnp.ndarray | None = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -244,6 +246,8 @@ def run_hysteresis_loop(
         boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
             Defaults to None.
         no_demag (bool): If True, disable magnetostatic energy.
+        k1me (jnp.ndarray | None): Per-element magnetoelastic constant Kx.
+        k1me_p (jnp.ndarray | None): Per-element magnetoelastic constant Ky.
 
     Returns:
         dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
@@ -268,6 +272,8 @@ def run_hysteresis_loop(
         V_mag=V_mag,
         M_nodal=M_nodal,
         K1p_lookup=jnp.asarray(K1p_lookup, dtype=jnp.float64),
+        k1me=k1me,
+        k1me_p=k1me_p,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
@@ -307,6 +313,8 @@ def run_hysteresis_loop(
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
         no_demag=no_demag,
+        k1me=k1me,
+        k1me_p=k1me_p,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
@@ -430,7 +438,7 @@ def run_hysteresis_loop(
             if J_par_last_saved is not None:
                 config_idx += 1
             J_par_last_saved = Jpar
-            
+
             if params.snapshot_every > 0:
                 vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla:+.4e}T.vtu"
                 write_vtu_tetra(
