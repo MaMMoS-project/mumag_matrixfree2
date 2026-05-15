@@ -42,12 +42,13 @@ def write_hysteresis_header(
         >>> write_hysteresis_header("hysteresis.csv")
     """
     csv_path = Path(csv_path)
-    cols = ["B_ext_T", "J_par_T"] + list(extra_cols)
+    cols = ["config", "B_ext_T", "J_par_T"] + list(extra_cols)
     csv_path.write_text(",".join(cols) + "\n", encoding="utf-8")
 
 
 def append_hysteresis_row(
     csv_path: str | Path,
+    config_idx: int,
     H: float,
     M_parallel: float,
     E: float | None = None,
@@ -57,16 +58,17 @@ def append_hysteresis_row(
 
     Args:
         csv_path (str | Path): Path to the CSV file.
+        config_idx (int): Current configuration index.
         H (float): Applied external field (Tesla).
         M_parallel (float): Parallel component of magnetic polarization (Tesla).
         E (float, optional): Total energy. Defaults to None.
         gnorm (float, optional): Norm of the energy gradient. Defaults to None.
 
     Example:
-        >>> append_hysteresis_row("hysteresis.csv", 1.0, 0.8, E=-123.4, gnorm=1e-5)
+        >>> append_hysteresis_row("hysteresis.csv", 0, 1.0, 0.8, E=-123.4, gnorm=1e-5)
     """
     csv_path = Path(csv_path)
-    parts = [f"{H:.9e}", f"{M_parallel:.9e}"]
+    parts = [str(config_idx), f"{H:.9e}", f"{M_parallel:.9e}"]
     if E is not None:
         parts.append(f"{E:.9e}")
     if gnorm is not None:

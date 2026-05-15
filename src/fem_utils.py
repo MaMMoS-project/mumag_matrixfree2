@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax
-import jax.numpy as jnp
+
+jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp  # noqa: E402
 
 Array = jnp.ndarray
 

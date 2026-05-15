@@ -77,23 +77,68 @@ This script will:
 Simulations are controlled via `.p2` files (INI format). Example `cube_20nm.p2`:
 ```ini
 [mesh]
-size = 1e-9    ; Length of one mesh unit in meters (default 1e-9 for nm)
+size = 1e-9         ; Length of one mesh unit in meters (default 1e-9 for nm)
+
+[initial state]
+mx = 0.0            ; Initial magnetization x-component
+my = 0.0            ; Initial magnetization y-component
+mz = 1.0            ; Initial magnetization z-component (Easy axis)
 
 [field]
-hx = 0.0            ; Field x-component
-hy = 0.0            ; Field y-component
-hz = 1.0            ; Field z-component
+hx = 0.0            ; Field direction x
+hy = 0.0            ; Field direction y
+hz = 1.0            ; Field direction z
 hstart = 2.0        ; Start field (Tesla)
 hfinal = -8.0       ; End field (Tesla)
 hstep = -0.5        ; Step size (Tesla)
-loop = false        ; If true, runs a full hysteresis cycle back to hstart
+loop = false        ; If true, runs a full hysteresis cycle
+mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
+mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 
 [minimizer]
-tol_fun = 1e-6      ; tau_f tolerance
-precond_iter = 400  ; Poisson solver max iterations
+tol_fun = 1e-6      ; Energy convergence tolerance
+
+[poisson]
+cg_maxiter = 400    ; Poisson solver max iterations
 ```
 
-## 4. CLI Reference
+### Material Properties (.krn file)
+The `.krn` file defines the intrinsic magnetic properties for each material group in the mesh. **Each line in the file corresponds to a material ID (Line 1 = ID 1, Line 2 = ID 2, etc.)**. Headers starting with `#` are supported.
+
+The file expects 6 columns (Classic format):
+1. **theta** (rad): Polar angle of the uniaxial easy axis.
+2. **phi** (rad): Azimuthal angle of the uniaxial easy axis.
+3. **K1** (J/m³): Uniaxial anisotropy constant.
+4. **not used** (0.0): Placeholder for future features.
+5. **Js** (Tesla): Saturation magnetic polarization.
+6. **A** (J/m): Exchange stiffness constant.
+
+### Key Parameters: mfinal & mstep
+- **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
+- **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
+
+## 4. Output Files
+
+The simulation results are saved in the directory specified by `--out-dir` (default: `hyst_out`).
+
+### Hysteresis Data (`hysteresis.csv`)
+A CSV file containing the global results of the field sweep. Columns include:
+- **`config`**: The configuration index. This increments only when a new snapshot (VTU) is saved (via `mstep` or `--snapshot-every`).
+- **`B_ext_T`**: The external magnetic field in Tesla.
+- **`J_par_T`**: The volume-averaged magnetic polarization parallel to the field direction in Tesla.
+- **`E`**: The total dimensionless energy.
+- **`gnorm`**: The norm of the energy gradient (convergence indicator).
+
+### Compatibility Data (`*.mh`)
+A space-separated text file compatible with other MaMMoS tools. It records the magnetization history with columns: `B_ext [T]`, `J_parallel [T]`, `mx`, `my`, `mz`, and `E [J/m³]`.
+
+### Visualization Files (`*.vtu`)
+Snapshots of the magnetic state in VTK format, viewable in ParaView.
+**Filename Convention**: `state_cfgXXXXX_B+Y.YYYYe+00T.vtu`
+- **`cfgXXXXX`**: The configuration index (5 digits). The first file is always `cfg00000` (the initial state at $B_{start}$).
+- **`B+Y.YYYYe+00T`**: The external field value in Tesla at which the snapshot was taken.
+
+## 5. CLI Reference
 
 ### `src/loop.py` (Main Driver)
 The primary entry point for running hysteresis loop simulations.

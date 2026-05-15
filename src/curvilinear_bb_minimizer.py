@@ -432,6 +432,9 @@ def make_minimizer(
         ls_c: float = 0.5,
         ls_s0: float = 1.0,
         ls_max_evals: int = 15,
+        h: Array | None = None,
+        mfinal: float | None = None,
+        Js_ref: float = 1.0,
         verbose: bool = True,
     ) -> tuple[Array, Array, dict[str, Any]]:
         """Minimize the micromagnetic energy using BB and line search.
@@ -445,16 +448,19 @@ def make_minimizer(
             max_iter (int, optional): maximum iterations. Defaults to 200.
             tau_f (float): relative energy tolerance.
             eps_a (float): absolute tangent gradient tolerance.
-            tau0 (float): Initial step size.
-            tau_min (float): Minimum step size.
-            tau_max (float): Maximum step size.
-            ls_eta1 (float): Line search eta1.
-            ls_eta2 (float): Line search eta2.
-            ls_C (float): Line search C.
-            ls_c (float): Line search c.
-            ls_s0 (float): Line search s0.
-            ls_max_evals (int): Line search max_evals.
-            verbose (bool): logging toggle.
+            tau0 (float): initial step size for line search.
+            tau_min (float): minimum step size.
+            tau_max (float): maximum step size.
+            ls_eta1 (float): line search parameter eta1.
+            ls_eta2 (float): line search parameter eta2.
+            ls_C (float): line search parameter C.
+            ls_c (float): line search parameter c.
+            ls_s0 (float): line search parameter s0.
+            ls_max_evals (int): maximum line search evaluations.
+            h (Array | None): magnetic field for energy computation.
+            mfinal (float | None): final magnetization threshold for early stopping.
+            Js_ref (float): reference saturation magnetization for scaling.
+            verbose (bool): whether to print iteration progress.
 
         Returns:
             tuple[Array, Array, dict[str, Any]]: (m_final, U_final,
@@ -463,6 +469,19 @@ def make_minimizer(
         m = jnp.asarray(m0, dtype=jnp.float64)
         m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
         B_ext = jnp.asarray(B_ext, dtype=jnp.float64)
+
+        if h is not None:
+            h_jax = jnp.asarray(h, dtype=jnp.float64)
+        else:
+            # Fallback to B_ext direction if h not provided
+            B_norm = jnp.linalg.norm(B_ext)
+            h_jax = jnp.where(
+                B_norm > 1e-20, B_ext / B_norm, jnp.array([0.0, 0.0, 1.0])
+            )
+
+        def get_m_par(m_current: Array) -> float:
+            # Volume averaged m parallel to h
+            return float(jnp.sum(jnp.dot(m_current, h_jax) * M_nodal) / V_mag)
 
         # Derived Poisson base tolerance: must satisfy all stopping criteria
         cg_tol_base = float(min(cg_tol, tau_f * 0.1, eps_a * 0.1))
@@ -512,8 +531,35 @@ def make_minimizer(
 
             history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 0.0})
 
-            if verbose:
-                print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}")
+            if mfinal is not None and get_m_par(state.m) <= mfinal:
+                if verbose:
+                    mh_tesla = get_m_par(state.m) * Js_ref
+                    print(
+                        f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                        f"mh={mh_tesla:+.4f} T"
+                    )
+                    print(f"[LS {k:03d}] mfinal reached, stopping early.")
+                return (
+                    state.m,
+                    U,
+                    {
+                        "E": float(E),
+                        "gnorm": gnorm_inf,
+                        "iters": float(k),
+                        "mfinal_reached": True,
+                        "history": history,
+                        "t_ls": t_ls_total,
+                        "t_bb": t_bb_total,
+                    },
+                )
+
+            if verbose and (k % 10 == 0):
+                mh_tesla = get_m_par(state.m) * Js_ref
+                print(
+                    f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                    f"mh={mh_tesla:+.4f} T"
+                )
+
             if converged:
                 t_ls_total += time.time() - start_ls
                 if verbose:
@@ -570,6 +616,29 @@ def make_minimizer(
 
         for k in range(gamma, max_iter):
             start_bb = time.time()
+
+            if mfinal is not None and get_m_par(state.m) <= mfinal:
+                if verbose:
+                    mh_tesla = get_m_par(state.m) * Js_ref
+                    print(
+                        f"[BB {k:03d}] E={float(E_prev):.6e}  |g|_inf={gnorm_inf:.3e}  "
+                        f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
+                    )
+                    print(f"[BB {k:03d}] mfinal reached, stopping early.")
+                return (
+                    state.m,
+                    state.U_prev,
+                    {
+                        "E": float(E_prev),
+                        "gnorm": float(jnp.max(jnp.abs(state.g_prev))),
+                        "iters": float(k),
+                        "mfinal_reached": True,
+                        "history": history,
+                        "t_ls": t_ls_total,
+                        "t_bb": t_bb_total,
+                    },
+                )
+
             state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max, cg_tol_base)
             gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
             diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
@@ -584,9 +653,10 @@ def make_minimizer(
             history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 1.0})
 
             if verbose and (k % 10 == 0 or converged):
+                mh_tesla = get_m_par(state.m) * Js_ref
                 print(
                     f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                    f"tau={float(state.tau):.3e}"
+                    f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
                 )
 
             t_bb_total += time.time() - start_bb

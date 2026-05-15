@@ -17,7 +17,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from curvilinear_bb_minimizer import make_minimizer
+from curvilinear_bb_minimizer import make_minimizer, tangent_grad
+from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom
 from io_utils import (
     append_hysteresis_row,
@@ -25,6 +26,7 @@ from io_utils import (
     write_hysteresis_header,
     write_vtu_tetra,
 )
+from poisson_solve import make_solve_U
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 
@@ -51,6 +53,8 @@ class LoopParams:
         verbose (bool): If True, print iteration details.
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
+        mfinal (float | None): Magnetization threshold for early stopping.
+        mstep (float | None): Magnetization change threshold for saving snapshots.
     """
 
     h_dir: np.ndarray
@@ -80,6 +84,8 @@ class LoopParams:
     verbose: bool = False
     Js_ref: float = 1.0
     cg_maxiter: int = 400
+    mfinal: float | None = None
+    mstep: float | None = None
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -243,6 +249,36 @@ def run_hysteresis_loop(
     h = np.asarray(params.h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
+    # inv_M_rel: node-wise scaling to go from (total_energy_grad / V_mag)
+    # to (local_energy_density_grad / Js). This is a physical preconditioner.
+    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
+
+    energy_and_grad, energy_only, _ = make_energy_kernels(
+        geom,
+        A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
+        K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
+        Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
+        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        V_mag=V_mag,
+        M_nodal=M_nodal,
+        chunk_elems=chunk_elems,
+        assembly=energy_assembly,
+        grad_backend=grad_backend,
+    )
+
+    solve_U = make_solve_U(
+        geom,
+        jnp.asarray(Js_lookup, dtype=jnp.float64),
+        precond_type=precond_type,
+        order=order,
+        chunk_elems=chunk_elems,
+        cg_maxiter=params.cg_maxiter,
+        cg_tol=cg_tol,
+        poisson_reg=poisson_reg,
+        grad_backend=grad_backend,
+        boundary_mask=boundary_mask,
+    )
+
     minimize = make_minimizer(
         geom,
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
@@ -268,10 +304,55 @@ def run_hysteresis_loop(
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
+    # Calculate initial state (Issue #25)
+    U_init = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
+    E_init, g_raw_init = energy_and_grad(m, U_init, jnp.asarray(params.B_start * h))
+    Jpar_init = jax_compute_volume_averaged_J_parallel(
+        m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
+    )
+    m_avg_init = jax_compute_volume_averaged_m(
+        m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup)
+    )
+
+    B_tesla_init = float(params.B_start) * params.Js_ref
+    J_tesla_init = float(Jpar_init) * params.Js_ref
+    mx_init, my_init, mz_init = map(float, m_avg_init)
+    E_si_init = float(E_init) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
+
+    config_idx = 0
+    J_par_last_saved = Jpar_init
+
+    # Record initial state
+    history = [[B_tesla_init, J_tesla_init, mx_init, my_init, mz_init, E_si_init]]
+    append_hysteresis_row(
+        csv_path,
+        config_idx,
+        B_tesla_init,
+        J_tesla_init,
+        float(E_init),
+        float(jnp.max(jnp.abs(tangent_grad(m, g_raw_init * inv_M_rel)))),
+    )
+
+    # Save initial VTU if snapshots are enabled
+    if params.snapshot_every > 0 or params.mstep is not None:
+        vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla_init:+.4e}T.vtu"
+        write_vtu_tetra(
+            vtu_path,
+            points,
+            np.array(geom.conn),
+            point_data={
+                "m": np.array(m).astype(np.float32),
+                "U": np.array(U_init).astype(np.float32),
+            },
+            cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
+        )
+
     total_time = 0.0
-    U = None
-    history = []
+    U = U_init
     for step_idx, Bmag in enumerate(B_vals):
+        # Skip redundant first step if it matches start
+        if step_idx == 0 and Bmag == params.B_start:
+            continue
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
         start_step = time.time()
@@ -292,6 +373,9 @@ def run_hysteresis_loop(
             ls_c=params.ls_c,
             ls_s0=params.ls_s0,
             ls_max_evals=params.ls_max_evals,
+            h=h,
+            mfinal=params.mfinal,
+            Js_ref=params.Js_ref,
             verbose=params.verbose,
         )
         # Accurate timing: wait for GPU to finish
@@ -321,28 +405,43 @@ def run_hysteresis_loop(
         # Record history row: (B_ext_T, J_par_T, mx, my, mz, E_si)
         history.append([B_tesla, J_tesla, mx, my, mz, E_si])
 
+        # Snapshot trigger logic
+        should_save = False
+        if J_par_last_saved is None:
+            # Always save the very first step
+            should_save = True
+        elif params.mstep is not None:
+            if abs(Jpar - J_par_last_saved) >= params.mstep:
+                should_save = True
+        elif params.snapshot_every > 0 and (step_idx % params.snapshot_every) == 0:
+            should_save = True
+
+        if should_save:
+            if J_par_last_saved is not None:
+                config_idx += 1
+            J_par_last_saved = Jpar
+
+            if params.snapshot_every > 0:
+                vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla:+.4e}T.vtu"
+                write_vtu_tetra(
+                    vtu_path,
+                    points,
+                    np.array(geom.conn),
+                    point_data={
+                        "m": np.array(m).astype(np.float32),
+                        "U": np.array(U).astype(np.float32),
+                    },
+                    cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
+                )
+
         append_hysteresis_row(
             csv_path,
+            config_idx,
             B_tesla,
             J_tesla,
             float(info.get("E", np.nan)),
             float(info.get("gnorm", np.nan)),
         )
-
-        if params.snapshot_every > 0 and (step_idx % params.snapshot_every == 0):
-            vtu_path = out_dir / f"state_{step_idx:05d}_B{Bmag:+.6e}.vtu"
-            # m_np is only needed for VTU, we move it inside the if
-            m_np = np.array(m)
-            write_vtu_tetra(
-                vtu_path,
-                points,
-                np.array(geom.conn),
-                point_data={
-                    "m": m_np.astype(np.float32),
-                    "U": np.array(U).astype(np.float32),
-                },
-                cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
-            )
 
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
@@ -350,6 +449,14 @@ def run_hysteresis_loop(
             f"it={info.get('iters', 0):.0f}  "
             f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
         )
+
+        if info.get("mfinal_reached", False):
+            print(
+                f"\n[loop] mfinal reached ({J_tesla:.4f} T <= "
+                f"{params.mfinal * params.Js_ref:.4f} T). "
+                "Stopping sweep."
+            )
+            break
 
     print(f"\nHysteresis loop finished in {total_time:.3f} s.")
     return {
