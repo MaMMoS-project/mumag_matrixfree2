@@ -54,13 +54,17 @@ Convergence is determined by the criteria established by *Gill, Murray, and Wrig
 
 ### Matrix-Free Poisson Solver
 To solve the magnetic scalar potential $U$, we use a **Preconditioned Conjugate Gradient (PCG)** method. Instead of assembling a global stiffness matrix $A$, the operator-vector product $A u$ is computed element-wise in JAX.
+Magnetostatic (demagnetization) energy can be toggled using the `no_demag` parameter in the `.p2` file or the `--no-demag` flag via the CLI.
 
 ### Grain Orientation & Local Anisotropy
 The package supports arbitrary grain orientations and local orthorhombic (magnetoelastic) anisotropy.
-- **Euler Angles**: Rotations follow the **Bunge (Z-X-Z) passive intrinsic** convention. This represents a rotation from the laboratory coordinate system to the local crystal frame.
-- **Local Frame Projection**: Energy terms (Uniaxial $K_1$ and Orthorhombic $K, K'$) are calculated by projecting the magnetization vector $\mathbf{m}$ onto the rotated local crystal axes $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$.
-- **Orthorhombic Anisotropy**: Supported via per-element data in `.inp` files (using labels `k1me` and `k1me_p`), allowing for heterogeneous strain-induced effects that rotate with the grain.
-- **Additive Behavior**: Per-element magnetoelastic constants (`k1me`, `k1me_p`) are **added** to the material-wide magnetocrystalline anisotropy (`K1`). This allows for local perturbations of the primary anisotropy within a single grain or material group.
+- **Euler Angles**: Rotations follow the **Bunge (Z-X-Z) passive intrinsic** convention. This represents a rotation from the laboratory coordinate system to the local crystal frame $(\mathbf{e}_x, \mathbf{e}_y, \mathbf{e}_z)$.
+- **Uniaxial Anisotropy**: Defined in the `.krn` file as $K_1$. The energy density is $e_{\text{uni}} = -K_1 (\mathbf{m} \cdot \mathbf{e}_z)^2$.
+- **Magnetoelastic (Orthorhombic) Anisotropy**: Supported via per-element data in `.inp` files using labels `k1me` (uniaxial-like) and `k1me_p` (pure orthorhombic). The energy density is:
+  $e_{\text{me}} = -k_{1\text{me}} (\mathbf{m} \cdot \mathbf{e}_z)^2 + k'_{1\text{me}} [(\mathbf{m} \cdot \mathbf{e}_x)^2 - (\mathbf{m} \cdot \mathbf{e}_y)^2]$
+- **Additive Behavior**: Per-element magnetoelastic constants are **added** to the material-wide magnetocrystalline anisotropy. The total anisotropy energy density is:
+  $e_{\text{total}} = -(K_1 + k_{1\text{me}}) (\mathbf{m} \cdot \mathbf{e}_z)^2 + k'_{1\text{me}} [(\mathbf{m} \cdot \mathbf{e}_x)^2 - (\mathbf{m} \cdot \mathbf{e}_y)^2]$
+  This allows for local perturbations of the primary anisotropy within a single grain or material group while ensuring that all terms rotate correctly with the grain's crystal frame.
 
 ### GPU Memory & Batching
 To handle meshes with millions of elements on GPUs with limited memory, element-wise operations are **batched (chunked)**. 
@@ -76,9 +80,17 @@ The primary example is a demagnetization curve of a 20nm NdFeB-like cube.
 pixi run sample
 ```
 This script will:
-1. Generate a 20nm cube mesh with 2nm resolution.
-2. Run a field sweep from 2.0 T down to -8.0 T.
-3. Save snapshots in `bench_demag_curve/` and magnetization data in `.mh` format.
+1. Generate a 20nm cube mesh.
+2. Run baseline simulations (with and without demag).
+3. Run verification simulations using `.inp` and `.krn` files to demonstrate additive magnetoelastic consistency.
+4. Automatically verify that the split-input results match the baseline exactly.
+
+### Mesh Input (.inp or .npz)
+The simulation driver `src/loop.py` supports two mesh formats:
+- **`.npz`**: A JAX-optimized format containing node coordinates (`knt`) and element connectivity/material IDs (`ijk`).
+- **`.inp`**: AVS UCD format. If the `.inp` file contains `cell_data` with labels `k1me` (or `kme`) and `k1me_p` (or `kmep`), these are automatically loaded and used for local magnetoelastic contributions.
+
+When providing a `modelname`, the driver automatically searches for `[modelname].npz` first, then `[modelname].inp`.
 
 ### Configuration (.p2 file)
 Simulations are controlled via `.p2` files (INI format). Example `cube_20nm.p2`:
@@ -122,6 +134,23 @@ Example Bunge row (Rotated 45° around Z and 10° tilt):
 ```text
 # phi1     Phi       phi2      K1        K1p   Js    A
   0.78539  0.17453   0.0       4.3e5     0.0   1.6   7.7e-12
+```
+
+### Advanced Anisotropy (.inp files with data)
+To add local strain-induced anisotropy, provide an `.inp` mesh with a `cell_data` section. The labels `k1me` and `k1me_p` must be in $J/m^3$ (SI units). The driver automatically normalizes these by the reference energy density $K_d = J_{s,max}^2 / 2\mu_0$ before the simulation.
+
+```text
+# Simplified .inp snippet with cell data
+8 6 0 2 0
+1 0.0 0.0 0.0
+...
+1 1 tet 1 2 3 6
+...
+2
+k1me, J/m3
+k1me_p, J/m3
+1 2.15e6 0.0
+...
 ```
 
 ### Key Parameters: mfinal & mstep
