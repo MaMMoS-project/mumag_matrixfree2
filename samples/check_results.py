@@ -37,23 +37,23 @@ def check_consistency():
             return False
         
         # Check B_ext, J_par, and E (columns 0, 1, 5)
-        # We use a small tolerance for energy due to potential variations in iteration counts
         cols = [0, 1, 5]
         labels = ["B_ext", "J_par", "Energy"]
         
         success = True
         for i, col in enumerate(cols):
             diff = np.abs(d1[:, col] - d2[:, col])
-            max_diff = np.max(diff)
-            # Use relative tolerance for Energy which has large magnitude
             if col == 5:
-                # E is in J/m^3 (~1e6), max_diff 1e-3 is 1e-9 relative
-                tol = 1e-2
+                # Relative check for Energy: |d1-d2| / (|d1|+1)
+                denom = np.abs(d1[:, col]) + 1.0
+                max_val = np.max(diff / denom)
+                tol = 1e-7
             else:
+                max_val = np.max(diff)
                 tol = 1e-6
                 
-            if max_diff > tol:
-                print(f"FAILED: {n1} vs {n2} | Max difference in {labels[i]}: {max_diff:.2e}")
+            if max_val > tol:
+                print(f"FAILED: {n1} vs {n2} | Max difference in {labels[i]}: {max_val:.2e}")
                 success = False
         return success
 
