@@ -35,9 +35,7 @@ def test_micromagnetic_energies():
     tmp_path = Path("tmp_cube_for_test.npz")
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
 
-    knt, ijk = add_shell.run_add_shell_pipeline(
-        in_npz=str(tmp_path), layers=4, K=1.4, h0=h, verbose=False
-    )
+    knt, ijk = add_shell.run_add_shell_pipeline(in_npz=str(tmp_path), layers=4, K=1.4, h0=h, verbose=False)
     if tmp_path.exists():
         tmp_path.unlink()
 
@@ -46,9 +44,7 @@ def test_micromagnetic_energies():
 
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
-    boundary_mask = jnp.asarray(
-        add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64
-    )
+    boundary_mask = jnp.asarray(add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64)
 
     geom = TetGeom(
         conn=jnp.asarray(conn32, dtype=jnp.int32),
@@ -107,9 +103,7 @@ def test_micromagnetic_energies():
     E_an_analytic_si = -K1 * V_mag_si * 0.5  # -K1 * cos^2(45) = -0.5*K1
 
     # 4. Kernel Creation
-    solve_U = make_solve_U(
-        geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl"
-    )
+    solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl")
     energy_and_grad, _, _ = make_energy_kernels(
         geom,
         A_lookup,
@@ -128,9 +122,7 @@ def test_micromagnetic_energies():
     assert abs(E_ex_calc_si - E_ex_analytic_si) / E_ex_analytic_si < 0.02
 
     # --- Zeeman ---
-    e_z, _ = energy_and_grad(
-        m_unif_x, jnp.zeros(knt.shape[0]), jnp.array([b_red, 0, 0])
-    )
+    e_z, _ = energy_and_grad(m_unif_x, jnp.zeros(knt.shape[0]), jnp.array([b_red, 0, 0]))
     E_z_calc_si = float(e_z) * SI_FACTOR
     assert abs(E_z_calc_si - E_z_analytic_si) / abs(E_z_analytic_si) < 1e-6
 

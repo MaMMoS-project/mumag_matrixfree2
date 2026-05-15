@@ -169,9 +169,7 @@ class MinimState:
         return (children, aux_data)
 
     @classmethod
-    def tree_unflatten(
-        cls, aux_data: Any, children: tuple[Array, Array, Array, Array, Array, Array]
-    ) -> MinimState:
+    def tree_unflatten(cls, aux_data: Any, children: tuple[Array, Array, Array, Array, Array, Array]) -> MinimState:
         """Unflatten the state for JAX.
 
         Args:
@@ -475,9 +473,7 @@ def make_minimizer(
         else:
             # Fallback to B_ext direction if h not provided
             B_norm = jnp.linalg.norm(B_ext)
-            h_jax = jnp.where(
-                B_norm > 1e-20, B_ext / B_norm, jnp.array([0.0, 0.0, 1.0])
-            )
+            h_jax = jnp.where(B_norm > 1e-20, B_ext / B_norm, jnp.array([0.0, 0.0, 1.0]))
 
         def get_m_par(m_current: Array) -> float:
             # Volume averaged m parallel to h
@@ -534,10 +530,7 @@ def make_minimizer(
             if mfinal is not None and get_m_par(state.m) <= mfinal:
                 if verbose:
                     mh_tesla = get_m_par(state.m) * Js_ref
-                    print(
-                        f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                        f"mh={mh_tesla:+.4f} T"
-                    )
+                    print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  mh={mh_tesla:+.4f} T")
                     print(f"[LS {k:03d}] mfinal reached, stopping early.")
                 return (
                     state.m,
@@ -555,10 +548,7 @@ def make_minimizer(
 
             if verbose and (k % 10 == 0):
                 mh_tesla = get_m_par(state.m) * Js_ref
-                print(
-                    f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                    f"mh={mh_tesla:+.4f} T"
-                )
+                print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  mh={mh_tesla:+.4f} T")
 
             if converged:
                 t_ls_total += time.time() - start_ls

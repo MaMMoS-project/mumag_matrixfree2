@@ -164,9 +164,7 @@ def approx_max_volume_from_edge(h: float) -> float:
 # ------------------------------- Geometry: BOX -------------------------------
 
 
-def oriented_point(
-    x: float, y: float, z: float, ex: np.ndarray, ey: np.ndarray, ez: np.ndarray
-) -> np.ndarray:
+def oriented_point(x: float, y: float, z: float, ex: np.ndarray, ey: np.ndarray, ez: np.ndarray) -> np.ndarray:
     """Project local coordinates into the world frame.
 
     Args:
@@ -354,9 +352,7 @@ def subdivide_icosphere(
     return V, F
 
 
-def ellipsoid_surface(
-    extents: tuple[float, float, float], subdiv: int
-) -> tuple[np.ndarray, np.ndarray]:
+def ellipsoid_surface(extents: tuple[float, float, float], subdiv: int) -> tuple[np.ndarray, np.ndarray]:
     """Build a triangular surface mesh of an ellipsoid.
 
     Rotational symmetry is enforced in the local xy-plane.
@@ -374,10 +370,7 @@ def ellipsoid_surface(
     if not (Lx > 0 and Ly > 0 and Lz > 0):
         raise ValueError("All ellipsoid extents must be positive.")
     if abs(Lx - Ly) > 1e-12:
-        msg = (
-            f"[warn] Enforcing rotational symmetry: Lx({Lx}) != Ly({Ly}). "
-            "Using average in xy."
-        )
+        msg = f"[warn] Enforcing rotational symmetry: Lx({Lx}) != Ly({Ly}). Using average in xy."
         print(msg, file=_sys.stderr)
     Lxy = 0.5 * (Lx + Ly)
     a = Lxy / 2.0
@@ -389,9 +382,7 @@ def ellipsoid_surface(
     V, F = subdivide_icosphere(V0, F0, subdiv=max(int(subdiv), 0))
 
     # Scale to ellipsoid in LOCAL coordinates
-    V = np.ascontiguousarray(
-        np.column_stack((a * V[:, 0], b * V[:, 1], c * V[:, 2])), dtype=np.float64
-    )
+    V = np.ascontiguousarray(np.column_stack((a * V[:, 0], b * V[:, 1], c * V[:, 2])), dtype=np.float64)
     F = np.asarray(F, dtype=np.int32)
     return V, F
 
@@ -399,9 +390,7 @@ def ellipsoid_surface(
 # ------------------------------- Auto ellipsoid subdivision ------------------
 
 
-def auto_ell_subdiv(
-    Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
-) -> int:
+def auto_ell_subdiv(Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0) -> int:
     """Choose icosphere subdivision level to match target edge length h.
 
     Args:
@@ -423,9 +412,7 @@ def auto_ell_subdiv(
     return max(0, n)
 
 
-def parse_ell_subdiv_option(
-    val: str, Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0
-) -> int:
+def parse_ell_subdiv_option(val: str, Lx: float, Ly: float, Lz: float, h: float, kappa: float = 1.0) -> int:
     """Parse icosphere subdivision level from user input.
 
     Args:
@@ -484,9 +471,7 @@ def sample_bezier(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int) -> np.
     return np.array([bezier_quad(p0, p1, p2, t) for t in ts])
 
 
-def build_eye_polygon(
-    length: float = 3.5, width: float = 1.0, samples_per_curve: int = 64
-) -> np.ndarray:
+def build_eye_polygon(length: float = 3.5, width: float = 1.0, samples_per_curve: int = 64) -> np.ndarray:
     """Create a 2D eye shape polygon from two Bézier arcs in local XY.
 
     Args:
@@ -502,9 +487,7 @@ def build_eye_polygon(
     p_right = np.array([length / 2.0, 0.0])
 
     top_curve = sample_bezier(p_left, p_top, p_right, samples_per_curve)
-    bottom_curve = sample_bezier(
-        p_right, np.array([0.0, -width]), p_left, samples_per_curve
-    )
+    bottom_curve = sample_bezier(p_right, np.array([0.0, -width]), p_left, samples_per_curve)
 
     polygon = np.vstack([top_curve, bottom_curve])
     return polygon
@@ -531,9 +514,7 @@ def _points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
         xi, yi = x[i], y[i]
         xj, yj = x[j], y[j]
         # edges where the horizontal ray intersects
-        intersect = ((yi > py) != (yj > py)) & (
-            px < (xj - xi) * (py - yi) / (yj - yi + 1e-30) + xi
-        )
+        intersect = ((yi > py) != (yj > py)) & (px < (xj - xi) * (py - yi) / (yj - yi + 1e-30) + xi)
         inside ^= intersect
     return inside
 
@@ -622,9 +603,7 @@ def mesh_backend_meshpy_elliptic_cylinder(
     V_local = np.vstack([verts_top, verts_bottom])
 
     V_world = np.ascontiguousarray(
-        V_local[:, 0:1] * ex[None, :]
-        + V_local[:, 1:2] * ey[None, :]
-        + V_local[:, 2:3] * ez[None, :],
+        V_local[:, 0:1] * ex[None, :] + V_local[:, 1:2] * ey[None, :] + V_local[:, 2:3] * ez[None, :],
         dtype=np.float64,
     )
 
@@ -797,9 +776,7 @@ def mesh_backend_grid_elliptic_cylinder(
     polygon = build_ellipse_polygon(a=a, b=b, n=128)
 
     def to_local(pw: np.ndarray) -> np.ndarray:
-        return np.array(
-            [np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64
-        )
+        return np.array([np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64)
 
     for k in range(nz):
         for j in range(ny):
@@ -831,10 +808,7 @@ def mesh_backend_grid_elliptic_cylinder(
     tets = np.asarray(tets, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     if verbose:
-        msg = (
-            f"[info:grid:elliptic_cylinder] nx,ny,nz=({nx},{ny},{nz}); "
-            f"nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
-        )
+        msg = f"[info:grid:elliptic_cylinder] nx,ny,nz=({nx},{ny},{nz}); nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
         print(msg, flush=True)
     return knt, ijk
 
@@ -886,9 +860,7 @@ def mesh_backend_meshpy_eye(
 
     # Map LOCAL -> WORLD using orthonormal frame (ex, ey, ez)
     V_world = np.ascontiguousarray(
-        V_local[:, 0:1] * ex[None, :]
-        + V_local[:, 1:2] * ey[None, :]
-        + V_local[:, 2:3] * ez[None, :],
+        V_local[:, 0:1] * ex[None, :] + V_local[:, 1:2] * ey[None, :] + V_local[:, 2:3] * ez[None, :],
         dtype=np.float64,
     )
 
@@ -1073,9 +1045,7 @@ def mesh_backend_grid_eye(
     polygon = build_eye_polygon(length=length, width=width)
 
     def to_local(pw: np.ndarray) -> np.ndarray:
-        return np.array(
-            [np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64
-        )
+        return np.array([np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64)
 
     for k in range(nz):
         for j in range(ny):
@@ -1109,10 +1079,7 @@ def mesh_backend_grid_eye(
     tets = np.asarray(tets, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     if verbose:
-        msg = (
-            f"[info:grid:eye] nx,ny,nz=({nx},{ny},{nz}); "
-            f"nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
-        )
+        msg = f"[info:grid:eye] nx,ny,nz=({nx},{ny},{nz}); nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
         print(msg, flush=True)
     return knt, ijk
 
@@ -1204,9 +1171,7 @@ def mesh_backend_meshpy_ellipsoid(
     # Build LOCAL ellipsoid surface then orient to world using (ex,ey,ez)
     V_local, F = ellipsoid_surface(extents, subdiv=subdiv)
     V_world = np.ascontiguousarray(
-        V_local[:, 0:1] * ex[None, :]
-        + V_local[:, 1:2] * ey[None, :]
-        + V_local[:, 2:3] * ez[None, :],
+        V_local[:, 0:1] * ex[None, :] + V_local[:, 1:2] * ey[None, :] + V_local[:, 2:3] * ez[None, :],
         dtype=np.float64,
     )
 
@@ -1302,10 +1267,7 @@ def mesh_backend_grid_box(
     tets = np.asarray(tets, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     if verbose:
-        msg = (
-            f"[info:grid:box] nx,ny,nz=({nx},{ny},{nz}); "
-            f"nodes={knt.shape[0]}, tets={ijk.shape[0]}"
-        )
+        msg = f"[info:grid:box] nx,ny,nz=({nx},{ny},{nz}); nodes={knt.shape[0]}, tets={ijk.shape[0]}"
         print(msg, flush=True)
     return knt, ijk
 
@@ -1335,10 +1297,7 @@ def mesh_backend_grid_ellipsoid(
 
     Lx, Ly, Lz = extents
     if abs(Lx - Ly) > 1e-12:
-        msg = (
-            f"[warn] Enforcing rotational symmetry: Lx({Lx}) != Ly({Ly}). "
-            "Using average in xy."
-        )
+        msg = f"[warn] Enforcing rotational symmetry: Lx({Lx}) != Ly({Ly}). Using average in xy."
         print(msg, file=_sys.stderr)
     Lxy = 0.5 * (Lx + Ly)
     a, b, c = Lxy / 2.0, Lxy / 2.0, Lz / 2.0
@@ -1368,9 +1327,7 @@ def mesh_backend_grid_ellipsoid(
 
     # Helper to project WORLD point back to LOCAL coordinates (orthonormal frame)
     def to_local(pw: np.ndarray) -> np.ndarray:
-        return np.array(
-            [np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64
-        )
+        return np.array([np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64)
 
     tets: list[tuple[int, int, int, int]] = []
     for k in range(nz):
@@ -1403,10 +1360,7 @@ def mesh_backend_grid_ellipsoid(
     tets = np.asarray(tets, dtype=np.int32)
     ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
     if verbose:
-        msg = (
-            f"[info:grid:ellipsoid] nx,ny,nz=({nx},{ny},{nz}); "
-            f"nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
-        )
+        msg = f"[info:grid:ellipsoid] nx,ny,nz=({nx},{ny},{nz}); nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
         print(msg, flush=True)
     return knt, ijk
 
@@ -1424,8 +1378,7 @@ def run_single_solid_mesher(
     dir_x: str | tuple[float, float, float] = "1,0,0",
     dir_y: str | tuple[float, float, float] = "0,1,0",
     dir_z: str | tuple[float, float, float] = "0,0,1",  # ellipsoid symmetry axis
-    ell_subdiv: str
-    | int = "auto",  # ellipsoid + meshpy: int >=0 or 'auto'/'automatic'/'-1'
+    ell_subdiv: str | int = "auto",  # ellipsoid + meshpy: int >=0 or 'auto'/'automatic'/'-1'
     out_name: str | None = "single_solid",
     out_data_name: str | None = None,  # overrides .npz base name
     out_vis_name: str | None = None,  # overrides .vtu base name
@@ -1474,11 +1427,7 @@ def run_single_solid_mesher(
     def _csv_or_tuple(
         v: str | tuple[float, float, float],
     ) -> tuple[float, float, float]:
-        return (
-            parse_csv3(v)
-            if isinstance(v, str)
-            else (float(v[0]), float(v[1]), float(v[2]))
-        )
+        return parse_csv3(v) if isinstance(v, str) else (float(v[0]), float(v[1]), float(v[2]))
 
     dx = _csv_or_tuple(dir_x)
     dy = _csv_or_tuple(dir_y)
@@ -1492,10 +1441,7 @@ def run_single_solid_mesher(
 
     # Dispatch geometry + backend
     if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly"):
-        msg = (
-            "geom must be 'box' or 'ellipsoid' or 'eye' or "
-            "'elliptic_cylinder' or 'poly'"
-        )
+        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly'"
         raise ValueError(msg)
     if backend not in ("meshpy", "grid"):
         raise ValueError("backend must be 'meshpy' or 'grid'")
@@ -1513,20 +1459,15 @@ def run_single_solid_mesher(
                 verbose=bool(verbose),
             )
         else:
-            knt, ijk = mesh_backend_grid_box(
-                (Lx, Ly, Lz), ex, ey, ez, h=float(h), verbose=bool(verbose)
-            )
+            knt, ijk = mesh_backend_grid_box((Lx, Ly, Lz), ex, ey, ez, h=float(h), verbose=bool(verbose))
     elif geom == "ellipsoid":
         # Ellipsoid (now oriented using ex,ey,ez)
         if backend == "meshpy":
-            n_subdiv = parse_ell_subdiv_option(
-                ell_subdiv, Lx, Ly, Lz, float(h), kappa=1.0
-            )
+            n_subdiv = parse_ell_subdiv_option(ell_subdiv, Lx, Ly, Lz, float(h), kappa=1.0)
             if (
                 verbose
                 and isinstance(ell_subdiv, str)
-                and ell_subdiv.strip().lower()
-                in ("auto", "automatic", "uatomatic", "-1")
+                and ell_subdiv.strip().lower() in ("auto", "automatic", "uatomatic", "-1")
             ):
                 print(f"[info] auto ell-subdiv = {n_subdiv} for h={h}", flush=True)
             knt, ijk = mesh_backend_meshpy_ellipsoid(
@@ -1540,9 +1481,7 @@ def run_single_solid_mesher(
                 verbose=bool(verbose),
             )
         else:
-            knt, ijk = mesh_backend_grid_ellipsoid(
-                (Lx, Ly, Lz), h=float(h), ex=ex, ey=ey, ez=ez, verbose=bool(verbose)
-            )
+            knt, ijk = mesh_backend_grid_ellipsoid((Lx, Ly, Lz), h=float(h), ex=ex, ey=ey, ez=ez, verbose=bool(verbose))
     elif geom == "eye":
         # Eye: interpret Lx as length, Ly as full width, Lz as thickness
         length = float(Lx)
@@ -1630,10 +1569,7 @@ def run_single_solid_mesher(
     if not no_vis:
         out_vtu = with_ext(vis_name, ".vtu")
         if not HAVE_meshio:
-            msg = (
-                "[warn] meshio not installed; skipping .vtu export. "
-                "Install with: pip install meshio"
-            )
+            msg = "[warn] meshio not installed; skipping .vtu export. Install with: pip install meshio"
             print(msg, file=sys.stderr)
             out_vtu = None
         else:
@@ -1684,8 +1620,7 @@ def mesh_backend_neper_poly(
         "-morphooptistop",
         "val=1e-2",
         "-domain",
-        f"cube({size_x},{size_y},{size_z}):translate({-size_x / 2},"
-        f"{-size_y / 2},{-size_z / 2})",
+        f"cube({size_x},{size_y},{size_z}):translate({-size_x / 2},{-size_y / 2},{-size_z / 2})",
         "-reg",
         "1",
     ]
@@ -1742,10 +1677,7 @@ def mesh_backend_neper_poly(
         for _key, data_list in mesh.cell_data.items():
             # Each data_list aligns with mesh.cells blocks
             for cell_block, data in zip(mesh.cells, data_list, strict=False):
-                if (
-                    getattr(cell_block, "type", getattr(cell_block, "type", None))
-                    == "tetra"
-                ):
+                if getattr(cell_block, "type", getattr(cell_block, "type", None)) == "tetra":
                     mat = np.asarray(data, dtype=np.int32).ravel()
                     break
             if mat is not None:
@@ -1822,8 +1754,7 @@ def main() -> None:
     Parses command line arguments and invokes run_single_solid_mesher.
     """
     ap = argparse.ArgumentParser(
-        description="Single solid mesher (box or ellipsoid) centered at "
-        "origin with meshpy or grid backend."
+        description="Single solid mesher (box or ellipsoid) centered at origin with meshpy or grid backend."
     )
     ap.add_argument(
         "--geom",
@@ -1844,23 +1775,20 @@ def main() -> None:
         "--h",
         type=float,
         default=2.0,
-        help="Target characteristic edge length for the core mesh "
-        "(mesh units, e.g., nm).",
+        help="Target characteristic edge length for the core mesh (mesh units, e.g., nm).",
     )
     ap.add_argument(
         "--minratio",
         type=float,
         default=1.4,
-        help="TetGen quality minratio (-q) for tetrahedron refinement "
-        "(MeshPy backend only).",
+        help="TetGen quality minratio (-q) for tetrahedron refinement (MeshPy backend only).",
     )
     ap.add_argument(
         "--backend",
         type=str,
         default="meshpy",
         choices=["meshpy", "grid"],
-        help="Meshing engine: meshpy (TetGen) for quality/volume "
-        "constraints, or grid (regular Freudenthal split).",
+        help="Meshing engine: meshpy (TetGen) for quality/volume constraints, or grid (regular Freudenthal split).",
     )
 
     # Orientation (applies to BOTH box and ellipsoid now)
@@ -1874,15 +1802,13 @@ def main() -> None:
         "--dir-y",
         type=str,
         default="0,1,0",
-        help="Initial direction for the local y-axis as 'x,y,z' "
-        "(orthonormalized against x).",
+        help="Initial direction for the local y-axis as 'x,y,z' (orthonormalized against x).",
     )
     ap.add_argument(
         "--dir-z",
         type=str,
         default="0,0,1",
-        help="Initial direction for the local z-axis as 'x,y,z' "
-        "(symmetry axis for ellipsoids).",
+        help="Initial direction for the local z-axis as 'x,y,z' (symmetry axis for ellipsoids).",
     )
 
     # Ellipsoid surface tessellation (meshpy backend only); allow 'auto'
@@ -1890,8 +1816,7 @@ def main() -> None:
         "--ell-subdiv",
         type=str,
         default="auto",
-        help="(ELLIPSOID only) Icosphere subdivision level: "
-        "non-negative integer or 'auto' (derived from h).",
+        help="(ELLIPSOID only) Icosphere subdivision level: non-negative integer or 'auto' (derived from h).",
     )
 
     ap.add_argument(

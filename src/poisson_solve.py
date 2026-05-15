@@ -90,9 +90,7 @@ def _make_B_getter(
         grad_phi = geom_p.grad_phi
 
         def _get_B(conn_c: Array, s: int, dtype) -> Array:
-            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(
-                dtype
-            )
+            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
 
         return _get_B
 
@@ -102,9 +100,7 @@ def _make_B_getter(
         JinvT = geom_p.JinvT
 
         def _get_B(conn_c: Array, s: int, dtype) -> Array:
-            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(
-                dtype
-            )
+            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
             return _B_from_JinvT(JinvT_c, dtype)
 
         return _get_B
@@ -197,9 +193,7 @@ def make_poisson_ops(
 
             # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
             contrib = Ve_c[:, None] * (
-                B_c[..., 0] * grad_U[:, 0, None]
-                + B_c[..., 1] * grad_U[:, 1, None]
-                + B_c[..., 2] * grad_U[:, 2, None]
+                B_c[..., 0] * grad_U[:, 0, None] + B_c[..., 1] * grad_U[:, 1, None] + B_c[..., 2] * grad_U[:, 2, None]
             )
 
             if assembly == "scatter":
@@ -232,9 +226,7 @@ def make_poisson_ops(
             # Unrolled RHS: contrib_a = (Js * Ve / 4) * (sum_b m_b . grad_phi_a)
             m_sum = m_e[:, 0, :] + m_e[:, 1, :] + m_e[:, 2, :] + m_e[:, 3, :]
             dot_term = 0.25 * (
-                B_c[..., 0] * m_sum[:, 0, None]
-                + B_c[..., 1] * m_sum[:, 1, None]
-                + B_c[..., 2] * m_sum[:, 2, None]
+                B_c[..., 0] * m_sum[:, 0, None] + B_c[..., 1] * m_sum[:, 1, None] + B_c[..., 2] * m_sum[:, 2, None]
             )
 
             contrib = (Ve_c * Js_c)[:, None] * dot_term
@@ -255,9 +247,7 @@ def make_poisson_ops(
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             B_c = _get_B(conn_c, s, dtype)
             # Unrolled norm squared: |grad_phi_a|^2
-            local = Ve_c[:, None] * (
-                B_c[..., 0] ** 2 + B_c[..., 1] ** 2 + B_c[..., 2] ** 2
-            )
+            local = Ve_c[:, None] * (B_c[..., 0] ** 2 + B_c[..., 1] ** 2 + B_c[..., 2] ** 2)
             if assembly == "scatter":
                 return assemble_scatter(d_acc, conn_c, local)
             else:
@@ -534,9 +524,7 @@ def make_solve_U(
             np.array(geom.conn),
             np.array(geom.volume),
             gp,
-            boundary_mask=np.array(boundary_mask)
-            if boundary_mask is not None
-            else None,
+            boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
             reg=poisson_reg,
         )
 

@@ -136,9 +136,7 @@ def find_outer_boundary_mask(ijk: np.ndarray, num_nodes: int) -> np.ndarray:
     return mask
 
 
-def weld_points(
-    knt: np.ndarray, ijk: np.ndarray, tol: float = 1e-12
-) -> tuple[np.ndarray, np.ndarray, int]:
+def weld_points(knt: np.ndarray, ijk: np.ndarray, tol: float = 1e-12) -> tuple[np.ndarray, np.ndarray, int]:
     """Fuse nodes closer than 'tol' using integer grid hashing.
 
     Args:
@@ -193,9 +191,7 @@ def orient_tets_positive(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
     return t
 
 
-def remove_degenerate_and_duplicate_tets(
-    knt: np.ndarray, ijk: np.ndarray, vol_eps: float = 1e-20
-) -> np.ndarray:
+def remove_degenerate_and_duplicate_tets(knt: np.ndarray, ijk: np.ndarray, vol_eps: float = 1e-20) -> np.ndarray:
     """Drop tets with repeated nodes, near-zero volume, or identical node sets.
 
     Args:
@@ -297,9 +293,7 @@ def build_layer_nodes(
         s = K**layer_idx
         t = layer_idx / layers if layers > 1 else 1.0
         L_target = s * Lmax
-        sx = np.array(
-            [L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float
-        )
+        sx = np.array([L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float)
         sv = (1 - t) * np.array([1.0, 1.0, 1.0]) + t * sx
 
         r = sv.max() / max(sv.min(), 1e-12)
@@ -347,9 +341,7 @@ def make_shell_plc_from_surface(
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
     surf_verts = np.unique(tris0.reshape(-1))
 
-    knt_all, node_map, svecs_layer = build_layer_nodes(
-        knt0, surf_verts, center, K, layers
-    )
+    knt_all, node_map, svecs_layer = build_layer_nodes(knt0, surf_verts, center, K, layers)
 
     facets: list[list[int]] = []
     for layer_idx in range(0, layers + 1):
@@ -369,10 +361,7 @@ def make_shell_plc_from_surface(
         return knt_all[vids].mean(axis=0)
 
     seeds = np.vstack(
-        [
-            0.5 * (centroid_at(layer_idx) + centroid_at(layer_idx + 1))
-            for layer_idx in range(layers)
-        ]
+        [0.5 * (centroid_at(layer_idx) + centroid_at(layer_idx + 1)) for layer_idx in range(layers)]
     ).astype(np.float64)
 
     # Optional sanity check:
@@ -436,8 +425,8 @@ def add_shell_with_meshpy(
         raise RuntimeError("Could not find outer surface triangles.")
 
     # PLC creation
-    knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = (
-        make_shell_plc_from_surface(knt0, tris0, layers=layers, K=K, center=center)
+    knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = make_shell_plc_from_surface(
+        knt0, tris0, layers=layers, K=K, center=center
     )
 
     mi = MeshInfo()
@@ -453,14 +442,10 @@ def add_shell_with_meshpy(
         beta = 1.0
 
     if h0 is None:
-        raise RuntimeError(
-            "Internal error: h0 must be resolved before calling add_shell_with_meshpy."
-        )
+        raise RuntimeError("Internal error: h0 must be resolved before calling add_shell_with_meshpy.")
 
     # New: drive h_layer_idx from the actual sv used for S_{layer_idx+1}
-    gms = [
-        float(np.exp(np.log(sv).mean())) for sv in svecs_layer
-    ]  # geometric means (length 'layers')
+    gms = [float(np.exp(np.log(sv).mean())) for sv in svecs_layer]  # geometric means (length 'layers')
 
     if hmax is None:
         scale = 1.0
@@ -590,9 +575,7 @@ def run_add_shell_pipeline(
     if ijk0.shape[1] >= 5:
         ijk_body = ijk0[:, :5].astype(np.int32)
     else:
-        ijk_body = np.hstack(
-            [ijk0[:, :4].astype(np.int32), np.ones((ijk0.shape[0], 1), dtype=np.int32)]
-        )  # dummy mat
+        ijk_body = np.hstack([ijk0[:, :4].astype(np.int32), np.ones((ijk0.shape[0], 1), dtype=np.int32)])  # dummy mat
 
     # ---- Determine geometry triplet (L, K, KL) based on flags ----
     if auto_layers and auto_K:
@@ -621,10 +604,7 @@ def run_add_shell_pipeline(
     else:
         # Neither auto; require at least L and K
         if (L is None) or (K_val is None):
-            raise ValueError(
-                "Provide layers and K, or use auto_layers (KL & K) "
-                "or auto_K (KL & layers)."
-            )
+            raise ValueError("Provide layers and K, or use auto_layers (KL & K) or auto_K (KL & layers).")
         if L < 1 or K_val <= 1.0:
             raise ValueError("Require layers>=1 and K>1.")
 
@@ -701,10 +681,7 @@ def main():
 
     Parses command line arguments and invokes run_add_shell_pipeline.
     """
-    ap = argparse.ArgumentParser(
-        description="Add graded exterior tetrahedral layers using "
-        "MeshPy/TetGen (in-memory)."
-    )
+    ap = argparse.ArgumentParser(description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).")
     ap.add_argument(
         "--in",
         dest="in_npz",
@@ -786,12 +763,8 @@ def main():
         default=None,
         help="Limit Steiner points added by TetGen (-S#).",
     )
-    ap.add_argument(
-        "--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X)."
-    )
-    ap.add_argument(
-        "--verbose", action="store_true", help="Enable verbose TetGen output."
-    )
+    ap.add_argument("--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X).")
+    ap.add_argument("--verbose", action="store_true", help="Enable verbose TetGen output.")
 
     # NEW: optional VTU export of the merged (body + shells) mesh
     ap.add_argument(
@@ -838,9 +811,7 @@ def main():
         else:
             cells = [("tetra", ijk[:, :4].astype(np.int32))]
             cell_data = {"mat_id": [ijk[:, 4].astype(np.int32)]}
-            meshio.Mesh(
-                points=knt.astype(np.float64), cells=cells, cell_data=cell_data
-            ).write(out_vtu)
+            meshio.Mesh(points=knt.astype(np.float64), cells=cells, cell_data=cell_data).write(out_vtu)
             print(f"[ok] wrote VTU -> {out_vtu}")
 
     if args.out_npz:

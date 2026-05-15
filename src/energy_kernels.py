@@ -217,13 +217,9 @@ def make_energy_kernels(
 
     def _get_B(conn_c: Array, s: int, dtype: Any) -> Array:
         if grad_backend == "stored_grad_phi":
-            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(
-                dtype
-            )
+            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
         elif grad_backend == "stored_JinvT":
-            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(
-                dtype
-            )
+            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
             return _B_from_JinvT(JinvT_c, dtype)
         else:
             x_e = x_nodes[conn_c].astype(dtype)
@@ -283,11 +279,7 @@ def make_energy_kernels(
             contrib = a_ve_c[:, None, None] * Km
 
             # 2. Uniaxial Anisotropy Gradient (Quadratic)
-            v_e = (
-                m_e[:, :, 0] * k_c[:, None, 0]
-                + m_e[:, :, 1] * k_c[:, None, 1]
-                + m_e[:, :, 2] * k_c[:, None, 2]
-            )
+            v_e = m_e[:, :, 0] * k_c[:, None, 0] + m_e[:, :, 1] * k_c[:, None, 1] + m_e[:, :, 2] * k_c[:, None, 2]
 
             sum_v = (v_e[:, 0] + v_e[:, 1] + v_e[:, 2] + v_e[:, 3])[:, None]
             factor = -q_ve_c[:, None] * (sum_v + v_e)

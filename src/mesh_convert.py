@@ -134,11 +134,7 @@ def vtu_to_npz(vtu_path: str, npz_path: str) -> None:
     pts_arr = root.find(".//Points/DataArray")
     if pts_arr is None or pts_arr.text is None:
         raise ValueError("Could not locate Points/DataArray")
-    pts = (
-        np.fromstring(pts_arr.text.strip(), sep=" ", dtype=np.float32)
-        .reshape(-1, 3)
-        .astype(np.float64)
-    )
+    pts = np.fromstring(pts_arr.text.strip(), sep=" ", dtype=np.float32).reshape(-1, 3).astype(np.float64)
 
     conn_arr = root.find('.//Cells/DataArray[@Name="connectivity"]')
     if conn_arr is None or conn_arr.text is None:
@@ -158,13 +154,9 @@ def vtu_to_npz(vtu_path: str, npz_path: str) -> None:
 
 def main() -> None:
     """CLI entry point for mesh conversion."""
-    ap = argparse.ArgumentParser(
-        description="Convert between NPZ (knt/ijk) and VTU tetra meshes."
-    )
+    ap = argparse.ArgumentParser(description="Convert between NPZ (knt/ijk) and VTU tetra meshes.")
     ap.add_argument("--in", dest="inp", required=True, help="Input mesh (.npz or .vtu)")
-    ap.add_argument(
-        "--out", dest="out", required=True, help="Output mesh (.vtu or .npz)"
-    )
+    ap.add_argument("--out", dest="out", required=True, help="Output mesh (.vtu or .npz)")
     args = ap.parse_args()
 
     inp = str(args.inp)

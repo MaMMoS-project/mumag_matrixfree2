@@ -214,9 +214,7 @@ def run_sw_test_inp(inp_path: str) -> None:
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     from dataclasses import replace
 
-    M_nodal = compute_node_volumes(
-        replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=100_000
-    )
+    M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=100_000)
     V_mag = float(np.sum(volume[mat_id == 1])) if max_mat >= 1 else 0.0
     if V_mag == 0:
         print("Warning: No magnetic material (mat_id=1) found or volume is zero.")
@@ -224,9 +222,7 @@ def run_sw_test_inp(inp_path: str) -> None:
     Bk_si = 2.0 * MU0_SI * K1_si / Js_si
     print(f"Theoretical Bk: {Bk_si:.4f} T")
 
-    minimize = make_minimizer_no_demag(
-        geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
-    )
+    minimize = make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal)
 
     angles_deg = [1, 15, 30, 45, 60, 75, 89]
     B_vals = np.arange(8.0, -9.0, -0.5)  # Medium step for testing
@@ -251,9 +247,7 @@ def run_sw_test_inp(inp_path: str) -> None:
 
             m_avg = jnp.mean(m[geom.conn], axis=1)
             Js_e = Js_lookup[geom.mat_id - 1]
-            J_avg = (
-                jnp.sum(geom.volume[:, None] * Js_e[:, None] * m_avg, axis=0) / V_mag
-            )
+            J_avg = jnp.sum(geom.volume[:, None] * Js_e[:, None] * m_avg, axis=0) / V_mag
             j_par = float(jnp.dot(J_avg, h_dir))
             j_par_list.append(j_par)
 
@@ -262,16 +256,11 @@ def run_sw_test_inp(inp_path: str) -> None:
         idx_sw = np.argmax(grad_j)
         B_sw_exp = abs(B_vals[idx_sw])
 
-        sw_factor = (np.sin(theta_rad) ** (2 / 3) + np.cos(theta_rad) ** (2 / 3)) ** (
-            -1.5
-        )
+        sw_factor = (np.sin(theta_rad) ** (2 / 3) + np.cos(theta_rad) ** (2 / 3)) ** (-1.5)
         B_sw_theory = Bk_si * sw_factor
 
         results.append({"angle": theta_deg, "exp": B_sw_exp, "theory": B_sw_theory})
-        print(
-            f"  Exp: {B_sw_exp:.3f} T | Theory: {B_sw_theory:.3f} T | "
-            f"Err: {abs(B_sw_exp - B_sw_theory):.3f} T"
-        )
+        print(f"  Exp: {B_sw_exp:.3f} T | Theory: {B_sw_theory:.3f} T | Err: {abs(B_sw_exp - B_sw_theory):.3f} T")
 
         with open(csv_results_path, "a") as f:
             f.write(f"{theta_deg},{B_sw_exp:.6f},{B_sw_theory:.6f}\n")
@@ -282,9 +271,7 @@ def run_sw_test_inp(inp_path: str) -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Stoner-Wohlfarth verification script using an external .inp mesh."
-    )
+    parser = argparse.ArgumentParser(description="Stoner-Wohlfarth verification script using an external .inp mesh.")
     parser.add_argument(
         "--inp",
         type=str,

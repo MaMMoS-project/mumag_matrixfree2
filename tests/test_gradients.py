@@ -34,9 +34,7 @@ def setup_geom():
     )
     tmp_path = Path("tmp_grad_test.npz")
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
-    knt, ijk = add_shell.run_add_shell_pipeline(
-        in_npz=str(tmp_path), layers=4, K=1.4, h0=h, verbose=False
-    )
+    knt, ijk = add_shell.run_add_shell_pipeline(in_npz=str(tmp_path), layers=4, K=1.4, h0=h, verbose=False)
     if tmp_path.exists():
         tmp_path.unlink()
 
@@ -44,9 +42,7 @@ def setup_geom():
     mat_id = ijk[:, 4].astype(np.int32)
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
-    boundary_mask = jnp.asarray(
-        add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64
-    )
+    boundary_mask = jnp.asarray(add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64)
 
     geom = TetGeom(
         conn=jnp.asarray(conn32, dtype=jnp.int32),
@@ -72,9 +68,7 @@ def setup_geom():
     k_easy_lookup = jnp.array([k_easy, k_easy])
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
-    M_nodal = compute_node_volumes(
-        replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=200_000
-    )
+    M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=200_000)
     V_mag_nm = np.sum(volume[mat_id == 1])
 
     return {
@@ -136,9 +130,7 @@ def test_exchange_gradient(setup_geom):
         for j in range(3):
 
             def e_func(m_val):
-                e, _ = energy_and_grad(
-                    m_val, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3)
-                )
+                e, _ = energy_and_grad(m_val, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3))
                 return float(e)
 
             eps = 1e-6
@@ -157,9 +149,7 @@ def test_exchange_gradient(setup_geom):
 def test_anisotropy_gradient(setup_geom):
     d = setup_geom
     m_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"]
-    )
+    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
     energy_and_grad, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
@@ -198,9 +188,7 @@ def test_zeeman_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
     b_ext = jnp.array([0.1 / d["Js_si"], 0.0, 0.0])
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"]
-    )
+    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
     energy_and_grad, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
@@ -238,9 +226,7 @@ def test_zeeman_gradient(setup_geom):
 def test_demag_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"]
-    )
+    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
     energy_and_grad, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),

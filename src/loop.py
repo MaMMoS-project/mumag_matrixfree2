@@ -47,9 +47,7 @@ _GRAD_HAT = np.array(
 )
 
 
-def compute_volume_JinvT(
-    knt: np.ndarray, conn: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute volume and inverse Jacobian transpose for P1 tetrahedra.
 
     Ensures positive orientation by swapping nodes (1,2) for elements
@@ -67,9 +65,7 @@ def compute_volume_JinvT(
     conn = np.asarray(conn, dtype=np.int64)
 
     x0 = knt[conn[:, 0]]
-    J = np.stack(
-        [knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2
-    )
+    J = np.stack([knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2)
     detJ = np.linalg.det(J)
 
     neg = detJ < 0
@@ -79,9 +75,7 @@ def compute_volume_JinvT(
         conn[neg, 1] = conn[neg, 2]
         conn[neg, 2] = tmp
         x0 = knt[conn[:, 0]]
-        J = np.stack(
-            [knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2
-        )
+        J = np.stack([knt[conn[:, 1]] - x0, knt[conn[:, 2]] - x0, knt[conn[:, 3]] - x0], axis=2)
         detJ = np.linalg.det(J)
 
     volume = np.abs(detJ) / 6.0
@@ -270,18 +264,14 @@ def load_materials(
     """
     # Priority 1: Explicitly provided materials KRN
     if mat_path is not None:
-        return load_materials_krn(
-            mat_path, G, mesh_unit=mesh_unit, shell_added=shell_added
-        )
+        return load_materials_krn(mat_path, G, mesh_unit=mesh_unit, shell_added=shell_added)
 
     # Priority 2: Automatic .krn discovery based on mesh name
     if mesh_path is not None:
         krn_path = Path(mesh_path).with_suffix(".krn")
         if krn_path.exists():
             print(f"[materials] Found auto-krn: {krn_path}")
-            return load_materials_krn(
-                str(krn_path), G, mesh_unit=mesh_unit, shell_added=shell_added
-            )
+            return load_materials_krn(str(krn_path), G, mesh_unit=mesh_unit, shell_added=shell_added)
 
     # Priority 3: Default (NdFeB-like)
     A_scale = (1.0 / mesh_unit) ** 2
@@ -303,9 +293,7 @@ def main() -> None:
     - Running the hysteresis loop.
     - Exporting results.
     """
-    ap = argparse.ArgumentParser(
-        description="Micromagnetics hysteresis driver with shell + preprocessing."
-    )
+    ap = argparse.ArgumentParser(description="Micromagnetics hysteresis driver with shell + preprocessing.")
     ap.add_argument(
         "modelname",
         nargs="?",
@@ -319,9 +307,7 @@ def main() -> None:
         action="store_true",
         help="Add an airbox shell around the core mesh.",
     )
-    ap.add_argument(
-        "--layers", type=int, default=4, help="Number of graded shell layers (>= 1)."
-    )
+    ap.add_argument("--layers", type=int, default=4, help="Number of graded shell layers (>= 1).")
     ap.add_argument(
         "--K",
         type=float,
@@ -380,8 +366,7 @@ def main() -> None:
         "--materials",
         type=str,
         default=None,
-        help="Path to a .krn file with intrinsic properties "
-        "(theta, phi, K1, K2, Js, A, ...) per material group.",
+        help="Path to a .krn file with intrinsic properties (theta, phi, K1, K2, Js, A, ...) per material group.",
     )
 
     # preconditioning
@@ -390,8 +375,7 @@ def main() -> None:
         type=str,
         default="amgcl",
         choices=["jacobi", "chebyshev", "amg", "amgcl"],
-        help="Poisson solver preconditioner: amgcl (default), jacobi, "
-        "chebyshev, or amg.",
+        help="Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.",
     )
 
     # gradient backend selection
@@ -411,8 +395,7 @@ def main() -> None:
         "--chunk-elems",
         type=int,
         default=200_000,
-        help="Number of elements processed per loop iteration "
-        "(chunking to control GPU memory).",
+        help="Number of elements processed per loop iteration (chunking to control GPU memory).",
     )
     ap.add_argument(
         "--cg-maxiter",
@@ -452,9 +435,7 @@ def main() -> None:
         default=1.0,
         help="Final magnitude of the applied field (Tesla).",
     )
-    ap.add_argument(
-        "--dB", type=float, default=0.05, help="Field step size magnitude (Tesla)."
-    )
+    ap.add_argument("--dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
     ap.add_argument(
         "--tau-f",
         type=float,
@@ -465,8 +446,7 @@ def main() -> None:
         "--eps-a",
         type=float,
         default=1e-10,
-        help="Absolute tangent gradient norm tolerance for the "
-        "minimizer (reduced units).",
+        help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
     )
 
     ap.add_argument(
@@ -721,9 +701,7 @@ def main() -> None:
     # Write .mh file for mammos-mumag compatibility
     mh_name = modelname if modelname else "hysteresis"
     write_mh(Path(args.out_dir) / mh_name, res["history"])
-    print(
-        f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh"
-    )
+    print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
 
 
 if __name__ == "__main__":

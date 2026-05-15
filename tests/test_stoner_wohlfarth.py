@@ -17,13 +17,9 @@ from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 
-def make_minimizer_no_demag(
-    geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
-):
+def make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal):
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    energy_and_grad, _, _ = make_energy_kernels(
-        geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal
-    )
+    energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal)
 
     def _bb_step(state, B_ext):
         m = state.m
@@ -109,9 +105,7 @@ def test_stoner_wohlfarth_switching(angle_deg):
     K1_lookup = jnp.array([K1_red])
     A_lookup = jnp.array([A_red])
     k_easy_lookup = jnp.array([[0.0, 0.0, 1.0]])
-    M_nodal = compute_node_volumes(
-        TetGeom(conn=geom.conn, volume=jnp.asarray(volume), mat_id=geom.mat_id), 100_000
-    )
+    M_nodal = compute_node_volumes(TetGeom(conn=geom.conn, volume=jnp.asarray(volume), mat_id=geom.mat_id), 100_000)
     minimize = make_minimizer_no_demag(
         geom,
         A_lookup,
@@ -137,8 +131,6 @@ def test_stoner_wohlfarth_switching(angle_deg):
 
     idx_sw = np.argmax(np.abs(np.gradient(np.array(j_par_list), B_vals)))
     B_sw_exp = abs(B_vals[idx_sw])
-    B_sw_theory = Bk_si * (
-        np.sin(theta_rad) ** (2 / 3) + np.cos(theta_rad) ** (2 / 3)
-    ) ** (-1.5)
+    B_sw_theory = Bk_si * (np.sin(theta_rad) ** (2 / 3) + np.cos(theta_rad) ** (2 / 3)) ** (-1.5)
 
     assert B_sw_exp == pytest.approx(B_sw_theory, abs=0.75)  # Coarse grid, coarse sweep
