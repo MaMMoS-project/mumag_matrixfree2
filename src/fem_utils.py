@@ -92,16 +92,8 @@ def pad_geom_for_chunking(geom: TetGeom, chunk_elems: int) -> tuple[TetGeom, int
     volume = pad_to_multiple(geom.volume, chunk_elems, pad_value=0.0)
     mat_id = pad_to_multiple(geom.mat_id.astype(jnp.int32), chunk_elems, pad_value=1)
 
-    grad_phi = (
-        pad_to_multiple(geom.grad_phi, chunk_elems, pad_value=0.0)
-        if geom.grad_phi is not None
-        else None
-    )
-    JinvT = (
-        pad_to_multiple(geom.JinvT, chunk_elems, pad_value=0.0)
-        if geom.JinvT is not None
-        else None
-    )
+    grad_phi = pad_to_multiple(geom.grad_phi, chunk_elems, pad_value=0.0) if geom.grad_phi is not None else None
+    JinvT = pad_to_multiple(geom.JinvT, chunk_elems, pad_value=0.0) if geom.JinvT is not None else None
 
     return TetGeom(
         conn=conn,

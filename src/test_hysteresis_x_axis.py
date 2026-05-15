@@ -83,9 +83,7 @@ def run_benchmark(precond_type="amgcl", order=3, L_cube=20.0, h=2.0, layers=8) -
 
     tmp_path = f"tmp_mesh_{precond_type}.npz"
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
-    knt, ijk = add_shell.run_add_shell_pipeline(
-        in_npz=tmp_path, layers=layers, K=1.4, h0=h, verbose=False
-    )
+    knt, ijk = add_shell.run_add_shell_pipeline(in_npz=tmp_path, layers=layers, K=1.4, h0=h, verbose=False)
     if Path(tmp_path).exists():
         Path(tmp_path).unlink()
 
@@ -98,9 +96,7 @@ def run_benchmark(precond_type="amgcl", order=3, L_cube=20.0, h=2.0, layers=8) -
     mat_id = ijk[:, 4].astype(np.int32)
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
     grad_phi = compute_grad_phi_from_JinvT(JinvT)
-    boundary_mask = jnp.asarray(
-        add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64
-    )
+    boundary_mask = jnp.asarray(add_shell.find_outer_boundary_mask(tets, knt.shape[0]), dtype=jnp.float64)
 
     geom = TetGeom(
         conn=jnp.asarray(conn32, dtype=jnp.int32),

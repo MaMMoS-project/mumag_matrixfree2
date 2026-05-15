@@ -30,9 +30,7 @@ def test_minimizer_relaxation():
 
     tmp_path = Path("tmp_relax_mesh.npz")
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
-    knt, ijk = add_shell.run_add_shell_pipeline(
-        in_npz=str(tmp_path), layers=6, K=1.4, h0=h, verbose=False
-    )
+    knt, ijk = add_shell.run_add_shell_pipeline(in_npz=str(tmp_path), layers=6, K=1.4, h0=h, verbose=False)
     if tmp_path.exists():
         tmp_path.unlink()
 
@@ -86,9 +84,7 @@ def test_minimizer_relaxation():
     m0_vec /= np.linalg.norm(m0_vec)
     m0 = np.tile(m0_vec, (knt.shape[0], 1))
 
-    m_final, U_final, info = minimize(
-        m0, jnp.zeros(3), max_iter=300, eps_a=1e-10, verbose=False
-    )
+    m_final, U_final, info = minimize(m0, jnp.zeros(3), max_iter=300, eps_a=1e-10, verbose=False)
 
     # 5. Analysis
     mag_tets = mat_id == 1

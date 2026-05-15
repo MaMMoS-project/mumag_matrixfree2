@@ -28,9 +28,7 @@ def ensure_dir(path: str | Path) -> Path:
     return p
 
 
-def write_hysteresis_header(
-    csv_path: str | Path, extra_cols: Sequence[str] = ("E", "gnorm")
-) -> None:
+def write_hysteresis_header(csv_path: str | Path, extra_cols: Sequence[str] = ("E", "gnorm")) -> None:
     """Write the header for a hysteresis CSV file.
 
     Args:
@@ -213,17 +211,12 @@ def write_vtu_tetra(
 
     lines = []
     lines.append('<?xml version="1.0"?>')
-    lines.append(
-        '<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">'
-    )
+    lines.append('<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">')
     lines.append("  <UnstructuredGrid>")
     lines.append(f'    <Piece NumberOfPoints="{N}" NumberOfCells="{E}">')
 
     lines.append("      <Points>")
-    lines.append(
-        f'        <DataArray type="{_vtk_type(pts)}" '
-        'NumberOfComponents="3" format="ascii">'
-    )
+    lines.append(f'        <DataArray type="{_vtk_type(pts)}" NumberOfComponents="3" format="ascii">')
     lines.append("          " + fmt(pts))
     lines.append("        </DataArray>")
     lines.append("      </Points>")
@@ -246,12 +239,9 @@ def write_vtu_tetra(
         if a.shape[0] != N:
             raise ValueError(f"PointData '{name}' length mismatch")
         ncomp = 1 if a.ndim == 1 else a.shape[1]
-        a_out = a.astype(
-            np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
-        )
+        a_out = a.astype(np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False)
         lines.append(
-            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
-            f'NumberOfComponents="{ncomp}" format="ascii">'
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">'
         )
         lines.append("          " + fmt(a_out))
         lines.append("        </DataArray>")
@@ -263,12 +253,9 @@ def write_vtu_tetra(
         if a.shape[0] != E:
             raise ValueError(f"CellData '{name}' length mismatch")
         ncomp = 1 if a.ndim == 1 else a.shape[1]
-        a_out = a.astype(
-            np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False
-        )
+        a_out = a.astype(np.int32 if np.issubdtype(a.dtype, np.integer) else np.float32, copy=False)
         lines.append(
-            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" '
-            f'NumberOfComponents="{ncomp}" format="ascii">'
+            f'        <DataArray type="{_vtk_type(a_out)}" Name="{name}" NumberOfComponents="{ncomp}" format="ascii">'
         )
         lines.append("          " + fmt(a_out))
         lines.append("        </DataArray>")

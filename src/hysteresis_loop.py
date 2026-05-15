@@ -182,10 +182,7 @@ def jax_compute_volume_averaged_m(
     Js_e = Js_lookup[mat_id - 1]  # (E,)
     Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
 
-    m_vol_avg = (
-        jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0)
-        / Vmag
-    )
+    m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
     return m_vol_avg
 
 
@@ -310,9 +307,7 @@ def run_hysteresis_loop(
     Jpar_init = jax_compute_volume_averaged_J_parallel(
         m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
     )
-    m_avg_init = jax_compute_volume_averaged_m(
-        m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup)
-    )
+    m_avg_init = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
 
     B_tesla_init = float(params.B_start) * params.Js_ref
     J_tesla_init = float(Jpar_init) * params.Js_ref
@@ -393,9 +388,7 @@ def run_hysteresis_loop(
             jnp.asarray(Js_lookup),
             jnp.asarray(h),
         )
-        m_avg = jax_compute_volume_averaged_m(
-            m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup)
-        )
+        m_avg = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
 
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref
@@ -452,9 +445,7 @@ def run_hysteresis_loop(
 
         if info.get("mfinal_reached", False):
             print(
-                f"\n[loop] mfinal reached ({J_tesla:.4f} T <= "
-                f"{params.mfinal * params.Js_ref:.4f} T). "
-                "Stopping sweep."
+                f"\n[loop] mfinal reached ({J_tesla:.4f} T <= {params.mfinal * params.Js_ref:.4f} T). Stopping sweep."
             )
             break
 

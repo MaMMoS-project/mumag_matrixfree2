@@ -40,9 +40,7 @@ def test_krn_validation_and_header(tmp_path):
         f.write("# theta phi K1 K2 Js A\n")
         f.write("0.0 0.0 4.3e6 0.0 1.6 7.7e-12\n")
 
-    with pytest.raises(
-        ValueError, match="has 1 rows, but the mesh has 2 material groups"
-    ):
+    with pytest.raises(ValueError, match="has 1 rows, but the mesh has 2 material groups"):
         loop.load_materials_krn(str(krn_path), G=2)
 
     # 3. Create a .krn with 3 rows (should FAIL)
@@ -117,9 +115,7 @@ cg_maxiter = 123
 
 def test_mfinal_stop_signal():
     """Verify that the LoopParams correctly store mfinal (#23)."""
-    params = LoopParams(
-        h_dir=np.array([0, 0, 1]), B_start=1.0, B_end=0.0, dB=0.1, mfinal=0.5
-    )
+    params = LoopParams(h_dir=np.array([0, 0, 1]), B_start=1.0, B_end=0.0, dB=0.1, mfinal=0.5)
     assert params.mfinal == 0.5
 
 

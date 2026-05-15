@@ -316,9 +316,7 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
                 def apply_A_coarse(v):
                     return lvl["A_sparse"] @ v
 
-                return jacobi_smooth(
-                    apply_A_coarse, b_curr, x_curr, lvl["Mdiag"], iterations=10
-                )
+                return jacobi_smooth(apply_A_coarse, b_curr, x_curr, lvl["Mdiag"], iterations=10)
 
             # 1. Setup operator for CURRENT level
             if level_idx == 0:
@@ -384,9 +382,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
                 def apply_A_coarse(v):
                     return lvl["A_sparse"] @ v
 
-                return spai0_smooth(
-                    apply_A_coarse, b_curr, x_curr, lvl["Mdiag_spai0"], iterations=10
-                )
+                return spai0_smooth(apply_A_coarse, b_curr, x_curr, lvl["Mdiag_spai0"], iterations=10)
 
             # Operator for current level
             if level_idx == 0:
