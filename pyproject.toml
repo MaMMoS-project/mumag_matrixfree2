@@ -3,6 +3,7 @@ target-version = "py311"
 exclude = [
   "dev",
 ]
+line-length = 120
 [tool.ruff.lint]
 select = [
   "B",   # flake8-bugbear
