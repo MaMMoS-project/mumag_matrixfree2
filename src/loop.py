@@ -388,6 +388,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         m_min = config["minimizer"]
         if "tol_fun" in m_min:
             overrides["tau_f"] = float(m_min["tol_fun"])
+        if "tol_grad" in m_min:
+            overrides["eps_a"] = float(m_min["tol_grad"])
+        if "max_iter" in m_min:
+            overrides["max_iter"] = int(m_min["max_iter"])
 
     if "poisson" in config:
         p = config["poisson"]
@@ -628,9 +632,15 @@ def main() -> None:
     ap.add_argument(
         "--eps-a",
         type=float,
-        default=1e-10,
+        default=1e-12,
         help="Absolute tangent gradient norm tolerance for the "
         "minimizer (reduced units).",
+    )
+    ap.add_argument(
+        "--max-iter",
+        type=int,
+        default=100_000,
+        help="Maximum minimizer iterations per field step.",
     )
 
     ap.add_argument(
@@ -869,6 +879,7 @@ def main() -> None:
         "dB": float(args.dB) / Js_ref,
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
+        "max_iter": int(args.max_iter),
         "loop": True,
         "out_dir": args.out_dir,
         "snapshot_every": int(args.snapshot_every),

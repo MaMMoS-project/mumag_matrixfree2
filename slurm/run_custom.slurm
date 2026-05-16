@@ -8,6 +8,7 @@
 #SBATCH --partition=dissSims
 #SBATCH --gpus=1
 #SBATCH --constraint=cuda
+#SBATCH --exclude=Ce,Nd,Tb,Sc
 #SBATCH --export=NONE
 
 set -e
@@ -17,7 +18,7 @@ set -e
 # Set the base name of your model files (e.g., if you have my_mesh.inp, 
 # my_mesh.krn, and my_mesh.p2, set MODEL_NAME="my_mesh")
 # ==============================================================================
-MODEL_NAME="test_model"
+MODEL_NAME="model"
 # ==============================================================================
 
 # Define project source directory (assuming this script is in PROJ_DIR/slurm/)

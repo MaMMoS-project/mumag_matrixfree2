@@ -116,7 +116,9 @@ mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
 mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 
 [minimizer]
-tol_fun = 1e-6      ; Energy convergence tolerance
+tol_fun = 1e-6      ; Energy convergence tolerance (tau_f)
+tol_grad = 1e-12    ; Absolute gradient tolerance (eps_a)
+max_iter = 100000   ; Max minimizer iterations per field step
 
 [poisson]
 cg_maxiter = 400    ; Poisson solver max iterations
@@ -241,7 +243,8 @@ The primary entry point for running hysteresis loop simulations.
 | `--B-end` | float | Final magnitude of the applied field (Tesla, default: 1.0). |
 | `--dB` | float | Field step size magnitude (Tesla, default: 0.05). |
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
-| `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-12). |
+| `--max-iter` | int | Maximum minimizer iterations per field step (default: 100,000). |
 | `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
 | `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
 | `--m0-dir" | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |
