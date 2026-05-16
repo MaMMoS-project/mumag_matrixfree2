@@ -26,3 +26,4 @@ benchmarking/BENCHMARK_REPORT.md
 trace_dir/
 .pixi/
 pixi.lock
+greene_runs01/

@@ -39,9 +39,14 @@ SIMDIR="$HOME/slurm_sims/job_$SLURM_JOB_ID"
 mkdir -p "$SIMDIR"
 trap 'echo "Cleaning up $SIMDIR..."; rm -rf "$SIMDIR"' EXIT
 
-# 1. Copy project source code
-echo "Copying project source from $PROJ_DIR to $SIMDIR..."
-cp -r "$PROJ_DIR"/* "$SIMDIR/"
+# 1. Copy essential project source code
+echo "Copying essential project files from $PROJ_DIR to $SIMDIR..."
+mkdir -p "$SIMDIR/src"
+cp -r "$PROJ_DIR/src"/* "$SIMDIR/src/"
+cp "$PROJ_DIR/pixi.toml" "$SIMDIR/"
+if [ -f "$PROJ_DIR/pixi.lock" ]; then
+    cp "$PROJ_DIR/pixi.lock" "$SIMDIR/"
+fi
 
 # 2. Copy user input files from the submission directory to the execution directory
 echo "Copying input files for '$MODEL_NAME' from $SLURM_SUBMIT_DIR..."
