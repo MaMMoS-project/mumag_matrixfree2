@@ -272,8 +272,11 @@ def load_materials_krn(
     # Only fill up to what we have in the file (G_required)
     n_fill = G_required
 
-    # Detection logic: Bunge Euler if >= 9 columns
-    if n_cols >= 9:
+    # Detection logic based on column counts:
+    # 6 or 8 columns -> Spherical (theta, phi, K1, K1p, Js, A)
+    # 7 or 9 columns -> Bunge (phi1, Phi, phi2, K1, K1p, Js, A)
+    if n_cols in (7, 9):
+        # Bunge Euler format
         phi1 = data[:n_fill, 0]
         Phi = data[:n_fill, 1]
         phi2 = data[:n_fill, 2]
@@ -284,8 +287,8 @@ def load_materials_krn(
 
         for i in range(n_fill):
             axes_lookup[i] = bunge_to_axes(phi1[i], Phi[i], phi2[i])
-    else:
-        # Classic theta, phi
+    elif n_cols in (6, 8):
+        # Classic spherical format
         theta = data[:n_fill, 0]
         phi = data[:n_fill, 1]
         K1[:n_fill] = data[:n_fill, 2]
@@ -309,6 +312,11 @@ def load_materials_krn(
             ex /= np.linalg.norm(ex) + 1e-30
             ey = np.cross(ez, ex)
             axes_lookup[i] = np.stack([ex, ey, ez], axis=0)
+    else:
+        raise ValueError(
+            f"Unsupported .krn format with {n_cols} columns. "
+            f"Expected 6 or 8 (Spherical) or 7 or 9 (Bunge)."
+        )
 
     A_scale = (1.0 / mesh_unit) ** 2
     A[:n_fill] = A_val * A_scale

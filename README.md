@@ -125,12 +125,15 @@ cg_maxiter = 400    ; Poisson solver max iterations
 ### Material Properties (.krn file)
 The `.krn` file defines the intrinsic magnetic properties for each material group in the mesh. **Each line in the file corresponds to a material ID (Line 1 = ID 1, Line 2 = ID 2, etc.)**. Headers starting with `#` are supported. The package automatically detects the orientation format based on the number of columns:
 
-1. **Classic (Spherical)**: `theta phi K1 K1p Js A ...` (6 or 8 columns)
+1. **Spherical (6 or 8 columns)**: `theta phi K1 K1p Js A [dummy1 dummy2]`
    - Defines the easy axis ($\mathbf{e}_z$) orientation via polar/azimuthal angles.
-2. **Full Rotation (Bunge)**: `phi1 Phi phi2 K1 K1p Js A ...` (9+ columns)
+   - Column 4 is interpreted as $K_{1p}$ (orthorhombic part, often set to 0).
+   - If 8 columns are provided, the last two are ignored.
+2. **Bunge (7 or 9 columns)**: `phi1 Phi phi2 K1 K1p Js A [dummy1 dummy2]`
    - Defines the full orientation matrix (Z-X-Z) for the crystal axes.
+   - If 9 columns are provided, the last two are ignored.
 
-Example Bunge row (Rotated 45° around Z and 10° tilt):
+Example 7-column Bunge row (Rotated 45° around Z and 10° tilt):
 ```text
 # phi1     Phi       phi2      K1        K1p   Js    A
   0.78539  0.17453   0.0       4.3e5     0.0   1.6   7.7e-12

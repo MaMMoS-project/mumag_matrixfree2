@@ -1,2 +1,2 @@
-# theta (rad) phi (rad) K1 (J/m3) not used Js (Tesla) A (J/m)
-0.0 0.0 2.15e6 0.0 1.6 7.7e-12 0.0 0.0
+# phi1 (rad) Phi (rad) phi2 (rad) K1 (J/m3) K1p (J/m3) Js (Tesla) A (J/m)
+0.0 0.0 0.0 2.15e6 0.0 1.6 7.7e-12
