@@ -182,7 +182,34 @@ Snapshots of the magnetic state in VTK format, viewable in ParaView.
 - **`cfgXXXXX`**: The configuration index (5 digits). The first file is always `cfg00000` (the initial state at $B_{start}$).
 - **`B+Y.YYYYe+00T`**: The external field value in Tesla at which the snapshot was taken.
 
-## 5. CLI Reference
+## 6. Running on a SLURM Cluster
+
+The project includes pre-configured SLURM scripts in the `slurm/` directory for running simulations on high-performance computing (HPC) environments.
+
+### Automated Sample Verification
+To run the full benchmarking and verification suite (as seen in `pixi run sample`) on a GPU node:
+```bash
+sbatch slurm/run_sample.slurm
+```
+This script will:
+1. Create a temporary execution directory on the compute node.
+2. Run baseline and magnetoelastic simulations.
+3. Automatically copy all `bench_*` result folders back to your submission directory in a folder named `results_[JOBID]`.
+
+### Running Custom Models
+To run your own simulation (with your own `.inp`, `.krn`, and `.p2` files):
+1. Prepare your input files with a consistent base name (e.g., `my_model.inp`, `my_model.krn`, `my_model.p2`).
+2. Edit `slurm/run_custom.slurm` and update the `MODEL_NAME` variable:
+   ```bash
+   MODEL_NAME="my_model"
+   ```
+3. Submit the job from the directory containing your input files:
+   ```bash
+   sbatch path/to/slurm/run_custom.slurm
+   ```
+By default, the custom script disables magnetostatics (`--no-demag`) for speed. Remove this flag in the script if demagnetization energy is required. Results will be saved to `results_[MODEL_NAME]_[JOBID]`.
+
+## 7. CLI Reference
 
 ### `src/loop.py` (Main Driver)
 The primary entry point for running hysteresis loop simulations.

@@ -1,0 +1,89 @@
+Copying project source from /ceph/home/schrefl/W4/mammos/mumag_matrixfree2 to /home/schrefl/slurm_sims/job_172671...
+Copying input files for 'test_model' from /ceph/home/schrefl/W4/mammos/mumag_matrixfree2/samples/custom_test...
+JOBNAME: mumag-custom
+NODELIST: Ce
+SIMDIR: /home/schrefl/slurm_sims/job_172671
+SUBMIT_DIR: /ceph/home/schrefl/W4/mammos/mumag_matrixfree2/samples/custom_test
+Starting simulation (CUDA)...
+Parsing INP file: test_model.inp
+[config] Loading overrides from test_model.p2
+[LS 000] E=-6.096230e+00  |g|_inf=3.272e-02  mh=+1.5998 T
+  Line Search Total Time: 0.490s
+step 00001  B=+1.500000e+00 T  J_par=+1.599756e+00 T  E=-6.096230e+00  t=2.201s  it=0  t/it=2.201e+00s
+[LS 000] E=-5.471325e+00  |g|_inf=2.181e-02  mh=+1.5998 T
+  Line Search Total Time: 0.019s
+step 00002  B=+1.000000e+00 T  J_par=+1.599756e+00 T  E=-5.471325e+00  t=0.035s  it=0  t/it=3.461e-02s
+[LS 000] E=-4.846420e+00  |g|_inf=1.091e-02  mh=+1.5998 T
+  Line Search Total Time: 0.020s
+step 00003  B=+5.000000e-01 T  J_par=+1.599756e+00 T  E=-4.846420e+00  t=0.035s  it=0  t/it=3.490e-02s
+[LS 000] E=-4.221515e+00  |g|_inf=0.000e+00  mh=+1.5998 T
+  Line Search Total Time: 0.022s
+step 00004  B=+0.000000e+00 T  J_par=+1.599756e+00 T  E=-4.221515e+00  t=0.037s  it=0  t/it=3.732e-02s
+[LS 000] E=-3.596610e+00  |g|_inf=1.091e-02  mh=+1.5998 T
+  Line Search Total Time: 0.022s
+step 00005  B=-5.000000e-01 T  J_par=+1.599756e+00 T  E=-3.596610e+00  t=0.038s  it=0  t/it=3.805e-02s
+[LS 000] E=-2.971706e+00  |g|_inf=2.181e-02  mh=+1.5998 T
+  Line Search Total Time: 0.023s
+step 00006  B=-1.000000e+00 T  J_par=+1.599756e+00 T  E=-2.971706e+00  t=0.039s  it=0  t/it=3.920e-02s
+[LS 000] E=-2.346801e+00  |g|_inf=3.272e-02  mh=+1.5998 T
+  Line Search Total Time: 0.025s
+step 00007  B=-1.500000e+00 T  J_par=+1.599756e+00 T  E=-2.346801e+00  t=0.042s  it=0  t/it=4.187e-02s
+[LS 000] E=-1.721896e+00  |g|_inf=4.363e-02  mh=+1.5998 T
+  Line Search Total Time: 3.866s
+[BB 007] E=-1.722056e+00  |g|_inf=8.964e-12  tau=1.683e-01  mh=+1.5995 T
+  BB Phase Total Time: 2.075s
+step 00008  B=-2.000000e+00 T  J_par=+1.599508e+00 T  E=-1.722056e+00  t=5.958s  it=8  t/it=7.447e-01s
+[LS 000] E=-1.097248e+00  |g|_inf=1.549e-02  mh=+1.5995 T
+  Line Search Total Time: 0.018s
+step 00009  B=-2.500000e+00 T  J_par=+1.599508e+00 T  E=-1.097248e+00  t=0.032s  it=0  t/it=3.226e-02s
+[LS 000] E=-4.724402e-01  |g|_inf=3.099e-02  mh=+1.5995 T
+  Line Search Total Time: 0.397s
+[BB 005] E=-4.725416e-01  |g|_inf=2.946e-03  tau=2.131e-01  mh=+1.5992 T
+  BB Phase Total Time: 0.015s
+step 00010  B=-3.000000e+00 T  J_par=+1.599211e+00 T  E=-4.725416e-01  t=0.427s  it=6  t/it=7.122e-02s
+[LS 000] E=1.521494e-01  |g|_inf=1.962e-02  mh=+1.5992 T
+  Line Search Total Time: 0.394s
+[BB 005] E=1.521030e-01  |g|_inf=2.743e-03  tau=2.460e-01  mh=+1.5990 T
+  BB Phase Total Time: 0.015s
+step 00011  B=-3.500000e+00 T  J_par=+1.598950e+00 T  E=1.521030e-01  t=0.424s  it=6  t/it=7.064e-02s
+[LS 000] E=7.766921e-01  |g|_inf=2.263e-02  mh=+1.5990 T
+  Line Search Total Time: 0.396s
+[BB 007] E=7.766176e-01  |g|_inf=3.883e-04  tau=2.076e-02  mh=+1.5985 T
+  BB Phase Total Time: 0.045s
+step 00012  B=-4.000000e+00 T  J_par=+1.598534e+00 T  E=7.766176e-01  t=0.456s  it=8  t/it=5.701e-02s
+[LS 000] E=1.401045e+00  |g|_inf=2.675e-02  mh=+1.5985 T
+  Line Search Total Time: 0.396s
+[BB 009] E=1.400918e+00  |g|_inf=1.663e-04  tau=2.225e-02  mh=+1.5978 T
+  BB Phase Total Time: 0.073s
+step 00013  B=-4.500000e+00 T  J_par=+1.597811e+00 T  E=1.400918e+00  t=0.484s  it=10  t/it=4.845e-02s
+[LS 000] E=2.025063e+00  |g|_inf=3.269e-02  mh=+1.5978 T
+  Line Search Total Time: 0.444s
+[BB 008] E=2.024817e+00  |g|_inf=2.877e-03  tau=2.123e-02  mh=+1.5964 T
+  BB Phase Total Time: 0.058s
+step 00014  B=-5.000000e+00 T  J_par=+1.596444e+00 T  E=2.024817e+00  t=0.517s  it=9  t/it=5.746e-02s
+[LS 000] E=2.648428e+00  |g|_inf=4.310e-02  mh=+1.5964 T
+  Line Search Total Time: 0.435s
+[BB 010] E=2.647826e+00  |g|_inf=6.700e-02  tau=2.005e-01  mh=+1.5931 T
+[BB 013] E=2.647822e+00  |g|_inf=3.353e-03  tau=2.216e-02  mh=+1.5930 T
+  BB Phase Total Time: 0.131s
+step 00015  B=-5.500000e+00 T  J_par=+1.593027e+00 T  E=2.647822e+00  t=0.581s  it=14  t/it=4.153e-02s
+[LS 000] E=3.270098e+00  |g|_inf=6.058e-02  mh=+1.5930 T
+  Line Search Total Time: 0.458s
+[BB 010] E=3.267869e+00  |g|_inf=2.401e-02  tau=1.000e+00  mh=+1.5773 T
+[BB 014] E=3.267850e+00  |g|_inf=4.036e-03  tau=2.329e-02  mh=+1.5773 T
+  BB Phase Total Time: 0.147s
+step 00016  B=-6.000000e+00 T  J_par=+1.577257e+00 T  E=3.267850e+00  t=0.621s  it=15  t/it=4.138e-02s
+[LS 000] E=3.883966e+00  |g|_inf=1.055e-01  mh=+1.5773 T
+  Line Search Total Time: 0.492s
+[BB 010] E=2.741617e+00  |g|_inf=4.377e+00  tau=1.286e-02  mh=+0.6498 T
+[BB 019] E=-1.015590e+00  |g|_inf=8.884e+00  tau=1.286e-02  mh=-0.3718 T
+[BB 019] mfinal reached, stopping early.
+step 00017  B=-6.500000e+00 T  J_par=-3.717669e-01 T  E=-1.015590e+00  t=0.710s  it=19  t/it=3.739e-02s
+
+[loop] mfinal reached (-0.3718 T <= -0.2000 T). Stopping sweep.
+
+Hysteresis loop finished in 12.638 s.
+[ok] Wrote mammos-mumag compatibility file: hyst_test_model/test_model.mh
+Copying results back to /ceph/home/schrefl/W4/mammos/mumag_matrixfree2/samples/custom_test/results_test_model_172671...
+Success: Results saved to /ceph/home/schrefl/W4/mammos/mumag_matrixfree2/samples/custom_test/results_test_model_172671
+Cleaning up /home/schrefl/slurm_sims/job_172671...
