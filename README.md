@@ -61,6 +61,7 @@ The package supports generating polycrystalline geometries with an explicit grai
 2. **Geometric Shrinking**: Each grain is mathematically shrunk by $t/2$ using a plane-offsetting algorithm. Instead of moving vertices, the faces (planes) are pushed inward, and new vertices are reconstructed via half-space intersection. This ensures that faces remain perfectly flat and parallel to the original interfaces.
 3. **Conformal Meshing**: A single Piecewise Linear Complex (PLC) is constructed containing all shrunken grain surfaces and the outer bounding box.
 4. **Multi-Material Tetrahedralization**: **TetGen** (via MeshPy) meshes the entire volume in a single pass. Grains are assigned material IDs $1 \dots N$, and the interstitial grain boundary phase is assigned ID $N+1$. The resulting mesh is perfectly conformal at all interfaces.
+5. **Refinement Control**: The parameter `--h` controls the target element size **inside each grain**, while `--gb-h` specifically controls the refinement **within the thin grain boundary phase**. Providing smaller values for these parameters results in a finer mesh. Additionally, reducing the `--minratio` parameter (e.g., from 1.4 to 1.2) improves the shape quality of the tetrahedra and can further increase the mesh density by forcing more Steiner points.
 
 ### GPU Memory & Batching
 To handle meshes with millions of elements on GPUs with limited memory, element-wise operations are **batched (chunked)**. 
@@ -189,7 +190,7 @@ A versatile mesher for core magnetic bodies.
 | :--- | :--- | :--- |
 | `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `elliptic_cylinder`, `poly`, or `poly_gb`. |
 | `--extent` | CSV | Full dimensions Lx,Ly,Lz of the core mesh (default: 60,60,60). |
-| `--h` | float | Target characteristic edge length (default: 2.0). |
+| `--h` | float | Target characteristic edge length for grains (default: 2.0). |
 | `--minratio` | float | TetGen quality minratio (-q) for refinement (default: 1.4). |
 | `--backend` | choice | Meshing engine: `meshpy` (TetGen, default) or `grid` (regular Freudenthal). |
 | `--dir-x` | CSV | Target direction for the local x-axis (default: 1,0,0). |
@@ -199,7 +200,7 @@ A versatile mesher for core magnetic bodies.
 | `--n` | int | (Poly/Poly_GB only) Number of grains for Voronoi tessellation (default: 10). |
 | `--id` | int | (Poly/Poly_GB only) Random seed for tessellation (default: 1). |
 | `--gb-thickness` | float | (Poly_GB only) Total thickness of the grain boundary phase (default: 1.0). |
-| `--gb-h` | float | (Poly_GB only) Target element size within the grain boundary phase (default: 1.0). |
+| `--gb-h` | float | (Poly_GB only) Target element size within the GB phase (default: 1.0). |
 | `--out-name` | string | Base name for output files (default: single_solid). |
 | `--no-vis` | flag | Skip writing the .vtu visualization file. |
 | `--verbose` | flag | Enable verbose logging during meshing. |
