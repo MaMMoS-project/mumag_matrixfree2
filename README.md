@@ -81,6 +81,24 @@ This script will:
 2. Run a field sweep from 2.0 T down to -8.0 T.
 3. Save snapshots in `bench_demag_curve/` and magnetization data in `.mh` format.
 
+### Meshing Examples
+Generate polycrystalline core meshes using the `src/mesh.py` tool.
+
+**1. Basic 12-grain cube with GB phase:**
+```bash
+pixi run python src/mesh.py --geom poly_gb --extent 10,10,10 --n 12 --h 2.0 --gb-thickness 0.5 --gb-h 1.0 --out-name poly_sample
+```
+
+**2. Fine mesh inside grains:**
+```bash
+pixi run python src/mesh.py --geom poly_gb --extent 10,10,10 --n 12 --h 0.5 --gb-thickness 0.5 --gb-h 0.25 --out-name poly_fine
+```
+
+**3. High-quality tetrahedra (refined shape):**
+```bash
+pixi run python src/mesh.py --geom poly_gb --extent 10,10,10 --n 12 --h 1.0 --gb-thickness 0.5 --gb-h 0.5 --minratio 1.2 --out-name poly_high_qual
+```
+
 ### Configuration (.p2 file)
 Simulations are controlled via `.p2` files (INI format). Example `cube_20nm.p2`:
 ```ini
