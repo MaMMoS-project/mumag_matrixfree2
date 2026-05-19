@@ -55,6 +55,13 @@ Convergence is determined by the criteria established by *Gill, Murray, and Wrig
 ### Matrix-Free Poisson Solver
 To solve the magnetic scalar potential $U$, we use a **Preconditioned Conjugate Gradient (PCG)** method. Instead of assembling a global stiffness matrix $A$, the operator-vector product $A u$ is computed element-wise in JAX.
 
+### Polyhedral Meshing with Grain Boundary Phase
+The package supports generating polycrystalline geometries with an explicit grain boundary (GB) phase of thickness $t$.
+1. **Tessellation**: Uses **Neper** to generate a Voronoi tessellation of the domain.
+2. **Geometric Shrinking**: Each grain is mathematically shrunk by $t/2$ using a plane-offsetting algorithm. Instead of moving vertices, the faces (planes) are pushed inward, and new vertices are reconstructed via half-space intersection. This ensures that faces remain perfectly flat and parallel to the original interfaces.
+3. **Conformal Meshing**: A single Piecewise Linear Complex (PLC) is constructed containing all shrunken grain surfaces and the outer bounding box.
+4. **Multi-Material Tetrahedralization**: **TetGen** (via MeshPy) meshes the entire volume in a single pass. Grains are assigned material IDs $1 \dots N$, and the interstitial grain boundary phase is assigned ID $N+1$. The resulting mesh is perfectly conformal at all interfaces.
+
 ### GPU Memory & Batching
 To handle meshes with millions of elements on GPUs with limited memory, element-wise operations are **batched (chunked)**. 
 - The parameter `--chunk-elems` (default: 200,000) controls how many elements are processed in a single JAX loop iteration. 
@@ -180,7 +187,7 @@ A versatile mesher for core magnetic bodies.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `elliptic_cylinder`, or `poly`. |
+| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `elliptic_cylinder`, `poly`, or `poly_gb`. |
 | `--extent` | CSV | Full dimensions Lx,Ly,Lz of the core mesh (default: 60,60,60). |
 | `--h` | float | Target characteristic edge length (default: 2.0). |
 | `--minratio` | float | TetGen quality minratio (-q) for refinement (default: 1.4). |
@@ -189,8 +196,10 @@ A versatile mesher for core magnetic bodies.
 | `--dir-y` | CSV | Initial direction for the local y-axis (default: 0,1,0). |
 | `--dir-z` | CSV | Initial direction for the local z-axis (default: 0,0,1). |
 | `--ell-subdiv` | mixed | (Ellipsoid only) Icosphere subdivision level: integer or `auto` (default). |
-| `--n` | int | (Poly only) Number of grains for Voronoi tessellation (default: 10). |
-| `--id` | int | (Poly only) Random seed for tessellation (default: 1). |
+| `--n` | int | (Poly/Poly_GB only) Number of grains for Voronoi tessellation (default: 10). |
+| `--id` | int | (Poly/Poly_GB only) Random seed for tessellation (default: 1). |
+| `--gb-thickness` | float | (Poly_GB only) Total thickness of the grain boundary phase (default: 1.0). |
+| `--gb-h` | float | (Poly_GB only) Target element size within the grain boundary phase (default: 1.0). |
 | `--out-name` | string | Base name for output files (default: single_solid). |
 | `--no-vis` | flag | Skip writing the .vtu visualization file. |
 | `--verbose` | flag | Enable verbose logging during meshing. |
