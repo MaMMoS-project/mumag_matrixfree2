@@ -176,6 +176,8 @@ The primary entry point for running hysteresis loop simulations.
 | `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 200). |
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--tau-min` | float | Minimum step size allowed for the BB minimizer (default: 1e-6). |
+| `--tau-max` | float | Maximum step size allowed for the BB minimizer (default: 1.0). |
 | `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
 | `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
 | `--m0-dir` | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |

@@ -231,6 +231,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["eps_a"] = float(m_min["eps_a"])
         if "max_iter" in m_min:
             overrides["max_iter"] = int(m_min["max_iter"])
+        if "tau_min" in m_min:
+            overrides["tau_min"] = float(m_min["tau_min"])
+        if "tau_max" in m_min:
+            overrides["tau_max"] = float(m_min["tau_max"])
 
     if "poisson" in config:
         p = config["poisson"]
@@ -462,6 +466,18 @@ def main() -> None:
         default=1e-10,
         help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
     )
+    ap.add_argument(
+        "--tau-min",
+        type=float,
+        default=1e-6,
+        help="Minimum step size allowed for the BB minimizer.",
+    )
+    ap.add_argument(
+        "--tau-max",
+        type=float,
+        default=1.0,
+        help="Maximum step size allowed for the BB minimizer.",
+    )
 
     ap.add_argument(
         "--out-dir",
@@ -663,6 +679,8 @@ def main() -> None:
         "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
+        "tau_min": float(args.tau_min),
+        "tau_max": float(args.tau_max),
         "cg_maxiter": int(args.cg_maxiter),
         "cg_tol": float(args.cg_tol),
         "poisson_reg": float(args.poisson_reg),

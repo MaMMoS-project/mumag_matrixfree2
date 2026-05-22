@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import jax
@@ -65,76 +65,6 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
 
 
-def armijo_weak_line_search(
-    m: Array,
-    pg: float,
-    H_for_update: Array,
-    E0: float,
-    U_base: Array,
-    solve_U: Callable[[Array, Array, float | None], Array],
-    energy_only: Callable[[Array, Array, Array], Array],
-    B_ext: Array,
-    phi_tol: float,
-    *,
-    eta1: float = 0.1,
-    eta2: float = 0.1,
-    C: float = 2.0,
-    c: float = 0.5,
-    s0: float = 1.0,
-    max_evals: int = 15,
-) -> float:
-    """Perform an Armijo-style line search on the curvilinear path (CPU version).
-
-    Args:
-        m (Array): Current magnetization.
-        pg (float): Projected gradient (expected < 0 for descent).
-        H_for_update (Array): Update field.
-        E0 (float): Initial energy.
-        U_base (Array): Initial potential.
-        solve_U (Callable): Poisson solver.
-        energy_only (Callable): Energy calculation function.
-        B_ext (Array): External field.
-        phi_tol (float): Poisson solver tolerance.
-        eta1 (float, optional): Sufficient decrease parameter. Defaults to 0.1.
-        eta2 (float, optional): Expansion parameter. Defaults to 0.1.
-        C (float, optional): Expansion factor. Defaults to 2.0.
-        c (float, optional): Contraction factor. Defaults to 0.5.
-        s0 (float, optional): Initial step size. Defaults to 1.0.
-        max_evals (int, optional): Maximum evaluations. Defaults to 15.
-
-    Returns:
-        float: Optimal step size tau.
-    """
-    if pg >= 0:
-        return 0.0
-
-    def D(s: float) -> float:
-        m_trial = cayley_update(m, H_for_update, jnp.asarray(s, m.dtype))
-        U_trial = solve_U(m_trial, U_base, phi_tol)
-        E_trial = float(energy_only(m_trial, U_trial, B_ext))
-        val = (E_trial - float(E0)) / (float(s) * pg + 1e-30)
-        return float(val)
-
-    s = float(s0)
-    s_min = 0.0
-
-    for _ in range(max_evals):
-        d = D(s)
-        if abs(1.0 - d) < eta2:
-            s_min = s
-            s = C * s
-        else:
-            break
-
-    for _ in range(max_evals):
-        d = D(s)
-        if d >= eta1:
-            return s
-        s = s_min + c * (s - s_min)
-
-    return s
-
-
 @jax.tree_util.register_pytree_node_class
 @dataclass
 class MinimState:
@@ -147,6 +77,8 @@ class MinimState:
         m_prev (Array): Magnetization from the previous step.
         tau (Array): Current step size.
         it (Array): Iteration counter.
+        E_prev (Array): Energy from the previous step.
+        converged (Array): Boolean flag indicating if convergence was reached.
     """
 
     m: Array
@@ -155,21 +87,34 @@ class MinimState:
     m_prev: Array
     tau: Array
     it: Array
+    E_prev: Array
+    converged: Array
 
     def tree_flatten(
         self,
-    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], Any]:
+    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array, Array], Any]:
         """Flatten the state for JAX.
 
         Returns:
             tuple: (children, aux_data).
         """
-        children = (self.m, self.U_prev, self.g_prev, self.m_prev, self.tau, self.it)
+        children = (
+            self.m,
+            self.U_prev,
+            self.g_prev,
+            self.m_prev,
+            self.tau,
+            self.it,
+            self.E_prev,
+            self.converged,
+        )
         aux_data = None
         return (children, aux_data)
 
     @classmethod
-    def tree_unflatten(cls, aux_data: Any, children: tuple[Array, Array, Array, Array, Array, Array]) -> MinimState:
+    def tree_unflatten(
+        cls, aux_data: Any, children: tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+    ) -> MinimState:
         """Unflatten the state for JAX.
 
         Args:
@@ -273,7 +218,7 @@ def make_minimizer(
         eta2: float,
         C: float,
         c: float,
-        s0: float,
+        s0: Array,
         max_evals: int,
     ) -> Array:
         """Perform a JAX-native Armijo line search on the curvilinear path.
@@ -290,7 +235,7 @@ def make_minimizer(
             eta2 (float): Expansion parameter.
             C (float): Expansion factor.
             c (float): Contraction factor.
-            s0 (float): Initial step size.
+            s0 (Array): Initial step size guess.
             max_evals (int): Maximum evaluations.
 
         Returns:
@@ -341,76 +286,158 @@ def make_minimizer(
 
         return jnp.where(pg >= 0, 0.0, s_final)
 
-    jit_ls = jax.jit(jax_armijo_line_search, static_argnums=(7, 8, 9, 10, 11, 12))
+    jit_ls = jax.jit(jax_armijo_line_search)
 
-    def _bb_step(
+    def minim_step(
         state: MinimState,
         B_ext: Array,
+        gamma: int,
+        tau_f: float,
+        eps_a: float,
+        tau0: float,
         tau_min: float,
         tau_max: float,
+        ls_eta1: float,
+        ls_eta2: float,
+        ls_C: float,
+        ls_c: float,
+        ls_s0: float,
+        ls_max_evals: int,
         cg_tol_base: float,
-    ) -> tuple[MinimState, Array, Array]:
-        """Take one Barzilai-Borwein step with unit-length constraint.
-
-        Args:
-            state (MinimState): Input state.
-            B_ext (Array): External field.
-            tau_min (float): Minimum step size.
-            tau_max (float): Maximum step size.
-            cg_tol_base (float): Poisson tolerance.
-
-        Returns:
-            tuple[MinimState, Array, Array]: (New State, Energy, Gradient Norm).
-        """
+    ) -> MinimState:
+        """Take one minimization step (Initial Line Search or pure BB)."""
         m = state.m
         U = solve_U(m, state.U_prev, cg_tol_base)
         E, g_raw = energy_and_grad(m, U, B_ext)
 
-        # Apply preconditioning: g_prec is approximately the local magnetic field
+        # Preconditioning & tangent projection
         g_prec = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_prec)
-        gnorm = jnp.sqrt(jnp.vdot(g_tan, g_tan))
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+        pg = -jnp.vdot(g_raw, g_tan)
 
-        def compute_tau(_: Any) -> Array:
-            """Compute the Barzilai-Borwein step size.
+        # 1. Compute BB spectral estimate
+        s = (m - state.m_prev).reshape(-1)
+        y = (g_tan - state.g_prev).reshape(-1)
+        sty = jnp.vdot(s, y)
+        sts = jnp.vdot(s, s)
+        yty = jnp.vdot(y, y)
+        eps = jnp.asarray(1e-30, dtype=m.dtype)
 
-            Choice: BB step sizes (alternate spectral steps) provide a
-            quasi-Newton speedup without the memory cost of Hessian storage.
-            We alternate between two spectral estimates (tau1, tau2).
-            """
-            s = (m - state.m_prev).reshape(-1)
-            y = (g_tan - state.g_prev).reshape(-1)
-            sty = jnp.vdot(s, y)
-            sts = jnp.vdot(s, s)
-            yty = jnp.vdot(y, y)
-            eps = jnp.asarray(1e-30, dtype=m.dtype)
-            tau1 = sts / (sty + eps)
-            tau2 = sty / (yty + eps)
-            tau = jnp.where((state.it % 2) == 1, tau1, tau2)
-            tau = jnp.where(sty > 0, tau, state.tau)
-            return jnp.clip(tau, tau_min, tau_max)
+        tau1 = sts / (sty + eps)
+        tau2 = sty / (yty + eps)
+        tau_spec = jnp.where((state.it % 2) == 0, tau1, tau2)
 
+        # 2. Decision Logic
+        # Phase A: Initial steps (it < gamma) -> Always Line Search
+        # Phase B: Main steps (it >= gamma) -> Always BB
+        is_initial = state.it < gamma
+
+        # BB Step with specific clipping (automatically tau_max if negative curvature)
+        tau_bb = jnp.where(sty > 1e-20, tau_spec, jnp.asarray(tau_max, m.dtype))
+        tau_bb = jnp.clip(tau_bb, tau_min, tau_max)
+
+        H = -jnp.cross(m, g_prec)
+
+        # Initial guess for line search
+        tau_init = jnp.where(state.it > 0, state.tau, jnp.asarray(tau0, m.dtype))
+
+        # Select step size
         tau = lax.cond(
-            state.it > 0,
-            compute_tau,
-            lambda _: jnp.clip(state.tau, tau_min, tau_max),
+            is_initial,
+            lambda _: jit_ls(
+                m,
+                pg,
+                H,
+                E,
+                U,
+                B_ext,
+                jnp.asarray(cg_tol_base, m.dtype),
+                ls_eta1,
+                ls_eta2,
+                ls_C,
+                ls_c,
+                tau_init,
+                ls_max_evals,
+            ),
+            lambda _: tau_bb,
             operand=None,
         )
 
-        H = -jnp.cross(m, g_prec)
         m_new = cayley_update(m, H, tau)
 
-        new_state = MinimState(
+        # 3. Convergence Check
+        m_norm_inf = 1.0
+        diff_m_norm_inf = jnp.max(jnp.abs(m_new - m))
+
+        u1 = (state.E_prev - E) < tau_f * (1.0 + jnp.abs(E))
+        u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
+        u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + jnp.abs(E))
+        u4 = gnorm_inf < eps_a
+
+        is_converged = jnp.where(state.it > 0, (u1 & u2 & u3) | u4, False)
+
+        return MinimState(
             m=m_new,
             U_prev=U,
             g_prev=g_tan,
             m_prev=m,
             tau=tau,
             it=state.it + jnp.int32(1),
+            E_prev=E,
+            converged=is_converged,
         )
-        return new_state, E, gnorm
 
-    bb_step = jax.jit(_bb_step, donate_argnums=(0,))
+    # Internal kernel for JITed loop
+    @jax.jit
+    def _minim_kernel(
+        initial_state: MinimState,
+        B_ext: Array,
+        h_jax: Array,
+        gamma: int,
+        max_iter: int,
+        tau_f: float,
+        eps_a: float,
+        tau0: float,
+        tau_min: float,
+        tau_max: float,
+        ls_eta1: float,
+        ls_eta2: float,
+        ls_C: float,
+        ls_c: float,
+        ls_s0: float,
+        ls_max_evals: int,
+        cg_tol_base: float,
+        mfinal: float,
+    ) -> MinimState:
+        def cond_fun(state: MinimState) -> bool:
+            it_ok = state.it < max_iter
+            conv_ok = ~state.converged
+            # mfinal logic inside JIT (mfinal=-1e30 means disabled)
+            m_par = jnp.sum(jnp.dot(state.m, h_jax) * M_nodal) / V_mag
+            mfinal_ok = m_par > mfinal
+            return it_ok & conv_ok & mfinal_ok
+
+        def body_fun(state: MinimState) -> MinimState:
+            return minim_step(
+                state,
+                B_ext,
+                gamma,
+                tau_f,
+                eps_a,
+                tau0,
+                tau_min,
+                tau_max,
+                ls_eta1,
+                ls_eta2,
+                ls_C,
+                ls_c,
+                ls_s0,
+                ls_max_evals,
+                cg_tol_base,
+            )
+
+        return jax.lax.while_loop(cond_fun, body_fun, initial_state)
 
     def minimize(
         m0: Array,
@@ -442,27 +469,25 @@ def make_minimizer(
             B_ext (Array): external field (3,).
             U0 (Array | None): initial scalar potential.
             gamma (int, optional): number of initial line-search steps.
-                Defaults to 5.
-            max_iter (int, optional): maximum iterations. Defaults to 200.
+            max_iter (int, optional): maximum iterations.
             tau_f (float): relative energy tolerance.
             eps_a (float): absolute tangent gradient tolerance.
-            tau0 (float): initial step size for line search.
+            tau0 (float): initial step size guess.
             tau_min (float): minimum step size.
             tau_max (float): maximum step size.
-            ls_eta1 (float): line search parameter eta1.
-            ls_eta2 (float): line search parameter eta2.
-            ls_C (float): line search parameter C.
-            ls_c (float): line search parameter c.
-            ls_s0 (float): line search parameter s0.
+            ls_eta1 (float): line search sufficient decrease parameter.
+            ls_eta2 (float): line search expansion parameter.
+            ls_C (float): line search expansion factor.
+            ls_c (float): line search contraction factor.
+            ls_s0 (float): line search initial step size.
             ls_max_evals (int): maximum line search evaluations.
-            h (Array | None): magnetic field for energy computation.
-            mfinal (float | None): final magnetization threshold for early stopping.
-            Js_ref (float): reference saturation magnetization for scaling.
-            verbose (bool): whether to print iteration progress.
+            h (Array | None): magnetic field direction.
+            mfinal (float | None): final magnetization threshold.
+            Js_ref (float): SI scaling factor.
+            verbose (bool): enable logging.
 
         Returns:
-            tuple[Array, Array, dict[str, Any]]: (m_final, U_final,
-                                                   history_info).
+            tuple[Array, Array, dict[str, Any]]: (m_final, U_final, info).
         """
         m = jnp.asarray(m0, dtype=jnp.float64)
         m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
@@ -482,210 +507,73 @@ def make_minimizer(
         # Derived Poisson base tolerance: must satisfy all stopping criteria
         cg_tol_base = float(min(cg_tol, tau_f * 0.1, eps_a * 0.1))
 
-        # Perform initial tight solve using provided U0 or zeros
+        # Perform initial solve
         if U0 is None:
             U0 = jnp.zeros((m.shape[0],), dtype=jnp.float64)
         U = solve_U(m, U0, cg_tol_base)
-        E_prev, g_raw = energy_and_grad(m, U, B_ext)
+        E_init, g_raw = energy_and_grad(m, U, B_ext)
         g_prec = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_prec)
-        gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
 
-        state = MinimState(
+        initial_state = MinimState(
             m=m,
             U_prev=U,
             g_prev=g_tan,
             m_prev=m,
             tau=jnp.asarray(tau0, jnp.float64),
             it=jnp.int32(0),
+            E_prev=jnp.asarray(E_init + 1e6, jnp.float64),  # Force first step
+            converged=jnp.array(False),
         )
-        history = []
 
-        t_ls_total = 0.0
-        t_bb_total = 0.0
+        # Handle mfinal (None -> large negative number for JAX)
+        mfinal_val = float(mfinal) if mfinal is not None else -1e30
 
-        for k in range(gamma):
-            start_ls = time.time()
-            U = solve_U(state.m, state.U_prev, cg_tol_base)
-            E, g_raw = energy_and_grad(state.m, U, B_ext)
-            g_prec = g_raw * inv_M_rel
-            g_tan = tangent_grad(state.m, g_prec)
-            pg = float(-jnp.vdot(g_raw, g_tan))
+        # Execute JITed kernel
+        start_time = time.time()
+        final_state = _minim_kernel(
+            initial_state,
+            B_ext,
+            h_jax,
+            gamma,
+            max_iter,
+            tau_f,
+            eps_a,
+            tau0,
+            tau_min,
+            tau_max,
+            ls_eta1,
+            ls_eta2,
+            ls_C,
+            ls_c,
+            ls_s0,
+            ls_max_evals,
+            cg_tol_base,
+            mfinal_val,
+        )
+        total_time = time.time() - start_time
 
-            # Infinity norms for convergence check
-            gnorm_inf = float(jnp.max(jnp.abs(g_tan)))
-            m_norm_inf = 1.0  # Nodes are normalized to unit length
-            diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
-
-            # U1, U2, U3, U4 criteria
-            u1 = (E_prev - E) < tau_f * (1.0 + abs(E))
-            u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
-            u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + abs(E))
-            u4 = gnorm_inf < eps_a
-
-            converged = (u1 and u2 and u3) or u4
-
-            history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 0.0})
-
-            if mfinal is not None and get_m_par(state.m) <= mfinal:
-                if verbose:
-                    mh_tesla = get_m_par(state.m) * Js_ref
-                    print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  mh={mh_tesla:+.4f} T")
-                    print(f"[LS {k:03d}] mfinal reached, stopping early.")
-                return (
-                    state.m,
-                    U,
-                    {
-                        "E": float(E),
-                        "gnorm": gnorm_inf,
-                        "iters": float(k),
-                        "mfinal_reached": True,
-                        "history": history,
-                        "t_ls": t_ls_total,
-                        "t_bb": t_bb_total,
-                    },
-                )
-
-            if verbose and (k % 10 == 0):
-                mh_tesla = get_m_par(state.m) * Js_ref
-                print(f"[LS {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  mh={mh_tesla:+.4f} T")
-
-            if converged:
-                t_ls_total += time.time() - start_ls
-                if verbose:
-                    print(f"  Line Search Total Time: {t_ls_total:.3f}s")
-                return (
-                    state.m,
-                    U,
-                    {
-                        "E": float(E),
-                        "gnorm": gnorm_inf,
-                        "iters": float(k),
-                        "phase": 0.0,
-                        "history": history,
-                        "t_ls": t_ls_total,
-                        "t_bb": t_bb_total,
-                    },
-                )
-
-            H = -jnp.cross(state.m, g_prec)
-
-            # Using the JIT line search to avoid CPU sync
-            tau = jit_ls(
-                state.m,
-                jnp.asarray(pg),
-                H,
-                jnp.asarray(E),
-                U,
-                B_ext,
-                jnp.asarray(cg_tol_base),
-                ls_eta1,
-                ls_eta2,
-                ls_C,
-                ls_c,
-                ls_s0,
-                ls_max_evals,
-            )
-
-            m_new = cayley_update(state.m, H, tau)
-            E_prev = E
-            state = replace(
-                state,
-                m=m_new,
-                m_prev=state.m,
-                g_prev=g_tan,
-                tau=tau,
-                it=state.it + jnp.int32(1),
-                U_prev=U,
-            )
-            gnorm = float(jnp.sqrt(jnp.vdot(g_tan, g_tan)))
-            t_ls_total += time.time() - start_ls
+        # Final Poisson solve for the potential (highest accuracy)
+        U_final = solve_U(final_state.m, final_state.U_prev, cg_tol_base)
+        E_final, _ = energy_and_grad(final_state.m, U_final, B_ext)
+        gnorm_inf = float(jnp.max(jnp.abs(final_state.g_prev)))
 
         if verbose:
-            print(f"  Line Search Total Time: {t_ls_total:.3f}s")
+            mh_tesla = get_m_par(final_state.m) * Js_ref
+            print(
+                f"[Minim] it={int(final_state.it):03d}  E={float(E_final):.6e}  "
+                f"|g|_inf={gnorm_inf:.3e}  mh={mh_tesla:+.4f} T  t={total_time:.3f}s"
+            )
 
-        for k in range(gamma, max_iter):
-            start_bb = time.time()
-
-            if mfinal is not None and get_m_par(state.m) <= mfinal:
-                if verbose:
-                    mh_tesla = get_m_par(state.m) * Js_ref
-                    print(
-                        f"[BB {k:03d}] E={float(E_prev):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                        f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
-                    )
-                    print(f"[BB {k:03d}] mfinal reached, stopping early.")
-                return (
-                    state.m,
-                    state.U_prev,
-                    {
-                        "E": float(E_prev),
-                        "gnorm": float(jnp.max(jnp.abs(state.g_prev))),
-                        "iters": float(k),
-                        "mfinal_reached": True,
-                        "history": history,
-                        "t_ls": t_ls_total,
-                        "t_bb": t_bb_total,
-                    },
-                )
-
-            state, E, gnorm = bb_step(state, B_ext, tau_min, tau_max, cg_tol_base)
-            gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
-            diff_m_norm_inf = float(jnp.max(jnp.abs(state.m - state.m_prev)))
-
-            u1 = (E_prev - E) < tau_f * (1.0 + abs(E))
-            u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
-            u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + abs(E))
-            u4 = gnorm_inf < eps_a
-
-            converged = (u1 and u2 and u3) or u4
-
-            history.append({"E": float(E), "gnorm": gnorm_inf, "phase": 1.0})
-
-            if verbose and (k % 10 == 0 or converged):
-                mh_tesla = get_m_par(state.m) * Js_ref
-                print(
-                    f"[BB {k:03d}] E={float(E):.6e}  |g|_inf={gnorm_inf:.3e}  "
-                    f"tau={float(state.tau):.3e}  mh={mh_tesla:+.4f} T"
-                )
-
-            t_bb_total += time.time() - start_bb
-            if converged:
-                U = solve_U(state.m, state.U_prev, cg_tol_base)
-                if verbose:
-                    print(f"  BB Phase Total Time: {t_bb_total:.3f}s")
-                return (
-                    state.m,
-                    U,
-                    {
-                        "E": float(E),
-                        "gnorm": gnorm_inf,
-                        "iters": float(k + 1),
-                        "phase": 1.0,
-                        "history": history,
-                        "t_ls": t_ls_total,
-                        "t_bb": t_bb_total,
-                    },
-                )
-
-            E_prev = E
-
-        U = solve_U(state.m, state.U_prev, cg_tol_base)
-        E_end = float(energy_only(state.m, U, B_ext))
-        gnorm_inf = float(jnp.max(jnp.abs(state.g_prev)))
-        if verbose:
-            print(f"  BB Phase Total Time: {t_bb_total:.3f}s")
         return (
-            state.m,
-            U,
+            final_state.m,
+            U_final,
             {
-                "E": E_end,
+                "E": float(E_final),
                 "gnorm": gnorm_inf,
-                "iters": float(max_iter),
-                "phase": 2.0,
-                "history": history,
-                "t_ls": t_ls_total,
-                "t_bb": t_bb_total,
+                "iters": float(final_state.it),
+                "converged": bool(final_state.converged),
+                "total_time": total_time,
             },
         )
 
