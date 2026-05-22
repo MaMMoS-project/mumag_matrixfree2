@@ -141,6 +141,7 @@ def run_benchmark(precond_type="amgcl", order=3, L_cube=20.0, h=2.0, layers=8) -
         max_iter=200,
         snapshot_every=0,
         verbose=True,
+        cg_tol=1e-9,
     )
 
     # Precompute M_nodal
@@ -168,7 +169,6 @@ def run_benchmark(precond_type="amgcl", order=3, L_cube=20.0, h=2.0, layers=8) -
         boundary_mask=boundary_mask,
         precond_type=precond_type,
         order=order,
-        cg_tol=1e-9,
     )
     # Ensure all JAX operations are done
     jax.block_until_ready(res)

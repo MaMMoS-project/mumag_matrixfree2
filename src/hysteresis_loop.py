@@ -53,6 +53,8 @@ class LoopParams:
         verbose (bool): If True, print iteration details.
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
+        cg_tol (float): Relative tolerance for the Poisson solver.
+        poisson_reg (float): Regularization for the Poisson solver.
         mfinal (float | None): Magnetization threshold for early stopping.
         mstep (float | None): Magnetization change threshold for saving snapshots.
     """
@@ -66,7 +68,7 @@ class LoopParams:
     gamma: int = 5
     max_iter: int = 200
     tau_f: float = 1e-6
-    eps_a: float = 1e-8
+    eps_a: float = 1e-10
     tau0: float = 1e-2
     tau_min: float = 1e-6
     tau_max: float = 1.0
@@ -75,7 +77,7 @@ class LoopParams:
     ls_eta2: float = 0.1
     ls_C: float = 2.0
     ls_c: float = 0.5
-    ls_s0: float = 0.01
+    ls_s0: float = 1.0
     ls_max_evals: int = 15
 
     out_dir: str = "hyst_out"
@@ -84,6 +86,8 @@ class LoopParams:
     verbose: bool = False
     Js_ref: float = 1.0
     cg_maxiter: int = 400
+    cg_tol: float = 1e-8
+    poisson_reg: float = 1e-12
     mfinal: float | None = None
     mstep: float | None = None
 
@@ -187,7 +191,6 @@ def jax_compute_volume_averaged_m(
 
 
 def run_hysteresis_loop(
-    *,
     points: np.ndarray,
     geom: TetGeom,
     A_lookup: np.ndarray,
@@ -204,9 +207,6 @@ def run_hysteresis_loop(
     energy_assembly: str = "segment_sum",
     grad_backend: GradBackend = "stored_grad_phi",
     chunk_elems: int = 200_000,
-    cg_maxiter: int = 400,
-    cg_tol: float = 1e-8,
-    poisson_reg: float = 1e-12,
     boundary_mask: jnp.ndarray | None = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
@@ -230,9 +230,6 @@ def run_hysteresis_loop(
         grad_backend (GradBackend, optional): Strategy for gradients.
             Defaults to 'stored_grad_phi'.
         chunk_elems (int, optional): Loop chunk size. Defaults to 200_000.
-        cg_maxiter (int, optional): Solver iterations. Defaults to 400.
-        cg_tol (float, optional): Solver tolerance. Defaults to 1e-8.
-        poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
         boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
             Defaults to None.
 
@@ -270,8 +267,8 @@ def run_hysteresis_loop(
         order=order,
         chunk_elems=chunk_elems,
         cg_maxiter=params.cg_maxiter,
-        cg_tol=cg_tol,
-        poisson_reg=poisson_reg,
+        cg_tol=params.cg_tol,
+        poisson_reg=params.poisson_reg,
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
     )
@@ -290,8 +287,8 @@ def run_hysteresis_loop(
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
         cg_maxiter=params.cg_maxiter,
-        cg_tol=cg_tol,
-        poisson_reg=poisson_reg,
+        cg_tol=params.cg_tol,
+        poisson_reg=params.poisson_reg,
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
     )
@@ -302,7 +299,7 @@ def run_hysteresis_loop(
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
     # Calculate initial state (Issue #25)
-    U_init = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
+    U_init = solve_U(m, jnp.zeros(m.shape[0]), params.cg_tol)
     E_init, g_raw_init = energy_and_grad(m, U_init, jnp.asarray(params.B_start * h))
     Jpar_init = jax_compute_volume_averaged_J_parallel(
         m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)

@@ -420,7 +420,7 @@ def make_minimizer(
         gamma: int = 5,
         max_iter: int = 200,
         tau_f: float = 1e-6,
-        eps_a: float = 1e-12,
+        eps_a: float = 1e-10,
         tau0: float = 1e-2,
         tau_min: float = 1e-6,
         tau_max: float = 1.0,
