@@ -35,15 +35,15 @@ The following core dependencies are managed automatically by Pixi:
 
 ## 2. Methodology & Background
 
-### Energy Minimization
-The package implements a **Curvilinear Search Method** for p-Harmonic flows on spheres, specifically tailored for micromagnetics to maintain the unit-length constraint $|m|=1$ at every node.
+### Energy Minimization (Hybrid BB/Line-Search)
+The package implements a **Curvilinear Search Method** specifically tailored for micromagnetics to maintain the unit-length constraint $|m|=1$ at every node.
 
-The algorithm follows **Algorithm 2** from *Goldfarb et al. (2009)* (DOI: [10.1137/080726926](https://doi.org/10.1137/080726926)):
-1. **Torque Projection**: The raw energy gradient $g$ is used to form a skew-symmetric matrix (or torque field $H = m \times g$) that generates a descent direction in the tangent space.
-2. **Cayley Transform**: Magnetization is updated along a "curvilinear path" using a Cayley transform:
-   $m(\tau) = (I + \frac{\tau}{2} W)^{-1} (I - \frac{\tau}{2} W) m(0)$
-   where $W$ is a skew-symmetric matrix. This is a rotation-preserving map that keeps the vectors on the unit sphere exactly, avoiding the cumulative errors of simple normalization.
-3. **Barzilai-Borwein (BB) Step**: Dynamic step sizes are calculated using the BB method (alternating spectral steps) to provide quasi-Newton acceleration without Hessian storage.
+1. **Torque Projection**: The raw energy gradient $g$ is used to form a torque field $H = m \times g$ that generates a descent direction in the tangent space.
+2. **Cayley Transform**: Magnetization is updated along a "curvilinear path" using a Cayley transform. This rotation-preserving map ensures vectors stay exactly on the unit sphere, avoiding cumulative normalization errors.
+3. **Hybrid Strategy**: The solver dynamically switches between two modes for maximum efficiency:
+   - **BB Mode (Convex)**: In regions of positive curvature ($s \cdot y > 0$), it uses **Barzilai-Borwein (BB)** alternating spectral steps for quasi-Newton acceleration with zero extra energy evaluations.
+   - **Line-Search Mode (Non-Convex)**: If negative or flat curvature is detected ($s \cdot y \leq 0$), it falls back to a JIT-compiled **Armijo line search**. This ensures guaranteed energy descent and prevents the solver from getting stuck during instabilities.
+4. **Full JIT Compilation**: The entire minimization loop (including line search and branching) is compiled into a single XLA kernel using `jax.lax.while_loop`. This eliminates Python overhead and allows the solver to run at native speed even with thousands of iterations.
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
@@ -122,13 +122,18 @@ mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
 mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 
 [minimizer]
-tol_fun = 1e-6      ; Energy convergence tolerance
+tol_fun = 1e-6      ; Energy convergence tolerance (tau_f)
+eps_a = 1e-10       ; Absolute tangent gradient tolerance
+max_iter = 200      ; Max iterations per field step
 
 [poisson]
 cg_maxiter = 400    ; Poisson solver max iterations
+cg_tol = 1e-8       ; Poisson solver relative tolerance
+reg = 1e-12         ; Poisson regularization (poisson_reg)
 ```
 
 ### Material Properties (.krn file)
+
 The `.krn` file defines the intrinsic magnetic properties for each material group in the mesh. **Each line in the file corresponds to a material ID (Line 1 = ID 1, Line 2 = ID 2, etc.)**. Headers starting with `#` are supported.
 
 The file expects 6 columns (Classic format):
@@ -139,9 +144,10 @@ The file expects 6 columns (Classic format):
 5. **Js** (Tesla): Saturation magnetic polarization.
 6. **A** (J/m): Exchange stiffness constant.
 
-### Key Parameters: mfinal & mstep
+### Key Parameters: mfinal, mstep, and tau limits
 - **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
 - **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
+- **`tau_min` & `tau_max`**: Bounds for the Barzilai-Borwein step size. `tau_max` is particularly important as it limits the maximum rotation angle allowed in a single iteration. Default: `1e-6` to `1.0`.
 
 ## 4. Output Files
 
@@ -194,8 +200,11 @@ The primary entry point for running hysteresis loop simulations.
 | `--B-start` | float | Starting magnitude of the applied field (Tesla, default: -1.0). |
 | `--B-end` | float | Final magnitude of the applied field (Tesla, default: 1.0). |
 | `--dB` | float | Field step size magnitude (Tesla, default: 0.05). |
+| `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 200). |
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--tau-min` | float | Minimum step size allowed for the BB minimizer (default: 1e-6). |
+| `--tau-max` | float | Maximum step size allowed for the BB minimizer (default: 1.0). |
 | `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
 | `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
 | `--m0-dir` | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |

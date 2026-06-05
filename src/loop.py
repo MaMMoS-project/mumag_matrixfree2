@@ -227,11 +227,23 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         m_min = config["minimizer"]
         if "tol_fun" in m_min:
             overrides["tau_f"] = float(m_min["tol_fun"])
+        if "eps_a" in m_min:
+            overrides["eps_a"] = float(m_min["eps_a"])
+        if "max_iter" in m_min:
+            overrides["max_iter"] = int(m_min["max_iter"])
+        if "tau_min" in m_min:
+            overrides["tau_min"] = float(m_min["tau_min"])
+        if "tau_max" in m_min:
+            overrides["tau_max"] = float(m_min["tau_max"])
 
     if "poisson" in config:
         p = config["poisson"]
         if "cg_maxiter" in p:
             overrides["cg_maxiter"] = int(p["cg_maxiter"])
+        if "cg_tol" in p:
+            overrides["cg_tol"] = float(p["cg_tol"])
+        if "reg" in p:
+            overrides["poisson_reg"] = float(p["reg"])
 
     return overrides
 
@@ -437,6 +449,12 @@ def main() -> None:
     )
     ap.add_argument("--dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
     ap.add_argument(
+        "--max-iter",
+        type=int,
+        default=200,
+        help="Maximum iterations for the energy minimizer per field step.",
+    )
+    ap.add_argument(
         "--tau-f",
         type=float,
         default=1e-6,
@@ -447,6 +465,18 @@ def main() -> None:
         type=float,
         default=1e-10,
         help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+    )
+    ap.add_argument(
+        "--tau-min",
+        type=float,
+        default=1e-6,
+        help="Minimum step size allowed for the BB minimizer.",
+    )
+    ap.add_argument(
+        "--tau-max",
+        type=float,
+        default=1.0,
+        help="Maximum step size allowed for the BB minimizer.",
     )
 
     ap.add_argument(
@@ -646,8 +676,14 @@ def main() -> None:
         "B_start": float(args.B_start) / Js_ref,
         "B_end": float(args.B_end) / Js_ref,
         "dB": float(args.dB) / Js_ref,
+        "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
+        "tau_min": float(args.tau_min),
+        "tau_max": float(args.tau_max),
+        "cg_maxiter": int(args.cg_maxiter),
+        "cg_tol": float(args.cg_tol),
+        "poisson_reg": float(args.poisson_reg),
         "loop": True,
         "out_dir": args.out_dir,
         "snapshot_every": int(args.snapshot_every),
@@ -692,9 +728,6 @@ def main() -> None:
         precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
-        cg_maxiter=int(args.cg_maxiter),
-        cg_tol=float(args.cg_tol),
-        poisson_reg=float(args.poisson_reg),
         boundary_mask=boundary_mask,
     )
 

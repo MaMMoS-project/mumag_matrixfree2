@@ -148,6 +148,12 @@ def test_compilation() -> None:
         verbose=False
     )
     
+    # Precompute M_nodal
+    vol_Js = volume * Js_lookup[mat_id - 1]
+    from dataclasses import replace
+    geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
+    M_nodal = compute_node_volumes(geom_Js, chunk_elems=100000)
+    
     node_vols = compute_node_volumes(geom, chunk_elems=100000)
     
     print("\n--- Starting Loop (Compilations should be logged) ---")
@@ -162,6 +168,7 @@ def test_compilation() -> None:
         params=params,
         V_mag=float(V_mag),
         node_volumes=node_vols,
+        M_nodal=M_nodal,
         grad_backend='stored_grad_phi',
         boundary_mask=boundary_mask
     )

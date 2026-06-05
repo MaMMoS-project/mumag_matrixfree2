@@ -1,0 +1,24 @@
+[mesh]
+size = 1e-9
+
+[field]
+hx = 0.0174524
+hy = 0.0
+hz = 0.9998477
+hstart = 1.0
+hfinal = -1.0
+hstep = 0.01
+mstep = 0.1
+mfinal = -3.0
+loop = false
+
+[minimizer]
+tol_fun = 1e-8
+eps_a = 1e-10
+max_iter = 2000
+tau_max = 1.0
+
+
+[poisson]
+cg_maxiter = 500
+cg_tol = 1e-9
