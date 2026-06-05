@@ -330,21 +330,19 @@ def make_minimizer(
 
         # 2. Decision Logic
         # Phase A: Initial steps (it < gamma) -> Always Line Search
-        # Phase B: Main steps (it >= gamma) -> Always BB
+        # Phase B: Main steps (it >= gamma) -> BB if curvature is positive, else Line Search
         is_initial = state.it < gamma
-
-        # BB Step with specific clipping (automatically tau_max if negative curvature)
-        tau_bb = jnp.where(sty > 1e-20, tau_spec, jnp.asarray(tau_max, m.dtype))
-        tau_bb = jnp.clip(tau_bb, tau_min, tau_max)
+        use_pure_bb = (~is_initial) & (sty > 1e-12)
 
         H = -jnp.cross(m, g_prec)
 
-        # Initial guess for line search
+        # Initial guess for line search if we fall back
         tau_init = jnp.where(state.it > 0, state.tau, jnp.asarray(tau0, m.dtype))
 
-        # Select step size
+        # Select step size (Hybrid logic)
         tau = lax.cond(
-            is_initial,
+            use_pure_bb,
+            lambda _: jnp.clip(tau_spec, tau_min, tau_max),
             lambda _: jit_ls(
                 m,
                 pg,
@@ -360,7 +358,6 @@ def make_minimizer(
                 tau_init,
                 ls_max_evals,
             ),
-            lambda _: tau_bb,
             operand=None,
         )
 

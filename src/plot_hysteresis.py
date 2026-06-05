@@ -14,8 +14,8 @@ def plot_hysteresis(csv_path: str | Path, output_image: str | Path):
     if data.ndim == 1:
         data = data[None, :]
 
-    B_ext = data[:, 0]
-    J_par = data[:, 1]
+    B_ext = data[:, 1]
+    J_par = data[:, 2]
 
     plt.figure(figsize=(10, 6))
     plt.plot(B_ext, J_par, "o-", label="Magnetization Curve")

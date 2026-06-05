@@ -13,9 +13,11 @@ mfinal = -3.0
 loop = false
 
 [minimizer]
-tol_fun = 1e-9
+tol_fun = 1e-8
 eps_a = 1e-10
 max_iter = 2000
+tau_max = 1.0
+
 
 [poisson]
 cg_maxiter = 500
