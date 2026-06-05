@@ -21,7 +21,6 @@ from jax import lax
 
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom
-from poisson_solve import make_solve_U
 
 Array = jnp.ndarray
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
@@ -136,16 +135,13 @@ def make_minimizer(
     V_mag: float,
     node_volumes: Array,
     M_nodal: Array,
+    solve_U: Callable[[Array, Array, float], Array],
+    cg_tol: float,
     *,
-    precond_type: str = "jacobi",
-    order: int = 3,
+    B_bias: Array | None = None,
     chunk_elems: int = 200_000,
     energy_assembly: str = "scatter",
-    cg_maxiter: int = 400,
-    cg_tol: float = 1e-8,
-    poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
-    boundary_mask: Array | None = None,
 ) -> Callable[..., tuple[Array, Array, dict[str, Any]]]:
     """Create a high-level micromagnetic minimizer.
 
@@ -158,18 +154,14 @@ def make_minimizer(
         V_mag (float): Magnetic volume.
         node_volumes (Array): Total nodal volumes.
         M_nodal (Array): Nodal magnetic moments.
-        precond_type (str, optional): Poisson solver preconditioner.
-            Defaults to 'jacobi'.
-        order (int, optional): Chebyshev order. Defaults to 3.
+        solve_U (Callable): Pre-built Poisson solver function.
+        cg_tol (float): Poisson solver tolerance.
+        B_bias (Array, optional): Per-node bias field for mode initialization.
         chunk_elems (int, optional): loop chunk size. Defaults to 200_000.
         energy_assembly (str, optional): 'scatter' or 'segment_sum'.
             Defaults to 'scatter'.
-        cg_maxiter (int, optional): Poisson solver iterations. Defaults to 400.
-        cg_tol (float, optional): Poisson solver tolerance. Defaults to 1e-8.
-        poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
         grad_backend (GradBackend, optional): Strategy for gradients.
             Defaults to 'stored_grad_phi'.
-        boundary_mask (Array | None, optional): Dirichlet mask. Defaults to None.
 
     Returns:
         Callable: minimize(m0, B_ext, **kwargs) -> (m_final, U_final, info_dict).
@@ -186,24 +178,10 @@ def make_minimizer(
         k_easy_lookup=k_easy_lookup,
         V_mag=V_mag,
         M_nodal=M_nodal,
+        B_bias=B_bias,
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
-    )
-
-    solve_U = make_solve_U(
-        geom,
-        Js_lookup,
-        precond_type=precond_type,
-        order=order,
-        chunk_elems=chunk_elems,
-        cg_maxiter=cg_maxiter,
-        cg_tol=cg_tol,
-        poisson_reg=poisson_reg,
-        grad_backend=grad_backend,
-        enforce_zero_mean=True,
-        boundary_mask=boundary_mask,
-        assembly=energy_assembly,
     )
 
     def jax_armijo_line_search(

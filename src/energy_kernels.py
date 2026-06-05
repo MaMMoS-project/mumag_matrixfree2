@@ -115,6 +115,7 @@ def make_energy_kernels(
     V_mag: float,
     M_nodal: Array,
     *,
+    B_bias: Array | None = None,
     k1me: Array | None = None,
     k1me_p: Array | None = None,
     chunk_elems: int = 200_000,
@@ -138,6 +139,7 @@ def make_energy_kernels(
         k_easy_lookup (Array): Easy axis vectors (unit length) for each material (G, 3).
         V_mag (float): Total magnetic volume in mesh units (e.g., nm^3).
         M_nodal (Array): Nodal magnetic moment scaling (N,).
+        B_bias (Array | None, optional): Per-node bias field for mode initialization.
         k1me (Array | None, optional): Per-element magnetoelastic constant Kx.
         k1me_p (Array | None, optional): Per-element magnetoelastic constant Ky.
         chunk_elems (int, optional): Elements processed per loop iteration.
@@ -323,7 +325,11 @@ def make_energy_kernels(
         g_quad = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
 
         # 4. Zeeman Gradient (Linear)
-        g_z = -2.0 * M_nodal[:, None] * B_ext[None, :]
+        B_eff = B_ext[None, :]
+        if B_bias is not None:
+            B_eff = B_eff + B_bias
+
+        g_z = -2.0 * M_nodal[:, None] * B_eff
 
         # Total Gradient
         g_total = g_quad + g_z

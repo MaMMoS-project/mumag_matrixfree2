@@ -235,6 +235,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["tau_min"] = float(m_min["tau_min"])
         if "tau_max" in m_min:
             overrides["tau_max"] = float(m_min["tau_max"])
+        if "bias_type" in m_min:
+            overrides["bias_type"] = str(m_min["bias_type"])
+        if "bias_strength" in m_min:
+            overrides["bias_strength"] = float(m_min["bias_strength"])
 
     if "poisson" in config:
         p = config["poisson"]
@@ -478,6 +482,19 @@ def main() -> None:
         default=1.0,
         help="Maximum step size allowed for the BB minimizer.",
     )
+    ap.add_argument(
+        "--bias-type",
+        type=str,
+        default=None,
+        choices=["circular", "random"],
+        help="Type of symmetry-breaking field for mode initialization.",
+    )
+    ap.add_argument(
+        "--bias-strength",
+        type=float,
+        default=0.0,
+        help="Strength of the bias field relative to saturation (e.g., 0.01).",
+    )
 
     ap.add_argument(
         "--out-dir",
@@ -689,6 +706,8 @@ def main() -> None:
         "snapshot_every": int(args.snapshot_every),
         "verbose": args.verbose,
         "Js_ref": float(Js_ref),
+        "bias_type": args.bias_type,
+        "bias_strength": float(args.bias_strength),
     }
 
     # Apply overrides
@@ -713,6 +732,27 @@ def main() -> None:
 
     params = LoopParams(**params_dict)
 
+    # Compute per-node bias field
+    B_bias = np.zeros((knt.shape[0], 3))
+    if params.bias_type == "circular":
+        # Compute center of the magnetic part
+        mag_nodes = np.unique(conn[mat_id == 1])
+        if mag_nodes.size > 0:
+            center = np.mean(knt[mag_nodes], axis=0)
+            coords = knt - center
+            bx = -coords[:, 1]
+            by = coords[:, 0]
+            norm = np.sqrt(bx**2 + by**2) + 1e-30
+            B_bias[:, 0] = bx / norm
+            B_bias[:, 1] = by / norm
+    elif params.bias_type == "random":
+        rng = np.random.default_rng(42)
+        B_bias = rng.standard_normal((knt.shape[0], 3))
+        B_bias /= np.linalg.norm(B_bias, axis=1, keepdims=True) + 1e-30
+
+    # Scale by strength relative to saturation (dimensionless in our code)
+    B_bias *= params.bias_strength
+
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
@@ -725,6 +765,7 @@ def main() -> None:
         V_mag=float(V_mag),
         node_volumes=node_vols,
         M_nodal=M_nodal,
+        B_bias=B_bias,
         precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),

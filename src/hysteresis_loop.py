@@ -57,6 +57,8 @@ class LoopParams:
         poisson_reg (float): Regularization for the Poisson solver.
         mfinal (float | None): Magnetization threshold for early stopping.
         mstep (float | None): Magnetization change threshold for saving snapshots.
+        bias_type (str | None): Type of symmetry-breaking field ('circular', 'random').
+        bias_strength (float): Strength of the bias field relative to saturation.
     """
 
     h_dir: np.ndarray
@@ -90,6 +92,8 @@ class LoopParams:
     poisson_reg: float = 1e-12
     mfinal: float | None = None
     mstep: float | None = None
+    bias_type: str | None = None
+    bias_strength: float = 0.0
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -202,6 +206,7 @@ def run_hysteresis_loop(
     V_mag: float,
     node_volumes: jnp.ndarray,
     M_nodal: jnp.ndarray,
+    B_bias: np.ndarray | None = None,
     precond_type: str = "jacobi",
     order: int = 3,
     energy_assembly: str = "segment_sum",
@@ -223,6 +228,7 @@ def run_hysteresis_loop(
         V_mag (float): Total magnetic volume.
         node_volumes (jnp.ndarray): Lumped nodal volumes.
         M_nodal (jnp.ndarray): Nodal magnetic moments.
+        B_bias (np.ndarray, optional): Per-node bias field for mode initialization.
         precond_type (str, optional): Poisson solver preconditioner.
             Defaults to 'jacobi'.
         order (int, optional): Chebyshev order. Defaults to 3.
@@ -282,15 +288,12 @@ def run_hysteresis_loop(
         V_mag=V_mag,
         node_volumes=node_volumes,
         M_nodal=M_nodal,
-        precond_type=precond_type,
-        order=order,
+        solve_U=solve_U,
+        cg_tol=params.cg_tol,
+        B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
-        cg_maxiter=params.cg_maxiter,
-        cg_tol=params.cg_tol,
-        poisson_reg=params.poisson_reg,
         grad_backend=grad_backend,
-        boundary_mask=boundary_mask,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)

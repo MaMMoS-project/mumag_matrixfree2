@@ -148,6 +148,7 @@ The file expects 6 columns (Classic format):
 - **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
 - **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
 - **`tau_min` & `tau_max`**: Bounds for the Barzilai-Borwein step size. `tau_max` is particularly important as it limits the maximum rotation angle allowed in a single iteration. Default: `1e-6` to `1.0`.
+- **`bias_type` & `bias_strength`**: Used for symmetry breaking to trigger specific reversal modes (e.g., curling in spheres). `bias_type` can be `circular` or `random`. `bias_strength` is the magnitude relative to saturation (e.g., 0.01).
 
 ## 4. Output Files
 
@@ -205,6 +206,8 @@ The primary entry point for running hysteresis loop simulations.
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
 | `--tau-min` | float | Minimum step size allowed for the BB minimizer (default: 1e-6). |
 | `--tau-max` | float | Maximum step size allowed for the BB minimizer (default: 1.0). |
+| `--bias-type` | choice | Symmetry-breaking field type: `circular` or `random` (default: None). |
+| `--bias-strength` | float | Strength of the bias field relative to saturation (default: 0.0). |
 | `--out-dir` | path | Directory for results and snapshots (default: hyst_out). |
 | `--snapshot-every` | int | Save VTU snapshots every N steps (0 to disable, default: 1). |
 | `--m0-dir` | CSV | Initial magnetization direction "mx,my,mz". Defaults to field direction. |

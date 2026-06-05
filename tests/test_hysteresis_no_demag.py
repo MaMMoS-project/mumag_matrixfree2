@@ -55,6 +55,8 @@ def make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup,
             m_prev=m,
             tau=tau,
             it=state.it + jnp.int32(1),
+            E_prev=jnp.array(0.0),
+            converged=jnp.array(False),
         )
 
     bb_step = jax.jit(_bb_step)
@@ -73,6 +75,8 @@ def make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup,
             m_prev=m,
             tau=jnp.asarray(1e-2, jnp.float64),
             it=jnp.int32(0),
+            E_prev=jnp.array(1e6),
+            converged=jnp.array(False),
         )
         for _ in range(max_iter):
             state = bb_step(state, B_ext, 1e-6, 1.0)
