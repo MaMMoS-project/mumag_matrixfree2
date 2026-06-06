@@ -62,15 +62,27 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 | :--- | :--- | :--- |
 | `method` | `pcohen` | Minimizer algorithm. |
 | `pc_iters` | `10` | Maximum inner iterations for the preconditioner. |
-| `pc_auto` | `True` | Enable automated tuning of preconditioning accuracy (Forcing Sequence). |
-| `pc_force_eta` | `0.1` | Base forcing parameter for adaptive preconditioning. |
-| `pc_force_alpha` | `1.0` | Exponent forcing parameter for adaptive preconditioning. |
+| `pc_auto` | `True` | **Adaptive Forcing**: Enable dynamic tuning of preconditioning accuracy based on the **Eisenstat-Walker** formula: `pc_tol = min(eta, |g|^alpha) * |g|`. |
+| `pc_force_eta` | `0.1` | Forcing parameter $\eta_{base}$: limits maximum preconditioning laziness. |
+| `pc_force_alpha` | `1.0` | Forcing parameter $\alpha$: controls how fast accuracy tightens as $|g| \to 0$. |
 | `phi_extrapolate`| `False` | Enable linear extrapolation of scalar potential for faster Poisson solves. |
 | `memory` | `5` | History size for L-BFGS and Anderson acceleration. |
 | `tn_iters` | `5` | Inner iterations for Newton-CG solvers. |
 | `lr` | `0.1` | Learning rate for Nesterov acceleration. |
 | `mu` | `0.9` | Momentum factor for Nesterov acceleration. |
 | `pc_reg` | `0.0` | Diagonal regularization for the preconditioner. |
+
+#### Preconditioner Strategy: Steihaug-Toint Detection
+All preconditioned methods (`pcohen`, `pcg`, `plbfgs`, etc.) utilize a **Steihaug-style exit** strategy:
+- The internal linear CG solver monitors the curvature $p^T A p$.
+- If **negative or zero curvature** is detected (indicating an unstable switching region), the solver immediately exits and returns the best descent direction found so far.
+- This ensures the minimizer remains robust and fast even during violent magnetization reversals.
+
+#### Preconditioner Accuracy & Early Stopping
+The internal preconditioning solve ($Py = g$) is optimized for speed using a multi-layered stopping criteria:
+1.  **Eisenstat-Walker Forcing**: The target precision is dynamically calculated as `pc_tol = min(eta, |g|^alpha) * |g|`. This ensures high speed when far from equilibrium and high precision near the minimum.
+2.  **Hard Iteration Cap (`pc_iters`)**: Regardless of the accuracy target, the solver will always terminate and return the best available direction once `pc_iters` is reached.
+3.  **Physical Robustness**: If the resulting direction is not a descent direction (e.g., due to extreme ill-conditioning), the solver automatically falls back to the projected raw gradient.
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
@@ -155,10 +167,10 @@ method = pcohen     ; Algorithm: pcohen, bb, lbfgs, etc.
 tol_fun = 1e-6      ; Energy convergence tolerance (tau_f)
 eps_a = 1e-10       ; Absolute tangent gradient tolerance
 max_iter = 200      ; Max iterations per field step
-pc_iters = 10       ; Inner preconditioning iterations
+pc_iters = 30       ; Inner preconditioning iterations
 pc_auto = true      ; Enable adaptive forcing sequence
-pc_force_eta = 0.1  ; Forcing base
-pc_force_alpha = 1.0; Forcing exponent
+pc_force_eta = 0.1  ; Forcing base (Eisenstat-Walker)
+pc_force_alpha = 1.0; Forcing exponent (Eisenstat-Walker)
 phi_extrapolate = true; Enable potential extrapolation
 memory = 5          ; BFGS history
 
