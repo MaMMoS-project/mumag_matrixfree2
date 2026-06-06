@@ -89,6 +89,8 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
             m_trial = cayley_update(m, H, s)
             U_trial = solve_U(m_trial, U_base, phi_tol)
             E_trial = energy_only(m_trial, U_trial, B_ext)
+            # Handle NaN/Inf in energy: treat as very high energy to force backtracking
+            E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
             return (E_trial - E0) / (s * pg + 1e-30)
 
         def exp_cond(state):
@@ -98,7 +100,7 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
         def exp_body(state):
             s, s_min, it, done = state
             d = D(s)
-            stop = jnp.abs(1.0 - d) >= eta2
+            stop = (jnp.abs(1.0 - d) >= eta2) | (d < 0)  # Stop if energy increases or sufficiently far
             s_next = jnp.where(stop, s, C * s)
             s_min_next = jnp.where(stop, s_min, s)
             return (s_next, s_min_next, it + 1, stop)
@@ -114,13 +116,18 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
         def con_body(state):
             s, it, done = state
             d = D(s)
-            stop = d >= eta1
+            stop = (d >= eta1) & (d < 1e10)  # Sufficient decrease and finite
             s_next = jnp.where(stop, s, s_min_exp + c * (s - s_min_exp))
             return (s_next, it + 1, stop)
 
         init_con = (s_exp, jnp.int32(0), jnp.array(False))
         s_final, _, _ = lax.while_loop(con_cond, con_body, init_con)
-        return jnp.where(pg >= 0, 0.0, s_final)
+
+        # Final safety: if it still doesn't decrease, return a tiny step or 0
+        final_d = D(s_final)
+        s_safe = jnp.where(final_d >= 0, s_final, 0.0)
+
+        return jnp.where(pg >= 0, 0.0, s_safe)
 
     return jax.jit(armijo_ls)
 
@@ -145,7 +152,11 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
         m_dot_g_s = jnp.sum(m * g_s, axis=1, keepdims=True)
         comp3 = m_dot_g_s * v
 
-        return Cv_s - comp2 - comp3
+        # Regularization: Increased shift for large meshes and switching events.
+        # This acts like a Trust-Region damping term.
+        shift = 1e-2 * v
+
+        return Cv_s - comp2 - comp3 + shift
 
     def solve_Py_g(m: Array, g_raw_scaled: Array, g_tan: Array, max_iter: int = 20, tol: float = 0.0) -> Array:
         """Solve Py = g_tan for y using linear CG with optional early exit via tol."""
@@ -160,23 +171,30 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
         target_rho = tol**2
 
         def cond_fun(state):
-            y, r, p, rho, it = state
-            # Exit if iterations reached or residual squared < target_rho
-            return (it < max_iter) & (rho > target_rho) & (rho > 1e-25)
+            y_loop, r_loop, p_loop, rho_loop, it_loop = state
+            # Exit if iterations reached, residual squared < target_rho, or blowup detected
+            return (it_loop < max_iter) & (rho_loop > target_rho) & (rho_loop > 1e-25) & (rho_loop < 1e20)
 
         def body_fun(state):
-            y, r, p, rho, it = state
-            Ap = inner_op(p)
-            alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
-            y_new = y + alpha * p
-            r_new = r - alpha * Ap
-            rho_new = jnp.vdot(r_new, r_new)
-            p_new = r_new + (rho_new / (rho + 1e-30)) * p
-            return y_new, r_new, p_new, rho_new, it + 1
+            y_loop, r_loop, p_loop, rho_loop, it_loop = state
+            Ap = inner_op(p_loop)
+            alpha = rho_loop / (jnp.vdot(p_loop, Ap) + 1e-30)
+            y_next = y_loop + alpha * p_loop
+            r_next = r_loop - alpha * Ap
+            rho_next = jnp.vdot(r_next, r_next)
+            p_next = r_next + (rho_next / (rho_loop + 1e-30)) * p_loop
+            return y_next, r_next, p_next, rho_next, it_loop + 1
 
-        state = (y, r, p, rho, 0)
-        final_state = lax.while_loop(cond_fun, body_fun, state)
+        state_init = (y, r, p, rho, 0)
+        final_state = lax.while_loop(cond_fun, body_fun, state_init)
         y_final = final_state[0]
+
+        # Safety Clipping: prevent preconditioned direction from exploding
+        y_norm = jnp.linalg.norm(y_final)
+        g_norm = jnp.linalg.norm(g_tan)
+        y_final = jnp.where(y_norm > 10.0 * g_norm, y_final * (10.0 * g_norm / (y_norm + 1e-30)), y_final)
+
+        # Fallback to gradient if not a descent direction
         return jnp.where(jnp.vdot(y_final, g_tan) > 1e-12, y_final, g_tan)
 
     return apply_P, solve_Py_g
@@ -319,6 +337,11 @@ def make_pcg_minimizer(
 
         y = solve_P(m, g_raw * inv_M_rel, g_tan, max_iter=params.get("pc_iters", 10), tol=pc_tol)
 
+        # Use the smoothed (preconditioned) gradient for the convergence check.
+        # This is physically more meaningful as it represents the displacement
+        # in the natural metric of the problem.
+        gnorm_inf_smooth = jnp.max(jnp.abs(y))
+
         diff_g = g_tan - g_prev
         num = jnp.vdot(diff_g, y)
         den = jnp.vdot(diff_g, d_prev) + 1e-30
@@ -349,9 +372,23 @@ def make_pcg_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf, state.it + 1, conv)
+        jax.lax.cond(
+            params.get("debug", False),
+            lambda _: jax.debug.print(
+                "it={it:03d} E={E:.8e} g={g:.3e} tau={tau:.3e} conv={c}",
+                it=state.it,
+                E=E,
+                g=gnorm_inf_smooth,
+                tau=tau,
+                c=conv,
+            ),
+            lambda _: None,
+            operand=None,
+        )
+
+        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -391,6 +428,11 @@ def make_pcohen_minimizer(
 
         y = solve_P(m, g_raw * inv_M_rel, g_tan, max_iter=params.get("pc_iters", 10), tol=pc_tol)
 
+        # Use the smoothed (preconditioned) gradient for the convergence check.
+        # This is physically more meaningful as it represents the displacement
+        # in the natural metric of the problem.
+        gnorm_inf_smooth = jnp.max(jnp.abs(y))
+
         if beta_type == "pr":
             # Polak-Ribiere (PR) Beta
             num = jnp.vdot(y, g_tan - g_prev)
@@ -405,7 +447,14 @@ def make_pcohen_minimizer(
 
         d_prev_proj = tangent_grad(m, d_prev)
         d = -y + beta * d_prev_proj
+
+        # Ensure descent
         d = jnp.where(jnp.vdot(d, g_tan) > 0, -y, d)
+
+        # Safety: Limit search direction magnitude to prevent huge rotations
+        # in a single step (max 0.1 rad approx).
+        d_max = jnp.max(jnp.abs(d))
+        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
 
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
@@ -427,9 +476,23 @@ def make_pcohen_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf, state.it + 1, conv)
+        jax.lax.cond(
+            params.get("debug", False),
+            lambda _: jax.debug.print(
+                "it={it:03d} E={E:.8e} g={g:.3e} tau={tau:.3e} conv={c}",
+                it=state.it,
+                E=E,
+                g=gnorm_inf_smooth,
+                tau=tau,
+                c=conv,
+            ),
+            lambda _: None,
+            operand=None,
+        )
+
+        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -814,7 +877,10 @@ def make_plbfgs_minimizer(
         U = solve_U(m, U, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Use the smoothed (preconditioned) gradient for the convergence check.
+        y = solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(y))
 
         def get_direction(g, S, Y, rho, it):
             n_history = jnp.minimum(it, memory)
@@ -845,7 +911,7 @@ def make_plbfgs_minimizer(
         d = get_direction(g_tan, state.S, state.Y, state.rho, state.it)
         d = jnp.where(
             (state.it == 0) | (jnp.vdot(d, g_tan) > 0),
-            -solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10)),
+            -y,
             d,
         )
 
@@ -868,7 +934,7 @@ def make_plbfgs_minimizer(
             15,
         )
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         s_new = m_new - m
         y_new = g_tan - state.g
@@ -878,7 +944,7 @@ def make_plbfgs_minimizer(
         S_next = jnp.where(update_ok, state.S.at[idx].set(s_new), state.S)
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf, state.it + 1, conv)
+        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -947,10 +1013,10 @@ def make_pbb_minimizer(
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Preconditioned gradient
         z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Spectral estimate from standard BB
         s_diff = (m - state.m_prev).reshape(-1)
@@ -993,9 +1059,9 @@ def make_pbb_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PBBState(m_new, U, g_raw, g_tan, m, g_tan, tau, E, gnorm_inf, state.it + 1, conv)
+        return PBBState(m_new, U, g_raw, g_tan, m, g_tan, tau, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1024,7 +1090,10 @@ def make_dplbfgs_minimizer(
         U = solve_U(m, U, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Use the smoothed (preconditioned) gradient for the convergence check.
+        y = solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(y))
 
         def get_direction(g, S, Y, rho, it):
             n_history = jnp.minimum(it, memory)
@@ -1054,7 +1123,7 @@ def make_dplbfgs_minimizer(
         d = get_direction(g_tan, state.S, state.Y, state.rho, state.it)
         d = jnp.where(
             (state.it == 0) | (jnp.vdot(d, g_tan) > 0),
-            -solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10)),
+            -y,
             d,
         )
 
@@ -1079,7 +1148,7 @@ def make_dplbfgs_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         s_k = m_new - m
         y_k = g_tan - state.g
@@ -1099,7 +1168,7 @@ def make_dplbfgs_minimizer(
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_damped), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf, state.it + 1, conv)
+        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1264,7 +1333,10 @@ def make_rplbfgs_minimizer(
         U = solve_U(m, U, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Use the smoothed (preconditioned) gradient for the convergence check.
+        y = solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(y))
 
         # Vector Transport: Project entire history into current tangent space
         def transport(V):
@@ -1301,7 +1373,7 @@ def make_rplbfgs_minimizer(
         d = get_direction(g_tan, S_trans, Y_trans, state.rho, state.it)
         d = jnp.where(
             (state.it == 0) | (jnp.vdot(d, g_tan) > 0),
-            -solve_P(m, g_raw * inv_M_rel, g_tan, params.get("pc_iters", 10)),
+            -y,
             d,
         )
 
@@ -1326,7 +1398,7 @@ def make_rplbfgs_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         s_k = m_new - m
         y_k = g_tan - state.g
@@ -1346,7 +1418,7 @@ def make_rplbfgs_minimizer(
         Y_next = jnp.where(update_ok, Y_trans.at[idx].set(y_damped), Y_trans)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf, state.it + 1, conv)
+        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1400,10 +1472,10 @@ def make_aapg_minimizer(
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Preconditioned gradient z is our "residual" f(m)
         z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Anderson Acceleration
         def compute_aa(m_curr, z_curr, X, F, it):
@@ -1453,14 +1525,14 @@ def make_aapg_minimizer(
         )
 
         m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         # Store history
         idx = state.it % memory
         X_next = state.X.at[idx].set(m)
         F_next = state.F.at[idx].set(z)
 
-        return AAState(m_new, U, E, gnorm_inf, X_next, F_next, state.it + 1, conv)
+        return AAState(m_new, U, E, gnorm_inf_smooth, X_next, F_next, state.it + 1, conv)
 
     return step
 
@@ -1515,10 +1587,10 @@ def make_pnag_minimizer(
         E_look, g_raw_look = energy_and_grad(m_look, U_look, B_ext)
         g_s_look = g_raw_look * inv_M_rel
         g_tan_look = tangent_grad(m_look, g_s_look)
-        gnorm_inf = jnp.max(jnp.abs(g_tan_look))
 
         # Preconditioned gradient at look-ahead
         z = solve_P(m_look, g_s_look, g_tan_look, params.get("pc_iters", 10))
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Velocity update
         v = mu * tangent_grad(m, v_prev) - params.get("lr", 0.1) * tangent_grad(m, z)
@@ -1527,9 +1599,9 @@ def make_pnag_minimizer(
         H = -jnp.cross(m, -v)
         m_new = cayley_update(m, H, 1.0)
 
-        conv = check_convergence(state.it, E_look, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E_look, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return NAGState(m_new, U_look, v, E_look, gnorm_inf, state.it + 1, conv)
+        return NAGState(m_new, U_look, v, E_look, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
