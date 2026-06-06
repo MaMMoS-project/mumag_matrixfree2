@@ -1,6 +1,11 @@
 [mesh]
 size = 1e-9
 
+[initial state]
+mx = 0.0
+my = 0.0
+mz = 1.0
+
 [field]
 hx = 0.0174524
 hy = 0.0
@@ -11,16 +16,20 @@ hstep = 0.01
 mstep = 0.1
 mfinal = -3.0
 loop = false
+bias_type = circular
+bias_strength = 0.00001
 
 [minimizer]
-tol_fun = 1e-8
-eps_a = 1e-10
+method = pcohen
+tol_fun = 1e-9
+eps_a = 1e-11
 max_iter = 2000
 tau_max = 1.0
-bias_type = circular
-bias_strength = 0.01
-
+pc_iters = 30
+pc_auto = true
+pc_force_eta = 0.1
+pc_force_alpha = 1.0
 
 [poisson]
-cg_maxiter = 500
-cg_tol = 1e-9
+cg_maxiter = 1000
+cg_tol = 1e-10

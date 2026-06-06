@@ -212,6 +212,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["mstep"] = float(f["mstep"])
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
+        if "bias_type" in f:
+            overrides["bias_type"] = str(f["bias_type"])
+        if "bias_strength" in f:
+            overrides["bias_strength"] = float(f["bias_strength"])
 
     if "initial state" in config:
         m_sec = config["initial state"]
@@ -235,10 +239,6 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["tau_min"] = float(m_min["tau_min"])
         if "tau_max" in m_min:
             overrides["tau_max"] = float(m_min["tau_max"])
-        if "bias_type" in m_min:
-            overrides["bias_type"] = str(m_min["bias_type"])
-        if "bias_strength" in m_min:
-            overrides["bias_strength"] = float(m_min["bias_strength"])
         if "method" in m_min:
             overrides["method"] = str(m_min["method"])
         if "pc_iters" in m_min:
