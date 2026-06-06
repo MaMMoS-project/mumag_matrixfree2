@@ -51,6 +51,8 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 - **`rplbfgs`**: Riemannian PL-BFGS using vector transport (tangent space projection).
 - **`tn` / `tn_split`**: Truncated Newton-CG (Full or local-only Hessian).
 - **`pbb`**: Preconditioned Barzilai-Borwein.
+- **`pbbs`**: Preconditioned Barzilai-Borwein with Steihaug engine.
+- **`pcohen_lbfgs`**: LBFGS-Preconditioned Cohen CG Hybrid. Superior for complex landscapes.
 - **`tr`**: Trust-Region Newton-CG (Steihaug-Toint).
 - **`aapg`**: Anderson Accelerated Preconditioned Gradient.
 - **`pnag`**: Preconditioned Nesterov Accelerated Gradient.
@@ -63,10 +65,12 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 | `pc_auto` | `True` | Enable automated tuning of preconditioning accuracy (Forcing Sequence). |
 | `pc_force_eta` | `0.1` | Base forcing parameter for adaptive preconditioning. |
 | `pc_force_alpha` | `1.0` | Exponent forcing parameter for adaptive preconditioning. |
+| `phi_extrapolate`| `False` | Enable linear extrapolation of scalar potential for faster Poisson solves. |
 | `memory` | `5` | History size for L-BFGS and Anderson acceleration. |
 | `tn_iters` | `5` | Inner iterations for Newton-CG solvers. |
 | `lr` | `0.1` | Learning rate for Nesterov acceleration. |
 | `mu` | `0.9` | Momentum factor for Nesterov acceleration. |
+| `pc_reg` | `0.0` | Diagonal regularization for the preconditioner. |
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
@@ -155,6 +159,7 @@ pc_iters = 10       ; Inner preconditioning iterations
 pc_auto = true      ; Enable adaptive forcing sequence
 pc_force_eta = 0.1  ; Forcing base
 pc_force_alpha = 1.0; Forcing exponent
+phi_extrapolate = true; Enable potential extrapolation
 memory = 5          ; BFGS history
 
 [poisson]
@@ -241,6 +246,7 @@ The primary entry point for running hysteresis loop simulations.
 | `--pc-no-auto`| flag | Disable automated tuning of preconditioning accuracy. |
 | `--pc-force-eta`| float | Base forcing parameter for adaptive preconditioning (default: 0.1). |
 | `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 1.0). |
+| `--phi-extrapolate`| flag | Enable linear extrapolation of scalar potential for faster Poisson solves. |
 | `--memory` | int | History size for L-BFGS and Anderson (default: 5). |
 | `--tn-iters` | int | Inner iterations for Newton-CG solvers (default: 5). |
 | `--lr` | float | Learning rate for Nesterov acceleration (default: 0.1). |

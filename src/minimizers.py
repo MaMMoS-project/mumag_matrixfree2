@@ -220,6 +220,7 @@ class CohenState:
 
     m: Array
     U: Array
+    U_prev: Array
     g: Array
     p: Array
     E: Array
@@ -229,7 +230,7 @@ class CohenState:
 
     def tree_flatten(self):
         """Flatten the CohenState for JAX tree operations."""
-        return (self.m, self.U, self.g, self.p, self.E, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.g, self.p, self.E, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -246,8 +247,9 @@ def make_cohen_minimizer(
     def step(state: CohenState, B_ext: Array, params: dict) -> CohenState:
         m, U, g_prev, p_prev, E_prev = state.m, state.U, state.g, state.p, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -267,7 +269,7 @@ def make_cohen_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -281,7 +283,7 @@ def make_cohen_minimizer(
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
 
-        return CohenState(m_new, U, g_tan, p, E, gnorm_inf, state.it + 1, conv)
+        return CohenState(m_new, U_new, U, g_tan, p, E, gnorm_inf, state.it + 1, conv)
 
     return step
 
@@ -298,6 +300,7 @@ class PCGState:
 
     m: Array
     U: Array
+    U_prev: Array
     g: Array
     y: Array
     d: Array
@@ -308,7 +311,7 @@ class PCGState:
 
     def tree_flatten(self):
         """Flatten the PCGState for JAX tree operations."""
-        return (self.m, self.U, self.g, self.y, self.d, self.E, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.g, self.y, self.d, self.E, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -331,8 +334,9 @@ def make_pcg_minimizer(
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         m, U, g_prev, _y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -375,7 +379,7 @@ def make_pcg_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -403,7 +407,7 @@ def make_pcg_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -429,8 +433,9 @@ def make_pcohen_minimizer(
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         m, U, g_prev, y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -486,7 +491,7 @@ def make_pcohen_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -514,7 +519,7 @@ def make_pcohen_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -531,6 +536,7 @@ class LBFGSState:
 
     m: Array
     U: Array
+    U_prev: Array
     g: Array  # Current tangent gradient
     S: Array  # Memory of steps (M, N, 3)
     Y: Array  # Memory of gradient differences (M, N, 3)
@@ -542,7 +548,19 @@ class LBFGSState:
 
     def tree_flatten(self):
         """Flatten the LBFGSState for JAX tree operations."""
-        children = (self.m, self.U, self.g, self.S, self.Y, self.rho, self.E, self.gnorm, self.it, self.converged)
+        children = (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.S,
+            self.Y,
+            self.rho,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.converged,
+        )
         return children, None
 
     @classmethod
@@ -565,8 +583,9 @@ def make_lbfgs_minimizer(
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         m, U, E_prev = state.m, state.U, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -574,12 +593,12 @@ def make_lbfgs_minimizer(
             n_history = jnp.minimum(it, memory)
             alphas = jnp.zeros(memory)
 
-            def first_loop(i, state):
-                q, alphas = state
+            def first_loop(i, state_inner):
+                q, alphas_inner = state_inner
                 idx = (it - 1 - i) % memory
                 alpha_i = rho[idx] * jnp.vdot(S[idx], q)
                 q_new = q - alpha_i * Y[idx]
-                alphas_new = alphas.at[idx].set(alpha_i)
+                alphas_new = alphas_inner.at[idx].set(alpha_i)
                 return q_new, alphas_new
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
@@ -591,10 +610,10 @@ def make_lbfgs_minimizer(
             gamma = jnp.clip(gamma, 1e-3, 1e3)
             r = gamma * q_after_first
 
-            def second_loop(i, r):
+            def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
-                beta = rho[idx] * jnp.vdot(Y[idx], r)
-                r_new = r + S[idx] * (alphas_final[idx] - beta)
+                beta = rho[idx] * jnp.vdot(Y[idx], r_inner)
+                r_new = r_inner + S[idx] * (alphas_final[idx] - beta)
                 return r_new
 
             d = lax.fori_loop(0, n_history, second_loop, r)
@@ -612,7 +631,7 @@ def make_lbfgs_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -635,7 +654,7 @@ def make_lbfgs_minimizer(
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf, state.it + 1, conv)
+        return LBFGSState(m_new, U_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf, state.it + 1, conv)
 
     return step
 
@@ -652,6 +671,7 @@ class TNState:
 
     m: Array
     U: Array
+    U_prev: Array
     g: Array
     d: Array
     E: Array
@@ -661,7 +681,7 @@ class TNState:
 
     def tree_flatten(self):
         """Flatten the TNState for JAX tree operations."""
-        return (self.m, self.U, self.g, self.d, self.E, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.g, self.d, self.E, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -684,13 +704,15 @@ def make_tn_minimizer(
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         m, U, E_prev = state.m, state.U, state.E
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         def full_hessian_op(v):
-            U_v = solve_U(v, jnp.zeros_like(U), params["phi_tol"])
+            U_v = solve_U(v, jnp.zeros_like(U_new), params["phi_tol"])
             Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext)) * inv_M_rel
             g = g_raw * inv_M_rel
             m_dot_g = jnp.sum(m * g, axis=1, keepdims=True)
@@ -701,13 +723,13 @@ def make_tn_minimizer(
 
         def solve_newton_system(max_iter=10):
             def solve_P_local(rhs, iters):
-                y = jnp.zeros_like(rhs)
+                y_inner = jnp.zeros_like(rhs)
                 r_p = rhs
                 p_p = r_p
                 rho_p = jnp.vdot(r_p, r_p)
 
-                def p_body(state):
-                    y, r, p, rho, i = state
+                def p_body(state_inner):
+                    y, r, p, rho, i = state_inner
                     Ap = apply_P_local(m, g_raw * inv_M_rel, p)
                     alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
                     y_n = y + alpha * p
@@ -716,21 +738,21 @@ def make_tn_minimizer(
                     p_n = r_n + (rho_n / (rho + 1e-30)) * p
                     return y_n, r_n, p_n, rho_n, i + 1
 
-                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y, r_p, p_p, rho_p, 0))
+                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y_inner, r_p, p_p, rho_p, 0))
                 return res[0]
 
-            d = jnp.zeros_like(g_tan)
-            r = -g_tan
-            z = solve_P_local(r, 5)
-            p = z
-            rho = jnp.vdot(r, z)
+            d_inner = jnp.zeros_like(g_tan)
+            r_inner = -g_tan
+            z_inner = solve_P_local(r_inner, 5)
+            p_inner = z_inner
+            rho_inner = jnp.vdot(r_inner, z_inner)
 
-            def inner_cond(state):
-                d, r, p, rho, it = state
+            def inner_cond(state_inner):
+                d, r, p, rho, it = state_inner
                 return (it < max_iter) & (jnp.vdot(r, r) > 1e-12)
 
-            def inner_body(state):
-                d, r, p, rho, it = state
+            def inner_body(state_inner):
+                d, r, p, rho, it = state_inner
                 Hp = full_hessian_op(p)
                 alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
                 d_new = d + alpha * p
@@ -741,7 +763,7 @@ def make_tn_minimizer(
                 p_new = z_new + beta * p
                 return d_new, r_new, p_new, rho_new, it + 1
 
-            final = lax.while_loop(inner_cond, inner_body, (d, r, p, rho, 0))
+            final = lax.while_loop(inner_cond, inner_body, (d_inner, r_inner, p_inner, rho_inner, 0))
             return final[0]
 
         d = solve_newton_system(params.get("tn_iters", 5))
@@ -754,7 +776,7 @@ def make_tn_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -766,7 +788,7 @@ def make_tn_minimizer(
         )
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
-        return TNState(m_new, U, g_tan, d, E, gnorm_inf, state.it + 1, conv)
+        return TNState(m_new, U_new, U, g_tan, d, E, gnorm_inf, state.it + 1, conv)
 
     return step
 
@@ -790,8 +812,10 @@ def make_tn_split_minimizer(
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         m, U, E_prev = state.m, state.U, state.E
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -806,13 +830,13 @@ def make_tn_split_minimizer(
 
         def solve_newton_system(max_iter=10):
             def solve_P_local(rhs, iters):
-                y = jnp.zeros_like(rhs)
+                y_inner = jnp.zeros_like(rhs)
                 r_p = rhs
                 p_p = r_p
                 rho_p = jnp.vdot(r_p, r_p)
 
-                def p_body(state):
-                    y, r, p, rho, i = state
+                def p_body(state_inner):
+                    y, r, p, rho, i = state_inner
                     Ap = apply_P_local(m, g_raw * inv_M_rel, p)
                     alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
                     y_n = y + alpha * p
@@ -821,21 +845,21 @@ def make_tn_split_minimizer(
                     p_n = r_n + (rho_n / (rho + 1e-30)) * p
                     return y_n, r_n, p_n, rho_n, i + 1
 
-                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y, r_p, p_p, rho_p, 0))
+                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y_inner, r_p, p_p, rho_p, 0))
                 return res[0]
 
-            d = jnp.zeros_like(g_tan)
-            r = -g_tan
-            z = solve_P_local(r, 5)
-            p = z
-            rho = jnp.vdot(r, z)
+            d_inner = jnp.zeros_like(g_tan)
+            r_inner = -g_tan
+            z_inner = solve_P_local(r_inner, 5)
+            p_inner = z_inner
+            rho_inner = jnp.vdot(r_inner, z_inner)
 
-            def inner_cond(state):
-                d, r, p, rho, it = state
+            def inner_cond(state_inner):
+                d, r, p, rho, it = state_inner
                 return (it < max_iter) & (jnp.vdot(r, r) > 1e-12)
 
-            def inner_body(state):
-                d, r, p, rho, it = state
+            def inner_body(state_inner):
+                d, r, p, rho, it = state_inner
                 Hp = local_hessian_op(p)
                 alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
                 d_new = d + alpha * p
@@ -846,7 +870,7 @@ def make_tn_split_minimizer(
                 p_new = z_new + beta * p
                 return d_new, r_new, p_new, rho_new, it + 1
 
-            final = lax.while_loop(inner_cond, inner_body, (d, r, p, rho, 0))
+            final = lax.while_loop(inner_cond, inner_body, (d_inner, r_inner, p_inner, rho_inner, 0))
             return final[0]
 
         d = solve_newton_system(params.get("tn_iters", 5))
@@ -859,7 +883,7 @@ def make_tn_split_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -871,7 +895,7 @@ def make_tn_split_minimizer(
         )
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
-        return TNState(m_new, U, g_tan, d, E, gnorm_inf, state.it + 1, conv)
+        return TNState(m_new, U_new, U, g_tan, d, E, gnorm_inf, state.it + 1, conv)
 
     return step
 
@@ -896,8 +920,10 @@ def make_plbfgs_minimizer(
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         m, U, _, E_prev = state.m, state.U, state.g, state.E
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
@@ -908,12 +934,12 @@ def make_plbfgs_minimizer(
             n_history = jnp.minimum(it, memory)
             alphas = jnp.zeros(memory)
 
-            def first_loop(i, state):
-                q, alphas = state
+            def first_loop(i, state_inner):
+                q, alphas_inner = state_inner
                 idx = (it - 1 - i) % memory
                 alpha_i = rho[idx] * jnp.vdot(S[idx], q)
                 q_new = q - alpha_i * Y[idx]
-                alphas_new = alphas.at[idx].set(alpha_i)
+                alphas_new = alphas_inner.at[idx].set(alpha_i)
                 return q_new, alphas_new
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
@@ -921,10 +947,10 @@ def make_plbfgs_minimizer(
             # Initial Hessian approximation: Use the PCG preconditioner P^-1
             r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
-            def second_loop(i, r):
+            def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
-                beta = rho[idx] * jnp.vdot(Y[idx], r)
-                r_new = r + S[idx] * (alphas_final[idx] - beta)
+                beta = rho[idx] * jnp.vdot(Y[idx], r_inner)
+                r_new = r_inner + S[idx] * (alphas_final[idx] - beta)
                 return r_new
 
             d = lax.fori_loop(0, n_history, second_loop, r)
@@ -945,7 +971,7 @@ def make_plbfgs_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -966,7 +992,7 @@ def make_plbfgs_minimizer(
         S_next = jnp.where(update_ok, state.S.at[idx].set(s_new), state.S)
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(m_new, U_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -983,6 +1009,7 @@ class PBBState:
 
     m: Array
     U: Array
+    U_prev: Array
     g: Array  # Raw gradient
     z: Array  # Preconditioned gradient
     m_prev: Array
@@ -998,6 +1025,7 @@ class PBBState:
         children = (
             self.m,
             self.U,
+            self.U_prev,
             self.g,
             self.z,
             self.m_prev,
@@ -1031,8 +1059,9 @@ def make_pbb_minimizer(
     def step(state: PBBState, B_ext: Array, params: dict) -> PBBState:
         m, U, E_prev = state.m, state.U, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
 
@@ -1067,7 +1096,7 @@ def make_pbb_minimizer(
                 pg,
                 H,
                 E,
-                U,
+                U_new,
                 B_ext,
                 params["phi_tol"],
                 params["ls_eta1"],
@@ -1083,7 +1112,7 @@ def make_pbb_minimizer(
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PBBState(m_new, U, g_raw, g_tan, m, g_tan, tau, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PBBState(m_new, U_new, U, g_raw, g_tan, m, g_tan, tau, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1109,8 +1138,9 @@ def make_dplbfgs_minimizer(
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         m, U, _, E_prev = state.m, state.U, state.g, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
@@ -1121,22 +1151,22 @@ def make_dplbfgs_minimizer(
             n_history = jnp.minimum(it, memory)
             alphas = jnp.zeros(memory)
 
-            def first_loop(i, state):
-                q, alphas = state
+            def first_loop(i, state_inner):
+                q, alphas_inner = state_inner
                 idx = (it - 1 - i) % memory
                 alpha_i = rho[idx] * jnp.vdot(S[idx], q)
                 q_new = q - alpha_i * Y[idx]
-                alphas_new = alphas.at[idx].set(alpha_i)
+                alphas_new = alphas_inner.at[idx].set(alpha_i)
                 return q_new, alphas_new
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
 
             r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
-            def second_loop(i, r):
+            def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
-                beta = rho[idx] * jnp.vdot(Y[idx], r)
-                r_new = r + S[idx] * (alphas_final[idx] - beta)
+                beta = rho[idx] * jnp.vdot(Y[idx], r_inner)
+                r_new = r_inner + S[idx] * (alphas_final[idx] - beta)
                 return r_new
 
             d = lax.fori_loop(0, n_history, second_loop, r)
@@ -1158,7 +1188,7 @@ def make_dplbfgs_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -1190,7 +1220,7 @@ def make_dplbfgs_minimizer(
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_damped), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(m_new, U_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1207,6 +1237,7 @@ class TRState:
 
     m: Array
     U: Array
+    U_prev: Array
     E: Array
     delta: Array  # Trust region radius
     gnorm: Array
@@ -1215,7 +1246,7 @@ class TRState:
 
     def tree_flatten(self):
         """Flatten the TRState for JAX tree operations."""
-        return (self.m, self.U, self.E, self.delta, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.E, self.delta, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -1299,7 +1330,8 @@ def make_tr_minimizer(
         # Search direction in torque space
         H_torque = -jnp.cross(m, d)
         m_trial = cayley_update(m, H_torque, 1.0)
-        U_trial = solve_U(m_trial, U, params["phi_tol"])
+        U_guess_trial = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_trial = solve_U(m_trial, U_guess_trial, params["phi_tol"])
         E_trial = energy_only(m_trial, U_trial, B_ext)
 
         actual_red = E - E_trial
@@ -1322,11 +1354,12 @@ def make_tr_minimizer(
         accept = rho > 0.01
         m_next = jnp.where(accept, m_trial, m)
         U_next = jnp.where(accept, U_trial, U)
+        U_prev_next = jnp.where(accept, U, state.U_prev)
         E_next = jnp.where(accept, E_trial, E)
 
         conv = check_convergence(state.it, E_next, E, m, m_next, gnorm_inf, params["tau_f"], params["eps_a"])
 
-        return TRState(m_next, U_next, E_next, delta_next, gnorm_inf, state.it + 1, conv)
+        return TRState(m_next, U_next, U_prev_next, E_next, delta_next, gnorm_inf, state.it + 1, conv)
 
     return step
 
@@ -1352,8 +1385,9 @@ def make_rplbfgs_minimizer(
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         m, U, _, E_prev = state.m, state.U, state.g, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
@@ -1372,21 +1406,21 @@ def make_rplbfgs_minimizer(
             alphas = jnp.zeros(memory)
 
             def first_loop(i, state_loop):
-                q, alphas = state_loop
+                q, alphas_inner = state_loop
                 idx = (it - 1 - i) % memory
                 alpha_i = rho[idx] * jnp.vdot(S[idx], q)
                 q_new = q - alpha_i * Y[idx]
-                alphas_new = alphas.at[idx].set(alpha_i)
+                alphas_new = alphas_inner.at[idx].set(alpha_i)
                 return q_new, alphas_new
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
 
             r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
-            def second_loop(i, r):
+            def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
-                beta = rho[idx] * jnp.vdot(Y[idx], r)
-                r_new = r + S[idx] * (alphas_final[idx] - beta)
+                beta = rho[idx] * jnp.vdot(Y[idx], r_inner)
+                r_new = r_inner + S[idx] * (alphas_final[idx] - beta)
                 return r_new
 
             d = lax.fori_loop(0, n_history, second_loop, r)
@@ -1408,7 +1442,7 @@ def make_rplbfgs_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -1440,7 +1474,7 @@ def make_rplbfgs_minimizer(
         Y_next = jnp.where(update_ok, Y_trans.at[idx].set(y_damped), Y_trans)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(m_new, U_new, U, g_tan, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -1457,6 +1491,7 @@ class AAState:
 
     m: Array
     U: Array
+    U_prev: Array
     E: Array
     gnorm: Array
     X: Array  # History of m (M, N, 3)
@@ -1466,7 +1501,7 @@ class AAState:
 
     def tree_flatten(self):
         """Flatten the AAState for JAX tree operations."""
-        return (self.m, self.U, self.E, self.gnorm, self.X, self.F, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.E, self.gnorm, self.X, self.F, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -1490,8 +1525,9 @@ def make_aapg_minimizer(
     def step(state: AAState, B_ext: Array, params: dict) -> AAState:
         m, U, E_prev = state.m, state.U, state.E
 
-        U = solve_U(m, U, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U, B_ext)
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
 
@@ -1535,7 +1571,7 @@ def make_aapg_minimizer(
             pg,
             H,
             E,
-            U,
+            U_new,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -1554,7 +1590,7 @@ def make_aapg_minimizer(
         X_next = state.X.at[idx].set(m)
         F_next = state.F.at[idx].set(z)
 
-        return AAState(m_new, U, E, gnorm_inf_smooth, X_next, F_next, state.it + 1, conv)
+        return AAState(m_new, U_new, U, E, gnorm_inf_smooth, X_next, F_next, state.it + 1, conv)
 
     return step
 
@@ -1571,6 +1607,7 @@ class NAGState:
 
     m: Array
     U: Array
+    U_prev: Array
     v: Array  # Velocity
     E: Array
     gnorm: Array
@@ -1579,11 +1616,55 @@ class NAGState:
 
     def tree_flatten(self):
         """Flatten the NAGState for JAX tree operations."""
-        return (self.m, self.U, self.v, self.E, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.v, self.E, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         """Unflatten the NAGState for JAX tree operations."""
+        return cls(*children)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class PCohenLBFGSState:
+    """State for the LBFGS-Preconditioned Cohen CG Hybrid minimizer."""
+
+    m: Array
+    U: Array
+    U_prev: Array
+    g: Array
+    z: Array
+    p: Array
+    S: Array
+    Y: Array
+    rho: Array
+    E: Array
+    gnorm: Array
+    it: jnp.int32
+    converged: Array
+
+    def tree_flatten(self):
+        """Flatten the PCohenLBFGSState for JAX tree operations."""
+        children = (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.z,
+            self.p,
+            self.S,
+            self.Y,
+            self.rho,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.converged,
+        )
+        return children, None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Unflatten the PCohenLBFGSState for JAX tree operations."""
         return cls(*children)
 
 
@@ -1605,7 +1686,8 @@ def make_pnag_minimizer(
         mu = params.get("mu", 0.9)
         m_look = cayley_update(m, -jnp.cross(m, v_prev), mu)
 
-        U_look = solve_U(m_look, U, params["phi_tol"])
+        U_guess_look = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_look = solve_U(m_look, U_guess_look, params["phi_tol"])
         E_look, g_raw_look = energy_and_grad(m_look, U_look, B_ext)
         g_s_look = g_raw_look * inv_M_rel
         g_tan_look = tangent_grad(m_look, g_s_look)
@@ -1623,7 +1705,185 @@ def make_pnag_minimizer(
 
         conv = check_convergence(state.it, E_look, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return NAGState(m_new, U_look, v, E_look, gnorm_inf_smooth, state.it + 1, conv)
+        return NAGState(m_new, U_look, U, v, E_look, gnorm_inf_smooth, state.it + 1, conv)
+
+    return step
+
+
+# -----------------------------------------------------------------------------
+# 14. Preconditioned Barzilai-Borwein with Steihaug (PBBS)
+# -----------------------------------------------------------------------------
+
+
+def make_pbbs_minimizer(
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    local_grad_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+):
+    """Create a Preconditioned Barzilai-Borwein with Steihaug minimizer step function."""
+    ls = make_armijo_ls(energy_only, solve_U)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+
+    def step(state: PBBState, B_ext: Array, params: dict) -> PBBState:
+        m, U, E_prev = state.m, state.U, state.E
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
+        g_s = g_raw * inv_M_rel
+        g_tan = tangent_grad(m, g_s)
+
+        # Preconditioned gradient with Steihaug exit in solve_P
+        z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
+
+        # Spectral estimate in preconditioned space
+        s_diff = (m - state.m_prev).reshape(-1)
+        y_diff = (z - state.z_prev).reshape(-1)
+        sty = jnp.vdot(s_diff, y_diff)
+        sts = jnp.vdot(s_diff, s_diff)
+        yty = jnp.vdot(y_diff, y_diff)
+
+        tau1 = sts / (sty + 1e-30)
+        tau2 = sty / (yty + 1e-30)
+        tau_spec = jnp.where((state.it % 2) == 0, tau1, tau2)
+
+        is_initial = state.it < params.get("gamma", 5)
+        tau_ok = (tau_spec > 1e-6) & (tau_spec < 1e3)
+        use_bb = (~is_initial) & (sty > 1e-12) & tau_ok
+
+        H = -jnp.cross(m, z)
+        pg = -jnp.vdot(g_s, z)
+
+        tau = lax.cond(
+            use_bb,
+            lambda _: jnp.clip(tau_spec, params.get("tau_min", 1e-6), params.get("tau_max", 1.0)),
+            lambda _: ls(
+                m,
+                pg,
+                H,
+                E,
+                U_new,
+                B_ext,
+                params["phi_tol"],
+                params["ls_eta1"],
+                params["ls_eta2"],
+                params["ls_C"],
+                params["ls_c"],
+                jnp.clip(state.tau, 1e-3, 1.0),
+                15,
+            ),
+            operand=None,
+        )
+
+        m_new = cayley_update(m, H, tau)
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+
+        return PBBState(m_new, U_new, U, g_raw, z, m, z, tau, E, gnorm_inf_smooth, state.it + 1, conv)
+
+    return step
+
+
+# -----------------------------------------------------------------------------
+# 15. LBFGS-Preconditioned Cohen CG Hybrid
+# -----------------------------------------------------------------------------
+
+
+def make_pcohen_lbfgs_minimizer(
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+    memory: int = 10,
+):
+    """Create an LBFGS-Preconditioned Cohen CG Hybrid minimizer step function."""
+    ls = make_armijo_ls(energy_only, solve_U)
+
+    def step(state: PCohenLBFGSState, B_ext: Array, params: dict) -> PCohenLBFGSState:
+        m, U, E_prev = state.m, state.U, state.E
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+
+        def get_lbfgs_z(g, S, Y, rho, it):
+            n_history = jnp.minimum(it, memory)
+            alphas = jnp.zeros(memory)
+
+            def first_loop(i, state_inner):
+                q, alphas_inner = state_inner
+                idx = (it - 1 - i) % memory
+                alpha_i = rho[idx] * jnp.vdot(S[idx], q)
+                q_new = q - alpha_i * Y[idx]
+                alphas_new = alphas_inner.at[idx].set(alpha_i)
+                return q_new, alphas_new
+
+            q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
+
+            last_idx = (it - 1) % memory
+            gamma = jnp.where(
+                it > 0, jnp.vdot(S[last_idx], Y[last_idx]) / (jnp.vdot(Y[last_idx], Y[last_idx]) + 1e-30), 1.0
+            )
+            r = gamma * q_after_first
+
+            def second_loop(i, r_inner):
+                idx = (it - n_history + i) % memory
+                beta = rho[idx] * jnp.vdot(Y[idx], r_inner)
+                r_new = r_inner + S[idx] * (alphas_final[idx] - beta)
+                return r_new
+
+            return lax.fori_loop(0, n_history, second_loop, r)
+
+        z = get_lbfgs_z(g_tan, state.S, state.Y, state.rho, state.it)
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
+
+        # Cohen CG Beta (Polak-Ribiere)
+        num = jnp.vdot(z, g_tan - state.g)
+        den = jnp.vdot(state.g, state.z) + 1e-30
+        beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+
+        p = -z + beta * tangent_grad(m, state.p)
+        p = jnp.where(jnp.vdot(p, g_tan) > 0, -z, p)
+
+        H = -jnp.cross(m, -p)
+        pg = jnp.vdot(g_raw, p)
+
+        tau = ls(
+            m,
+            pg,
+            H,
+            E,
+            U_new,
+            B_ext,
+            params["phi_tol"],
+            params["ls_eta1"],
+            params["ls_eta2"],
+            params["ls_C"],
+            params["ls_c"],
+            1.0,
+            15,
+        )
+
+        m_new = cayley_update(m, H, tau)
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+
+        s_new = m_new - m
+        y_new = g_tan - state.g
+        curv = jnp.vdot(y_new, s_new)
+        update_ok = (state.it > 0) & (curv > 1e-12 * jnp.vdot(s_new, s_new))
+        idx = state.it % memory
+        S_next = jnp.where(update_ok, state.S.at[idx].set(s_new), state.S)
+        Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
+        rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
+
+        return PCohenLBFGSState(
+            m_new, U_new, U, g_tan, z, p, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv
+        )
 
     return step
 
@@ -1655,6 +1915,8 @@ def make_minimizer(
         "tr",
         "aapg",
         "pnag",
+        "pbbs",
+        "pcohen_lbfgs",
     ] = "pcg",
     **kwargs,
 ):
@@ -1673,13 +1935,13 @@ def make_minimizer(
         step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return CohenState(m, U, g, jnp.zeros_like(g), E, gnorm, 0, jnp.array(False))
+            return CohenState(m, U, U, g, jnp.zeros_like(g), E, gnorm, 0, jnp.array(False))
 
     elif method == "pcg":
         step_fn = make_pcg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "pcohen":
         step_fn = make_pcohen_minimizer(
@@ -1687,7 +1949,7 @@ def make_minimizer(
         )
 
         def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "pcohen_hs":
         step_fn = make_pcohen_minimizer(
@@ -1695,7 +1957,7 @@ def make_minimizer(
         )
 
         def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "lbfgs":
         memory = kwargs.get("memory", 10)
@@ -1704,6 +1966,7 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm):
             return LBFGSState(
                 m,
+                U,
                 U,
                 g,
                 jnp.zeros((memory, m.shape[0], 3)),
@@ -1725,6 +1988,7 @@ def make_minimizer(
             return LBFGSState(
                 m,
                 U,
+                U,
                 g,
                 jnp.zeros((memory, m.shape[0], 3)),
                 jnp.zeros((memory, m.shape[0], 3)),
@@ -1744,6 +2008,7 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm):
             return LBFGSState(
                 m,
+                U,
                 U,
                 g,
                 jnp.zeros((memory, m.shape[0], 3)),
@@ -1765,6 +2030,7 @@ def make_minimizer(
             return LBFGSState(
                 m,
                 U,
+                U,
                 g,
                 jnp.zeros((memory, m.shape[0], 3)),
                 jnp.zeros((memory, m.shape[0], 3)),
@@ -1781,19 +2047,19 @@ def make_minimizer(
         )
 
         def init_state_fn(m, U, E, g, gnorm):
-            return TNState(m, U, g, -g, E, gnorm, 0, jnp.array(False))
+            return TNState(m, U, U, g, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "tn_split":
         step_fn = make_tn_split_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return TNState(m, U, g, -g, E, gnorm, 0, jnp.array(False))
+            return TNState(m, U, U, g, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "pbb":
         step_fn = make_pbb_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return PBBState(m, U, g, g, m, g, jnp.array(1.0, dtype=m.dtype), E, gnorm, 0, jnp.array(False))
+            return PBBState(m, U, U, g, g, m, g, jnp.array(1.0, dtype=m.dtype), E, gnorm, 0, jnp.array(False))
 
     elif method == "tr":
         step_fn = make_tr_minimizer(
@@ -1801,7 +2067,7 @@ def make_minimizer(
         )
 
         def init_state_fn(m, U, E, g, gnorm):
-            return TRState(m, U, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
+            return TRState(m, U, U, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
 
     elif method == "aapg":
         memory = kwargs.get("memory", 5)
@@ -1812,6 +2078,7 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm):
             return AAState(
                 m,
+                U,
                 U,
                 E,
                 gnorm,
@@ -1825,7 +2092,34 @@ def make_minimizer(
         step_fn = make_pnag_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return NAGState(m, U, jnp.zeros_like(g), E, gnorm, 0, jnp.array(False))
+            return NAGState(m, U, U, jnp.zeros_like(g), E, gnorm, 0, jnp.array(False))
+
+    elif method == "pbbs":
+        step_fn = make_pbbs_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return PBBState(m, U, U, g, g, m, g, jnp.array(1.0, dtype=m.dtype), E, gnorm, 0, jnp.array(False))
+
+    elif method == "pcohen_lbfgs":
+        memory = kwargs.get("memory", 10)
+        step_fn = make_pcohen_lbfgs_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol, memory=memory)
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return PCohenLBFGSState(
+                m,
+                U,
+                U,
+                g,
+                g,
+                jnp.zeros_like(g),
+                jnp.zeros((memory, m.shape[0], 3)),
+                jnp.zeros((memory, m.shape[0], 3)),
+                jnp.zeros(memory),
+                E,
+                gnorm,
+                0,
+                jnp.array(False),
+            )
 
     else:
         raise NotImplementedError(f"Method {method} not fully implemented.")

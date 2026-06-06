@@ -29,6 +29,7 @@ pc_iters = 30
 pc_auto = true
 pc_force_eta = 0.1
 pc_force_alpha = 1.0
+phi_extrapolate = true
 
 [poisson]
 cg_maxiter = 1000

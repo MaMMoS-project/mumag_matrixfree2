@@ -259,6 +259,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["mu"] = float(m_min["mu"])
         if "pc_reg" in m_min:
             overrides["pc_reg"] = float(m_min["pc_reg"])
+        if "phi_extrapolate" in m_min:
+            overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
 
     if "poisson" in config:
         p = config["poisson"]
@@ -602,6 +604,12 @@ def main() -> None:
         help="Diagonal regularization shift for the preconditioner (default: 0.0).",
     )
     ap.add_argument(
+        "--phi-extrapolate",
+        action="store_true",
+        default=False,
+        help="Enable linear extrapolation of scalar potential for faster Poisson solves (default: False).",
+    )
+    ap.add_argument(
         "--out-dir",
         type=str,
         default="hyst_out",
@@ -824,6 +832,7 @@ def main() -> None:
         "lr": float(args.lr),
         "mu": float(args.mu),
         "pc_reg": float(args.pc_reg),
+        "phi_extrapolate": bool(args.phi_extrapolate),
     }
 
     # 2. Merge .p2 overrides
