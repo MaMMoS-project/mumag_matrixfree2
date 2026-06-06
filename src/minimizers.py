@@ -1699,9 +1699,11 @@ def make_minimizer(
 
     def minimize(m0, B_ext, **params):
         if "phi_tol" not in params:
+            # The most restrictive relative criterion is u1 (energy) at tau_f.
+            # Poisson precision needs to be roughly one order of magnitude better
+            # than the target energy precision to ensure stable convergence.
             tau_f = params.get("tau_f", 1e-6)
-            eps_a = params.get("eps_a", 1e-10)
-            params["phi_tol"] = float(min(cg_tol, tau_f * 0.1, eps_a * 0.1))
+            params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
 
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
         U = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
