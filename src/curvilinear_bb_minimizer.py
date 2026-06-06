@@ -170,7 +170,7 @@ def make_minimizer(
     # to (local_energy_density_grad / Js). This is a physical preconditioner.
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    energy_and_grad, energy_only, _ = make_energy_kernels(
+    energy_and_grad, energy_only, _, _ = make_energy_kernels(
         geom,
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,
@@ -526,6 +526,7 @@ def make_minimizer(
             cg_tol_base,
             mfinal_val,
         )
+        final_state.m.block_until_ready()
         total_time = time.time() - start_time
 
         # Final Poisson solve for the potential (highest accuracy)

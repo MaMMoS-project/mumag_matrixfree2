@@ -125,10 +125,11 @@ def make_energy_kernels(
     Callable[[Array, Array, Array], tuple[Array, Array]],
     Callable[[Array, Array, Array], Array],
     Callable[[Array, Array, Array], Array],
+    Callable[[Array], Array],
 ]:
     """Create JIT-compiled micromagnetic energy and gradient functions.
 
-    Returns a triplet of functions (energy_and_grad, energy_only, grad_only).
+    Returns a quartet of functions (energy_and_grad, energy_only, grad_only, local_grad_only).
     All calculations use dimensionless scaling.
 
     Args:
@@ -151,8 +152,8 @@ def make_energy_kernels(
             Defaults to 'stored_grad_phi'.
 
     Returns:
-        tuple[Callable, Callable, Callable]: (energy_and_grad, energy_only, grad_only).
-            Each function takes (m, U, B_ext) as input.
+        tuple[Callable, Callable, Callable, Callable]: (energy_and_grad, energy_only, grad_only, local_grad_only).
+            Each function takes (m, U, B_ext) as input, except local_grad_only which takes only v.
     """
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
@@ -162,28 +163,19 @@ def make_energy_kernels(
 
     # Pre-calculate material-weighted geometry terms to save multiplications
     # in the loop.
-    # Choice: Multiplying materials by volumes here reduces the operations inside
-    # the JAX loop, which is critical for minimizing register pressure on GPUs.
     g_ids = mat_id - 1
-    # Scale factors for each energy term (Factor 2.0 for quadratic gradients).
-    # Mathematical Choice: For quadratic forms (A*m^2), the gradient is 2*A*m.
-    # Pre-applying the 2.0 and the 1/20 (mass matrix factor) here simplifies
-    # the inner loop.
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
     K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
     Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
 
     # Magnetoelastic terms (per element)
     if k1me is not None:
-        # Pad k1me/k1me_p if provided
         k1me_padded = jnp.zeros(conn.shape[0])
         k1me_padded = k1me_padded.at[: k1me.shape[0]].set(k1me)
         k1mep_padded = jnp.zeros(conn.shape[0])
         if k1me_p is not None:
             k1mep_padded = k1mep_padded.at[: k1me_p.shape[0]].set(k1me_p)
 
-        # Kx = k1me + k1mep, Ky = k1me - k1mep
-        # Scale by 2.0 (quadratic) and Ve / 20.0 (consistent mass matrix)
         Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
         Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
     else:
@@ -212,6 +204,7 @@ def make_energy_kernels(
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
 
+    # Ensure all lookups are JAX arrays
     A_lookup = jnp.asarray(A_lookup)
     K1_lookup = jnp.asarray(K1_lookup)
     Js_lookup = jnp.asarray(Js_lookup)
@@ -227,6 +220,67 @@ def make_energy_kernels(
             x_e = x_nodes[conn_c].astype(dtype)
             JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
             return _B_from_JinvT(JinvT_c, dtype)
+
+    def local_grad_only(v: Array) -> Array:
+        """Compute the action of the local Hessian (Ex + An) on vector v.
+
+        Used for PCG preconditioning.
+        """
+        N = v.shape[0]
+        dtype = v.dtype
+
+        def body(i: int, g_acc: Array) -> Array:
+            s = i * chunk_elems
+            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
+            mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
+            B_c = _get_B(conn_c, s, dtype)
+            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
+
+            a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
+            q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
+            k_c = k_easy_lookup[mat_c - 1].astype(dtype)
+            v_e = v[conn_c]
+
+            # 1. Exchange
+            G = (
+                v_e[:, 0, :, None] * B_c[:, 0, None, :]
+                + v_e[:, 1, :, None] * B_c[:, 1, None, :]
+                + v_e[:, 2, :, None] * B_c[:, 2, None, :]
+                + v_e[:, 3, :, None] * B_c[:, 3, None, :]
+            )
+            Km = (
+                G[:, :, 0][:, None, :] * B_c[:, :, 0][:, :, None]
+                + G[:, :, 1][:, None, :] * B_c[:, :, 1][:, :, None]
+                + G[:, :, 2][:, None, :] * B_c[:, :, 2][:, :, None]
+            )
+            contrib = a_ve_c[:, None, None] * Km
+
+            # 2. Anisotropy
+            proj_v = v_e[:, :, 0] * k_c[:, None, 0] + v_e[:, :, 1] * k_c[:, None, 1] + v_e[:, :, 2] * k_c[:, None, 2]
+            sum_proj = (proj_v[:, 0] + proj_v[:, 1] + proj_v[:, 2] + proj_v[:, 3])[:, None]
+            factor = -q_ve_c[:, None] * (sum_proj + proj_v)
+            contrib = contrib + factor[..., None] * k_c[:, None, :]
+
+            # 3. Magnetoelastic
+            if Kx_Ve is not None:
+                kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
+                ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
+                vx_e, vy_e = v_e[:, :, 0], v_e[:, :, 1]
+                sum_vx = (vx_e[:, 0] + vx_e[:, 1] + vx_e[:, 2] + vx_e[:, 3])[:, None]
+                sum_vy = (vy_e[:, 0] + vy_e[:, 1] + vy_e[:, 2] + vy_e[:, 3])[:, None]
+                gx_me = kx_ve_c[:, None] * (sum_vx + vx_e)
+                gy_me = ky_ve_c[:, None] * (sum_vy + vy_e)
+                contrib = contrib.at[:, :, 0].add(gx_me)
+                contrib = contrib.at[:, :, 1].add(gy_me)
+
+            if assembly == "scatter":
+                g_acc = assemble_scatter(g_acc, conn_c, contrib)
+            else:
+                g_acc = g_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
+            return g_acc
+
+        g_local = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
+        return g_local * inv_Vmag
 
     def energy_and_grad(m: Array, U: Array, B_ext: Array) -> tuple[Array, Array]:
         """Compute the total dimensionless energy and gradient.
@@ -373,4 +427,4 @@ def make_energy_kernels(
         _, g = energy_and_grad(m, U, B_ext)
         return g
 
-    return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only)
+    return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
