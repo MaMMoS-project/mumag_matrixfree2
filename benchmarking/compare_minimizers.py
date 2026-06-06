@@ -89,13 +89,12 @@ def main():
     solve_U = make_solve_U(geom, jnp.asarray(Js_red), cg_tol=1e-8, grad_backend="stored_JinvT", chunk_elems=5000)
 
     # 2. Define Methods
-    methods = ["bb", "cohen", "pcg", "pcohen", "pcohen_auto", "pcohen_auto_strict", "lbfgs"]
+    methods = ["bb", "cohen", "pcg", "pcohen", "pcohen_auto", "pcohen_auto_strict", "lbfgs", "plbfgs", "dplbfgs", "rplbfgs", "tn", "tn_split", "pbb", "tr", "aapg", "pnag"]
     
     params = {
         "max_iter": args.max_iter,
         "tau_f": 1e-8,
         "eps_a": 1e-10,
-        "phi_tol": 1e-9,
         "L": 5,             # Restart for Cohen
         "pc_iters": 5,      # Inner CG iters for PCG
         "tau0": 1e-2,
