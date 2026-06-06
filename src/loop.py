@@ -257,6 +257,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["lr"] = float(m_min["lr"])
         if "mu" in m_min:
             overrides["mu"] = float(m_min["mu"])
+        if "pc_reg" in m_min:
+            overrides["pc_reg"] = float(m_min["pc_reg"])
 
     if "poisson" in config:
         p = config["poisson"]
@@ -594,6 +596,12 @@ def main() -> None:
     )
 
     ap.add_argument(
+        "--pc-reg",
+        type=float,
+        default=0.0,
+        help="Diagonal regularization shift for the preconditioner (default: 0.0).",
+    )
+    ap.add_argument(
         "--out-dir",
         type=str,
         default="hyst_out",
@@ -815,6 +823,7 @@ def main() -> None:
         "tn_iters": int(args.tn_iters),
         "lr": float(args.lr),
         "mu": float(args.mu),
+        "pc_reg": float(args.pc_reg),
     }
 
     # 2. Merge .p2 overrides

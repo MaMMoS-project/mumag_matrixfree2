@@ -140,7 +140,7 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
 def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
     """Create the Hessian-based preconditioner operation Py = g."""
 
-    def apply_P(m: Array, g_raw_scaled: Array, v: Array) -> Array:
+    def apply_P(m: Array, g_raw_scaled: Array, v: Array, reg: float = 0.0) -> Array:
         """Action of the approximate Hessian P on vector v, scaled by inv_M_rel."""
         Cv = local_grad_only(v)
         Cv_s = Cv * inv_M_rel
@@ -152,17 +152,17 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
         m_dot_g_s = jnp.sum(m * g_s, axis=1, keepdims=True)
         comp3 = m_dot_g_s * v
 
-        # Regularization: Increased shift for large meshes and switching events.
-        # This acts like a Trust-Region damping term.
-        shift = 1e-2 * v
+        # Optional Regularization: Add a small diagonal shift.
+        # If reg=0, we rely on Steihaug exit for indefiniteness.
+        return Cv_s - comp2 - comp3 + reg * v
 
-        return Cv_s - comp2 - comp3 + shift
-
-    def solve_Py_g(m: Array, g_raw_scaled: Array, g_tan: Array, max_iter: int = 20, tol: float = 0.0) -> Array:
-        """Solve Py = g_tan for y using linear CG with optional early exit via tol."""
+    def solve_Py_g(
+        m: Array, g_raw_scaled: Array, g_tan: Array, max_iter: int = 20, tol: float = 0.0, reg: float = 0.0
+    ) -> Array:
+        """Solve Py = g_tan for y using linear CG with Steihaug-style negative curvature exit."""
 
         def inner_op(v):
-            return apply_P(m, g_raw_scaled, v)
+            return apply_P(m, g_raw_scaled, v, reg)
 
         y = jnp.zeros_like(g_tan)
         r = g_tan
@@ -171,21 +171,29 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
         target_rho = tol**2
 
         def cond_fun(state):
-            y_loop, r_loop, p_loop, rho_loop, it_loop = state
-            # Exit if iterations reached, residual squared < target_rho, or blowup detected
-            return (it_loop < max_iter) & (rho_loop > target_rho) & (rho_loop > 1e-25) & (rho_loop < 1e20)
+            y_loop, r_loop, p_loop, rho_loop, it_loop, done = state
+            # Exit if iterations reached, residual small, blowup, or negative curvature detected
+            return (it_loop < max_iter) & (rho_loop > target_rho) & (rho_loop > 1e-25) & (rho_loop < 1e20) & (~done)
 
         def body_fun(state):
-            y_loop, r_loop, p_loop, rho_loop, it_loop = state
+            y_loop, r_loop, p_loop, rho_loop, it_loop, _ = state
             Ap = inner_op(p_loop)
-            alpha = rho_loop / (jnp.vdot(p_loop, Ap) + 1e-30)
-            y_next = y_loop + alpha * p_loop
-            r_next = r_loop - alpha * Ap
+            pAp = jnp.vdot(p_loop, Ap)
+
+            # Steihaug Strategy: If negative curvature is detected, exit immediately.
+            # This handles indefinite cases during magnetization switching.
+            neg_curv = pAp <= 1e-20
+
+            alpha = rho_loop / (pAp + 1e-30)
+            y_next = jnp.where(neg_curv, y_loop, y_loop + alpha * p_loop)
+            r_next = jnp.where(neg_curv, r_loop, r_loop - alpha * Ap)
+
             rho_next = jnp.vdot(r_next, r_next)
             p_next = r_next + (rho_next / (rho_loop + 1e-30)) * p_loop
-            return y_next, r_next, p_next, rho_next, it_loop + 1
 
-        state_init = (y, r, p, rho, 0)
+            return y_next, r_next, p_next, rho_next, it_loop + 1, neg_curv
+
+        state_init = (y, r, p, rho, 0, False)
         final_state = lax.while_loop(cond_fun, body_fun, state_init)
         y_final = final_state[0]
 
@@ -335,7 +343,14 @@ def make_pcg_minimizer(
             params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
         )
 
-        y = solve_P(m, g_raw * inv_M_rel, g_tan, max_iter=params.get("pc_iters", 10), tol=pc_tol)
+        y = solve_P(
+            m,
+            g_raw * inv_M_rel,
+            g_tan,
+            max_iter=params.get("pc_iters", 10),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+        )
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
         # This is physically more meaningful as it represents the displacement
@@ -426,7 +441,14 @@ def make_pcohen_minimizer(
             params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
         )
 
-        y = solve_P(m, g_raw * inv_M_rel, g_tan, max_iter=params.get("pc_iters", 10), tol=pc_tol)
+        y = solve_P(
+            m,
+            g_raw * inv_M_rel,
+            g_tan,
+            max_iter=params.get("pc_iters", 10),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+        )
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
         # This is physically more meaningful as it represents the displacement
@@ -897,7 +919,7 @@ def make_plbfgs_minimizer(
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
 
             # Initial Hessian approximation: Use the PCG preconditioner P^-1
-            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10))
+            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
             def second_loop(i, r):
                 idx = (it - n_history + i) % memory
@@ -1015,7 +1037,7 @@ def make_pbb_minimizer(
         g_tan = tangent_grad(m, g_s)
 
         # Preconditioned gradient
-        z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10))
+        z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Spectral estimate from standard BB
@@ -1109,7 +1131,7 @@ def make_dplbfgs_minimizer(
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
 
-            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10))
+            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
             def second_loop(i, r):
                 idx = (it - n_history + i) % memory
@@ -1359,7 +1381,7 @@ def make_rplbfgs_minimizer(
 
             q_after_first, alphas_final = lax.fori_loop(0, n_history, first_loop, (g, alphas))
 
-            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10))
+            r = solve_P(m, g_raw * inv_M_rel, q_after_first, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
 
             def second_loop(i, r):
                 idx = (it - n_history + i) % memory
@@ -1589,7 +1611,7 @@ def make_pnag_minimizer(
         g_tan_look = tangent_grad(m_look, g_s_look)
 
         # Preconditioned gradient at look-ahead
-        z = solve_P(m_look, g_s_look, g_tan_look, params.get("pc_iters", 10))
+        z = solve_P(m_look, g_s_look, g_tan_look, params.get("pc_iters", 10), reg=params.get("pc_reg", 0.0))
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Velocity update

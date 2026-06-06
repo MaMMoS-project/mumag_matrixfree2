@@ -114,6 +114,7 @@ class LoopParams:
     tn_iters: int = 5
     lr: float = 0.1
     mu: float = 0.9
+    pc_reg: float = 0.0
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -401,6 +402,7 @@ def run_hysteresis_loop(
             tn_iters=params.tn_iters,
             lr=params.lr,
             mu=params.mu,
+            pc_reg=params.pc_reg,
         )
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
