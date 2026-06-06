@@ -35,15 +35,38 @@ The following core dependencies are managed automatically by Pixi:
 
 ## 2. Methodology & Background
 
-### Energy Minimization (Hybrid BB/Line-Search)
-The package implements a **Curvilinear Search Method** specifically tailored for micromagnetics to maintain the unit-length constraint $|m|=1$ at every node.
+### Energy Minimization
+The package implements a **Curvilinear Search Method** specifically tailored for micromagnetics to maintain the unit-length constraint $|m|=1$ at every node. 
 
-1. **Torque Projection**: The raw energy gradient $g$ is used to form a torque field $H = m \times g$ that generates a descent direction in the tangent space.
-2. **Cayley Transform**: Magnetization is updated along a "curvilinear path" using a Cayley transform. This rotation-preserving map ensures vectors stay exactly on the unit sphere, avoiding cumulative normalization errors.
-3. **Hybrid Strategy**: The solver dynamically switches between two modes for maximum efficiency:
-   - **BB Mode (Convex)**: In regions of positive curvature ($s \cdot y > 0$), it uses **Barzilai-Borwein (BB)** alternating spectral steps for quasi-Newton acceleration with zero extra energy evaluations.
-   - **Line-Search Mode (Non-Convex)**: If negative or flat curvature is detected ($s \cdot y \leq 0$), it falls back to a JIT-compiled **Armijo line search**. This ensures guaranteed energy descent and prevents the solver from getting stuck during instabilities.
-4. **Full JIT Compilation**: The entire minimization loop (including line search and branching) is compiled into a single XLA kernel using `jax.lax.while_loop`. This eliminates Python overhead and allows the solver to run at native speed even with thousands of iterations.
+The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses physics-based preconditioning for the exchange interaction and adaptive accuracy tuning.
+
+#### Choice of Optimizers
+- **`pcohen` (Default)**: Preconditioned Cohen Conjugate Gradient with Polak-Ribière update. Superior for most problems.
+- **`bb`**: Standard Barzilai-Borwein with curvilinear line-search fallback.
+- **`cohen`**: Cohen CG without preconditioning.
+- **`pcg`**: Preconditioned Nonlinear CG using Hestenes-Stiefel (Exl 2019).
+- **`lbfgs`**: Standard Limited-memory BFGS.
+- **`plbfgs`**: Preconditioned L-BFGS using the local Hessian for initial scaling.
+- **`dplbfgs`**: Damped Preconditioned L-BFGS with Powell's damping for improved stability.
+- **`rplbfgs`**: Riemannian PL-BFGS using vector transport (tangent space projection).
+- **`tn` / `tn_split`**: Truncated Newton-CG (Full or local-only Hessian).
+- **`pbb`**: Preconditioned Barzilai-Borwein.
+- **`tr`**: Trust-Region Newton-CG (Steihaug-Toint).
+- **`aapg`**: Anderson Accelerated Preconditioned Gradient.
+- **`pnag`**: Preconditioned Nesterov Accelerated Gradient.
+
+#### Minimizer Parameters
+| Parameter | Default | Description |
+| :--- | :--- | :--- |
+| `method` | `pcohen` | Minimizer algorithm. |
+| `pc_iters` | `10` | Maximum inner iterations for the preconditioner. |
+| `pc_auto` | `True` | Enable automated tuning of preconditioning accuracy (Forcing Sequence). |
+| `pc_force_eta` | `0.1` | Base forcing parameter for adaptive preconditioning. |
+| `pc_force_alpha` | `1.0` | Exponent forcing parameter for adaptive preconditioning. |
+| `memory` | `5` | History size for L-BFGS and Anderson acceleration. |
+| `tn_iters` | `5` | Inner iterations for Newton-CG solvers. |
+| `lr` | `0.1` | Learning rate for Nesterov acceleration. |
+| `mu` | `0.9` | Momentum factor for Nesterov acceleration. |
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
@@ -122,9 +145,15 @@ mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
 mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 
 [minimizer]
+method = pcohen     ; Algorithm: pcohen, bb, lbfgs, etc.
 tol_fun = 1e-6      ; Energy convergence tolerance (tau_f)
 eps_a = 1e-10       ; Absolute tangent gradient tolerance
 max_iter = 200      ; Max iterations per field step
+pc_iters = 10       ; Inner preconditioning iterations
+pc_auto = true      ; Enable adaptive forcing sequence
+pc_force_eta = 0.1  ; Forcing base
+pc_force_alpha = 1.0; Forcing exponent
+memory = 5          ; BFGS history
 
 [poisson]
 cg_maxiter = 400    ; Poisson solver max iterations
@@ -204,6 +233,16 @@ The primary entry point for running hysteresis loop simulations.
 | `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 200). |
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--method` | choice | Energy minimizer algorithm: `pcohen` (default), `bb`, `lbfgs`, etc. |
+| `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
+| `--pc-auto` | flag | Enable automated tuning of preconditioning accuracy (default: True). |
+| `--pc-no-auto`| flag | Disable automated tuning of preconditioning accuracy. |
+| `--pc-force-eta`| float | Base forcing parameter for adaptive preconditioning (default: 0.1). |
+| `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 1.0). |
+| `--memory` | int | History size for L-BFGS and Anderson (default: 5). |
+| `--tn-iters` | int | Inner iterations for Newton-CG solvers (default: 5). |
+| `--lr` | float | Learning rate for Nesterov acceleration (default: 0.1). |
+| `--mu` | float | Momentum factor for Nesterov acceleration (default: 0.9). |
 | `--tau-min` | float | Minimum step size allowed for the BB minimizer (default: 1e-6). |
 | `--tau-max` | float | Maximum step size allowed for the BB minimizer (default: 1.0). |
 | `--bias-type` | choice | Symmetry-breaking field type: `circular` or `random` (default: None). |

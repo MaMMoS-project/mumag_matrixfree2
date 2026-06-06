@@ -17,7 +17,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from curvilinear_bb_minimizer import make_minimizer, tangent_grad
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom
 from io_utils import (
@@ -26,6 +25,7 @@ from io_utils import (
     write_hysteresis_header,
     write_vtu_tetra,
 )
+from minimizers import make_minimizer, tangent_grad
 from poisson_solve import make_solve_U
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
@@ -59,6 +59,15 @@ class LoopParams:
         mstep (float | None): Magnetization change threshold for saving snapshots.
         bias_type (str | None): Type of symmetry-breaking field ('circular', 'random').
         bias_strength (float): Strength of the bias field relative to saturation.
+        method (str): Minimizer algorithm (e.g., 'pcohen', 'bb', 'lbfgs').
+        pc_iters (int): Inner iterations for preconditioned methods.
+        pc_auto (bool): Enable adaptive preconditioning accuracy.
+        pc_force_eta (float): Base constant for adaptive forcing sequence.
+        pc_force_alpha (float): Exponent for adaptive forcing sequence.
+        memory (int): History size for L-BFGS and Anderson acceleration.
+        tn_iters (int): Inner iterations for Newton-CG solvers.
+        lr (float): Learning rate for Nesterov acceleration.
+        mu (float): Momentum factor for Nesterov acceleration.
     """
 
     h_dir: np.ndarray
@@ -94,6 +103,17 @@ class LoopParams:
     mstep: float | None = None
     bias_type: str | None = None
     bias_strength: float = 0.0
+
+    # Advanced Minimizer Defaults (P-Cohen Auto Strict)
+    method: str = "pcohen"
+    pc_iters: int = 10
+    pc_auto: bool = True
+    pc_force_eta: float = 0.1
+    pc_force_alpha: float = 1.0
+    memory: int = 5
+    tn_iters: int = 5
+    lr: float = 0.1
+    mu: float = 0.9
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -290,6 +310,7 @@ def run_hysteresis_loop(
         M_nodal=M_nodal,
         solve_U=solve_U,
         cg_tol=params.cg_tol,
+        method=params.method,
         B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
@@ -372,6 +393,14 @@ def run_hysteresis_loop(
             mfinal=params.mfinal,
             Js_ref=params.Js_ref,
             verbose=params.verbose,
+            pc_iters=params.pc_iters,
+            pc_auto=params.pc_auto,
+            pc_force_eta=params.pc_force_eta,
+            pc_force_alpha=params.pc_force_alpha,
+            memory=params.memory,
+            tn_iters=params.tn_iters,
+            lr=params.lr,
+            mu=params.mu,
         )
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()

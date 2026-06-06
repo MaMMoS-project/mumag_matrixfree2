@@ -239,6 +239,24 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["bias_type"] = str(m_min["bias_type"])
         if "bias_strength" in m_min:
             overrides["bias_strength"] = float(m_min["bias_strength"])
+        if "method" in m_min:
+            overrides["method"] = str(m_min["method"])
+        if "pc_iters" in m_min:
+            overrides["pc_iters"] = int(m_min["pc_iters"])
+        if "pc_auto" in m_min:
+            overrides["pc_auto"] = m_min.getboolean("pc_auto")
+        if "pc_force_eta" in m_min:
+            overrides["pc_force_eta"] = float(m_min["pc_force_eta"])
+        if "pc_force_alpha" in m_min:
+            overrides["pc_force_alpha"] = float(m_min["pc_force_alpha"])
+        if "memory" in m_min:
+            overrides["memory"] = int(m_min["memory"])
+        if "tn_iters" in m_min:
+            overrides["tn_iters"] = int(m_min["tn_iters"])
+        if "lr" in m_min:
+            overrides["lr"] = float(m_min["lr"])
+        if "mu" in m_min:
+            overrides["mu"] = float(m_min["mu"])
 
     if "poisson" in config:
         p = config["poisson"]
@@ -496,6 +514,85 @@ def main() -> None:
         help="Strength of the bias field relative to saturation (e.g., 0.01).",
     )
 
+    # advanced minimizer options
+    ap.add_argument(
+        "--method",
+        type=str,
+        default="pcohen",
+        choices=[
+            "bb",
+            "cohen",
+            "pcg",
+            "pcohen",
+            "pcohen_hs",
+            "lbfgs",
+            "plbfgs",
+            "dplbfgs",
+            "rplbfgs",
+            "tn",
+            "tn_split",
+            "pbb",
+            "tr",
+            "aapg",
+            "pnag",
+        ],
+        help="Energy minimizer algorithm (default: pcohen).",
+    )
+    ap.add_argument(
+        "--pc-iters",
+        type=int,
+        default=10,
+        help="Inner iterations for preconditioning (default: 10).",
+    )
+    ap.add_argument(
+        "--pc-auto",
+        action="store_true",
+        default=True,
+        help="Enable automated tuning of preconditioning accuracy (default: True).",
+    )
+    ap.add_argument(
+        "--pc-no-auto",
+        action="store_false",
+        dest="pc_auto",
+        help="Disable automated tuning of preconditioning accuracy.",
+    )
+    ap.add_argument(
+        "--pc-force-eta",
+        type=float,
+        default=0.1,
+        help="Base forcing parameter for adaptive preconditioning (default: 0.1).",
+    )
+    ap.add_argument(
+        "--pc-force-alpha",
+        type=float,
+        default=1.0,
+        help="Exponent forcing parameter for adaptive preconditioning (default: 1.0).",
+    )
+    ap.add_argument(
+        "--memory",
+        type=int,
+        default=5,
+        help="Memory/History size for L-BFGS and Anderson acceleration (default: 5).",
+    )
+    ap.add_argument(
+        "--tn-iters",
+        type=int,
+        default=5,
+        help="Inner iterations for Newton-CG solvers (default: 5).",
+    )
+    ap.add_argument(
+        "--lr",
+        type=float,
+        default=0.1,
+        help="Learning rate for Nesterov acceleration (default: 0.1).",
+    )
+    ap.add_argument(
+        "--mu",
+        type=float,
+        default=0.9,
+        help="Momentum factor for Nesterov acceleration (default: 0.9).",
+    )
+
     ap.add_argument(
         "--out-dir",
         type=str,
@@ -708,6 +805,15 @@ def main() -> None:
         "Js_ref": float(Js_ref),
         "bias_type": args.bias_type,
         "bias_strength": float(args.bias_strength),
+        "method": args.method,
+        "pc_iters": int(args.pc_iters),
+        "pc_auto": bool(args.pc_auto),
+        "pc_force_eta": float(args.pc_force_eta),
+        "pc_force_alpha": float(args.pc_force_alpha),
+        "memory": int(args.memory),
+        "tn_iters": int(args.tn_iters),
+        "lr": float(args.lr),
+        "mu": float(args.mu),
     }
 
     # Apply overrides
