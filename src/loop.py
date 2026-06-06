@@ -785,6 +785,7 @@ def main() -> None:
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
+    # 1. Start with defaults and CLI values
     params_dict = {
         "h_dir": h_dir,
         "B_start": float(args.B_start) / Js_ref,
@@ -816,7 +817,7 @@ def main() -> None:
         "mu": float(args.mu),
     }
 
-    # Apply overrides
+    # 2. Merge .p2 overrides
     if p2_overrides:
         # Scale field values by Js_ref (they are provided in Tesla)
         if "B_start" in p2_overrides:
@@ -834,7 +835,61 @@ def main() -> None:
         p2_overrides.pop("mesh_unit", None)
         p2_overrides.pop("m0_dir", None)
 
-        params_dict.update(p2_overrides)
+        # Merge p2 into defaults
+        for k, v in p2_overrides.items():
+            params_dict[k] = v
+
+    # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
+    # it should win over BOTH defaults and p2.
+    # We check if the arg is not the default value.
+    argparse.ArgumentParser()  # Dummy to get defaults easily
+    # (Actually simpler: just re-apply args values if they were changed from default)
+    # But for now, the standard merge is: Default -> p2 -> CLI.
+    # Since args already has defaults, we need to be careful.
+
+    # Let's use a cleaner approach: only overwrite params_dict with args
+    # if they were explicitly passed.
+    # For simplicity in this script, we'll stick to p2 overriding defaults,
+    # and then re-applying any NON-DEFAULT CLI args.
+
+    # Create a fresh parser to identify which args were provided by user
+    # (Standard practice is a bit more complex, so we'll do a focused override for now)
+    # This ensures your --dB 1.0 would have worked.
+
+    def is_default(name, value):
+        return value == ap.get_default(name)
+
+    for action in ap._actions:
+        if action.dest not in [
+            "help",
+            "modelname",
+            "mesh",
+            "add_shell",
+            "layers",
+            "K",
+            "beta",
+            "center",
+            "h0",
+            "hmax",
+            "minratio",
+            "max_steiner",
+            "no_exact",
+            "shell_verbose",
+            "materials",
+            "precond_type",
+            "geom_backend",
+            "chunk_elems",
+        ] and not is_default(action.dest, getattr(args, action.dest)):
+            params_dict[action.dest] = getattr(args, action.dest)
+            # Re-scale field units if they came from CLI
+            if action.dest in ["B_start", "B_end", "dB"]:
+                params_dict[action.dest] /= Js_ref
+
+    # Clean up params_dict to only include LoopParams fields
+    import dataclasses
+
+    loop_param_names = {f.name for f in dataclasses.fields(LoopParams)}
+    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
 
     params = LoopParams(**params_dict)
 
