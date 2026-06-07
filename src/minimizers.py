@@ -2188,6 +2188,8 @@ def make_minimizer(
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
     if method == "bb":
+        # BB minimizer doesn't accept 'assembly' arg; filter it out.
+        bb_kwargs = {k: v for k, v in kwargs.items() if k != "assembly"}
         step_fn = make_bb_minimizer(
             geom,
             A_lookup,
@@ -2199,7 +2201,7 @@ def make_minimizer(
             M_nodal,
             solve_U,
             cg_tol,
-            **kwargs,
+            **bb_kwargs,
         )
 
         # BB minimizer returns the whole minimizer function, not just a step function
