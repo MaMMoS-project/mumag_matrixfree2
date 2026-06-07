@@ -87,10 +87,10 @@ The internal preconditioning solve ($Py = g$) is optimized for speed using a mul
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
-- **U1 (Energy)**: Relative change in energy is below `tau_f`: $(E_{prev} - E) < \tau_f (1 + |E|)$.
+- **U1 (Energy)**: Relative change in energy is below `tau_f` (default: 1e-8): $(E_{prev} - E) < \tau_f (1 + |E|)$.
 - **U2 (Magnetization)**: Magnitude of the update step is below $\sqrt{\tau_f}$: $|m_{new} - m| < \sqrt{\tau_f} (1 + |m|)$.
 - **U3 (Gradient)**: The infinity norm of the projected tangent gradient is below a threshold: $|g_{tan}|_\infty \leq \tau_f^{1/3} (1 + |E|)$.
-- **U4 (Absolute)**: The tangent gradient norm is below the absolute tolerance `eps_a`.
+- **U4 (Absolute)**: The tangent gradient norm is below the absolute tolerance `eps_a` (default: 1e-12).
 
 The simulation terminates if either **(U1 AND U2 AND U3)** is satisfied, or if **U4** is reached. The absolute criterion (U4) is essential as a safety exit when numerical noise floor prevents the more stringent relative criteria from being simultaneously met.
 
