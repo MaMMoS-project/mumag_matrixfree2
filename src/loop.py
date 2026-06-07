@@ -530,7 +530,6 @@ def main() -> None:
         type=str,
         default="pcohen",
         choices=[
-            "bb",
             "cohen",
             "pcg",
             "pcohen",
