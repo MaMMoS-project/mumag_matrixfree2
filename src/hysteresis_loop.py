@@ -59,7 +59,7 @@ class LoopParams:
         mstep (float | None): Magnetization change threshold for saving snapshots.
         bias_type (str | None): Type of symmetry-breaking field ('circular', 'random').
         bias_strength (float): Strength of the bias field relative to saturation.
-        method (str): Minimizer algorithm (e.g., 'pcohen', 'bb', 'lbfgs').
+        method (str): Minimizer algorithm (e.g., 'pcohen', 'bb', 'lbfgs', 'wg').
         pc_iters (int): Inner iterations for preconditioned methods.
         pc_auto (bool): Enable adaptive preconditioning accuracy.
         pc_force_eta (float): Base constant for adaptive forcing sequence.
@@ -116,7 +116,7 @@ class LoopParams:
     lr: float = 0.1
     mu: float = 0.9
     pc_reg: float = 0.0
-    phi_extrapolate: bool = False
+    phi_extrapolate: bool = True
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:

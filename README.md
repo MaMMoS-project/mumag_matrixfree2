@@ -57,6 +57,7 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 - **`tr`**: Trust-Region Newton-CG (Steihaug-Toint).
 - **`aapg`**: Anderson Accelerated Preconditioned Gradient.
 - **`pnag`**: Preconditioned Nesterov Accelerated Gradient.
+- **`wg`**: Algorithm 2 of Wen and Goldfarb (2009) - Non-monotone Curvilinear Search with BB steps.
 
 #### Minimizer Parameters
 | Parameter | Default | Description |

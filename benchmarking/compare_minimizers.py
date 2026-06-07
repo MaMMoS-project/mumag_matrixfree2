@@ -142,7 +142,7 @@ def main():
     )
 
     # 2. Define Methods
-    methods = ["bb", "cohen", "pcg", "pcohen", "pcohen_hs", "pcohen_auto", "pcohen_auto_strict", "lbfgs", "plbfgs", "dplbfgs", "rplbfgs", "tn", "tn_split", "pbb", "tr", "aapg", "pnag"]
+    methods = ["bb", "cohen", "pcg", "pcohen", "pcohen_hs", "pcohen_auto", "pcohen_auto_strict", "lbfgs", "plbfgs", "dplbfgs", "rplbfgs", "tn", "tn_split", "pbb", "tr", "aapg", "pnag", "wg"]
     
     params = {
         "max_iter": args.max_iter,

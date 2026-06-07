@@ -8,9 +8,8 @@ Advanced micromagnetic energy minimizers:
 5. Truncated Newton (Newton-CG)
 6. Split Truncated Newton (Approximate Hessian)
 7. Preconditioned L-BFGS
-
-Author: Gemini CLI
-License: MIT
+8. Wen and Goldfarb (2009) Curvilinear Search
+9. Preconditioned Barzilai-Borwein (PBB)
 """
 
 from __future__ import annotations
@@ -1027,7 +1026,123 @@ def make_plbfgs_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 8. Preconditioned Barzilai-Borwein (PBB)
+# 8. Wen and Goldfarb (2009) Curvilinear Search
+# -----------------------------------------------------------------------------
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class WGState:
+    """State for the Wen and Goldfarb (2009) minimizer."""
+
+    m: Array
+    U: Array
+    U_prev: Array
+    g: Array
+    m_prev: Array
+    g_prev: Array
+    E: Array
+    C: Array  # Reference value for non-monotone line search
+    Q: Array  # Weight for C update
+    gnorm: Array
+    it: jnp.int32
+    converged: Array
+
+    def tree_flatten(self):
+        """Flatten the WGState for JAX tree operations."""
+        children = (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.m_prev,
+            self.g_prev,
+            self.E,
+            self.C,
+            self.Q,
+            self.gnorm,
+            self.it,
+            self.converged,
+        )
+        return children, None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Unflatten the WGState for JAX tree operations."""
+        return cls(*children)
+
+
+def make_wen_goldfarb_minimizer(
+    energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, inv_M_rel: Array, cg_tol: float
+):
+    """Create a Wen and Goldfarb (2009) curvilinear search minimizer."""
+
+    def step(state: WGState, B_ext: Array, params: dict) -> WGState:
+        m, U, E_prev, C_k, Q_k = state.m, state.U, state.E, state.C, state.Q
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # BB step size calculation
+        s_k = (m - state.m_prev).reshape(-1)
+        y_k = (g_tan - state.g_prev).reshape(-1)
+        sty = jnp.vdot(s_k, y_k)
+        sts = jnp.vdot(s_k, s_k)
+        yty = jnp.vdot(y_k, y_k)
+
+        tau1 = sts / (sty + 1e-30)
+        tau2 = sty / (yty + 1e-30)
+        tau_bb = jnp.where((state.it % 2) == 0, tau1, tau2)
+        tau_init = jnp.where(state.it == 0, params.get("tau0", 0.1), jnp.clip(tau_bb, 1e-6, 1e3))
+
+        # f'(0) = -||g_tan||^2
+        f_prime_0 = -jnp.vdot(g_tan, g_tan)
+
+        delta = 1e-4
+        rho = 0.5
+        eta = 0.85
+
+        def ls_cond(ls_state):
+            tau, m_trial, U_trial, E_trial, it, done = ls_state
+            return (it < 10) & (~done)
+
+        def ls_body(ls_state):
+            tau, _, _, _, it, _ = ls_state
+            H = -jnp.cross(m, g_tan)
+            m_next = cayley_update(m, H, tau)
+
+            # Use U_new as guess for U_next
+            U_next = solve_U(m_next, U_new, params["phi_tol"])
+            E_next = energy_only(m_next, U_next, B_ext)
+            E_next = jnp.where(jnp.isfinite(E_next), E_next, 1e20)
+
+            success = E_next <= C_k + delta * tau * f_prime_0
+
+            return lax.cond(
+                success,
+                lambda _: (tau, m_next, U_next, E_next, it + 1, jnp.array(True)),
+                lambda _: (tau * rho, m, U_new, E, it + 1, jnp.array(False)),
+                operand=None,
+            )
+
+        init_ls = (tau_init, m, U_new, E, jnp.int32(0), jnp.array(False))
+        _, m_new, U_f, E_new, _, _ = lax.while_loop(ls_cond, ls_body, init_ls)
+
+        Q_new = eta * Q_k + 1.0
+        C_new = (eta * Q_k * C_k + E_new) / Q_new
+
+        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+
+        return WGState(m_new, U_f, U_new, g_tan, m, g_tan, E_new, C_new, Q_new, gnorm_inf, state.it + 1, conv)
+
+    return step
+
+
+# -----------------------------------------------------------------------------
+# 9. Preconditioned Barzilai-Borwein (PBB)
 # -----------------------------------------------------------------------------
 
 
@@ -1154,7 +1269,7 @@ def make_pbb_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 9. Damped Preconditioned L-BFGS (D-PL-BFGS)
+# 10. Damped Preconditioned L-BFGS (D-PL-BFGS)
 # -----------------------------------------------------------------------------
 
 
@@ -1275,7 +1390,7 @@ def make_dplbfgs_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 10. Trust-Region Newton-CG (Steihaug-Toint)
+# 11. Trust-Region Newton-CG (Steihaug-Toint)
 # -----------------------------------------------------------------------------
 
 
@@ -1414,7 +1529,7 @@ def make_tr_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 11. Riemannian Preconditioned L-BFGS (R-PL-BFGS)
+# 12. Riemannian Preconditioned L-BFGS (R-PL-BFGS)
 # -----------------------------------------------------------------------------
 
 
@@ -1542,7 +1657,7 @@ def make_rplbfgs_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 12. Anderson Accelerated Preconditioned Gradient (AA-PG)
+# 13. Anderson Accelerated Preconditioned Gradient (AA-PG)
 # -----------------------------------------------------------------------------
 
 
@@ -1658,7 +1773,7 @@ def make_aapg_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 13. Preconditioned Nesterov Accelerated Gradient (PNAG)
+# 14. Preconditioned Nesterov Accelerated Gradient (PNAG)
 # -----------------------------------------------------------------------------
 
 
@@ -1780,7 +1895,7 @@ def make_pnag_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 14. Preconditioned Barzilai-Borwein with Steihaug (PBBS)
+# 15. Preconditioned Barzilai-Borwein with Steihaug (PBBS)
 # -----------------------------------------------------------------------------
 
 
@@ -1864,7 +1979,7 @@ def make_pbbs_minimizer(
 
 
 # -----------------------------------------------------------------------------
-# 15. LBFGS-Preconditioned Cohen CG Hybrid
+# 16. LBFGS-Preconditioned Cohen CG Hybrid
 # -----------------------------------------------------------------------------
 
 
@@ -1985,6 +2100,7 @@ def make_minimizer(
         "plbfgs",
         "dplbfgs",
         "rplbfgs",
+        "wg",
         "tn",
         "tn_split",
         "pbb",
@@ -2116,6 +2232,12 @@ def make_minimizer(
                 0,
                 jnp.array(False),
             )
+
+    elif method == "wg":
+        step_fn = make_wen_goldfarb_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return WGState(m, U, U, g, m, g, E, E, jnp.array(1.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
 
     elif method == "tn":
         step_fn = make_tn_minimizer(
