@@ -2327,7 +2327,7 @@ def make_minimizer(
             )
 
     elif method == "wg":
-        step_fn = make_wen_goldfarb_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_wen_goldfarb_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
             return WGState(
