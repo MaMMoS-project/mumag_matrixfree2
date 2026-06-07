@@ -1126,10 +1126,10 @@ def make_wen_goldfarb_minimizer(
         tau_bb = jnp.where((state.it % 2) == 0, tau1, tau2)
 
         # Select step
-        # Phase 1: Steepest Descent (tau fixed or small)
+        # Phase 1: Steepest Descent (use line search)
         # Phase 2: BB
         tau_bb_clipped = jnp.clip(tau_bb, 1e-6, 1e3)
-        tau = jnp.where(new_phase == 1, tau_bb_clipped, 0.01)
+        tau = jnp.where(new_phase == 1, tau_bb_clipped, params.get("tau0", 0.1))
 
         # f'(0) = -||g_tan||^2
         f_prime_0 = -jnp.vdot(g_tan, g_tan)
