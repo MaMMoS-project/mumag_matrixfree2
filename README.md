@@ -42,6 +42,7 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 
 #### Choice of Optimizers
 - **`pcohen` (Default)**: Preconditioned Cohen Conjugate Gradient with Polak-Ribière update. Superior for most problems.
+- **`pcohen_hs`**: Preconditioned Cohen CG with Hestenes-Stiefel update.
 - **`bb`**: Standard Barzilai-Borwein with curvilinear line-search fallback.
 - **`cohen`**: Cohen CG without preconditioning.
 - **`pcg`**: Preconditioned Nonlinear CG using Hestenes-Stiefel (Exl 2019).
