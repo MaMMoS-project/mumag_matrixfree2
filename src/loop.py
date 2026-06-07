@@ -249,6 +249,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["pc_force_eta"] = float(m_min["pc_force_eta"])
         if "pc_force_alpha" in m_min:
             overrides["pc_force_alpha"] = float(m_min["pc_force_alpha"])
+        if "pc_stagnation_nu" in m_min:
+            overrides["pc_stagnation_nu"] = float(m_min["pc_stagnation_nu"])
         if "memory" in m_min:
             overrides["memory"] = int(m_min["memory"])
         if "tn_iters" in m_min:
@@ -573,6 +575,12 @@ def main() -> None:
         help="Exponent forcing parameter for adaptive preconditioning (default: 1.0).",
     )
     ap.add_argument(
+        "--pc-stagnation-nu",
+        type=float,
+        default=1e-3,
+        help="Relative threshold for quadratic model stagnation detection (default: 1e-3).",
+    )
+    ap.add_argument(
         "--memory",
         type=int,
         default=5,
@@ -834,6 +842,7 @@ def main() -> None:
         "pc_auto": bool(args.pc_auto),
         "pc_force_eta": float(args.pc_force_eta),
         "pc_force_alpha": float(args.pc_force_alpha),
+        "pc_stagnation_nu": float(args.pc_stagnation_nu),
         "memory": int(args.memory),
         "tn_iters": int(args.tn_iters),
         "lr": float(args.lr),

@@ -112,7 +112,7 @@ def test_exchange_gradient(setup_geom):
     )
     m_hel /= np.linalg.norm(m_hel, axis=1, keepdims=True)
 
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         d["A_lookup"],
         jnp.zeros_like(d["K1_lookup"]),
@@ -150,7 +150,7 @@ def test_anisotropy_gradient(setup_geom):
     d = setup_geom
     m_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (d["knt"].shape[0], 1))
     solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         d["K1_lookup"],
@@ -189,7 +189,7 @@ def test_zeeman_gradient(setup_geom):
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
     b_ext = jnp.array([0.1 / d["Js_si"], 0.0, 0.0])
     solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),
@@ -227,7 +227,7 @@ def test_demag_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
     solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),

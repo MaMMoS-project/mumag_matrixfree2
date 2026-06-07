@@ -110,6 +110,7 @@ class LoopParams:
     pc_auto: bool = True
     pc_force_eta: float = 0.1
     pc_force_alpha: float = 1.0
+    pc_stagnation_nu: float = 1e-3
     memory: int = 5
     tn_iters: int = 5
     lr: float = 0.1
@@ -399,6 +400,7 @@ def run_hysteresis_loop(
             pc_auto=params.pc_auto,
             pc_force_eta=params.pc_force_eta,
             pc_force_alpha=params.pc_force_alpha,
+            pc_stagnation_nu=params.pc_stagnation_nu,
             memory=params.memory,
             tn_iters=params.tn_iters,
             lr=params.lr,

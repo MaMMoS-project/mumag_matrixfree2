@@ -82,7 +82,8 @@ All preconditioned methods (`pcohen`, `pcg`, `plbfgs`, etc.) utilize a **Steihau
 The internal preconditioning solve ($Py = g$) is optimized for speed using a multi-layered stopping criteria:
 1.  **Eisenstat-Walker Forcing**: The target precision is dynamically calculated as `pc_tol = min(eta, |g|^alpha) * |g|`. This ensures high speed when far from equilibrium and high precision near the minimum.
 2.  **Hard Iteration Cap (`pc_iters`)**: Regardless of the accuracy target, the solver will always terminate and return the best available direction once `pc_iters` is reached.
-3.  **Physical Robustness**: If the resulting direction is not a descent direction (e.g., due to extreme ill-conditioning), the solver automatically falls back to the projected raw gradient.
+3.  **Stagnation Detection**: The solver monitors the reduction in the internal quadratic model. If a step reduces the model by less than a fraction $\nu$ of the total reduction achieved so far (`pc_stagnation_nu`), the solver exits early to avoid wasting effort on negligible improvements.
+4.  **Physical Robustness**: If the resulting direction is not a descent direction (e.g., due to extreme ill-conditioning), the solver automatically falls back to the projected raw gradient.
 
 ### Stopping Criteria
 Convergence is determined by the criteria established by *Gill, Murray, and Wright* in "Practical Optimization" (1981):
@@ -265,7 +266,7 @@ The primary entry point for running hysteresis loop simulations.
 | `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 1.0). |
 | `--pc-tol` | float | Absolute tolerance target for preconditioning (default: 0.0). |
 | `--pc-rel-tol` | float | Relative tolerance reduction goal for preconditioning (default: 0.0). |
-| `--pc-stagnation-ratio` | float | Early exit threshold for preconditioner if residual improvement is slow (default: 1.1). |
+| `--pc-stagnation-nu` | float | Relative threshold $\nu$ for quadratic model stagnation detection (default: 1e-3). |
 | `--phi-extrapolate`| flag | Enable linear extrapolation of scalar potential for faster Poisson solves (default: True). |
 | `--no-phi-extrapolate`| flag | Disable linear extrapolation of scalar potential. |
 | `--memory` | int | History size for L-BFGS and Anderson (default: 5). |

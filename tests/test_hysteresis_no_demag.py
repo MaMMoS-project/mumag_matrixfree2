@@ -19,7 +19,7 @@ from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
 
 def make_minimizer_no_demag(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal):
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    energy_and_grad, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal)
+    energy_and_grad, _, _, _ = make_energy_kernels(geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal)
 
     def _bb_step(state, B_ext, tau_min, tau_max):
         m = state.m
