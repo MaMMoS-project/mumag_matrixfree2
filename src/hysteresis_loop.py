@@ -476,7 +476,8 @@ def run_hysteresis_loop(
             f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
         )
 
-        if info.get("mfinal_reached", False):
+        # Early termination check
+        if params.mfinal is not None and Jpar <= params.mfinal:
             print(
                 f"\n[loop] mfinal reached ({J_tesla:.4f} T <= {params.mfinal * params.Js_ref:.4f} T). Stopping sweep."
             )

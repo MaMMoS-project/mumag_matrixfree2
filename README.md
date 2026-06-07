@@ -61,11 +61,11 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
 | `method` | `pcohen` | Minimizer algorithm. |
-| `pc_iters` | `10` | Maximum inner iterations for the preconditioner. |
+| `pc_iters` | `6` | Maximum inner iterations for the preconditioner. |
 | `pc_auto` | `True` | **Adaptive Forcing**: Enable dynamic tuning of preconditioning accuracy based on the **Eisenstat-Walker** formula: `pc_tol = min(eta, |g|^alpha) * |g|`. |
 | `pc_force_eta` | `0.1` | Forcing parameter $\eta_{base}$: limits maximum preconditioning laziness. |
 | `pc_force_alpha` | `1.0` | Forcing parameter $\alpha$: controls how fast accuracy tightens as $|g| \to 0$. |
-| `phi_extrapolate`| `False` | Enable linear extrapolation of scalar potential for faster Poisson solves. |
+| `phi_extrapolate`| `True` | Enable linear extrapolation of scalar potential for faster Poisson solves. |
 | `memory` | `5` | History size for L-BFGS and Anderson acceleration. |
 | `tn_iters` | `5` | Inner iterations for Newton-CG solvers. |
 | `lr` | `0.1` | Learning rate for Nesterov acceleration. |
@@ -139,7 +139,9 @@ pixi run python src/mesh.py --geom poly_gb --extent 10,10,10 --n 12 --h 1.0 --gb
 ```
 
 ### Configuration (.p2 file)
-Simulations are controlled via `.p2` files (INI format). Example `cube_20nm.p2`:
+Simulations are primarily controlled via `.p2` files (INI format). These act as the **base settings** for a model.
+**Parameter Priority**: Explicit CLI Arguments > `.p2` Configuration File > Hardcoded Defaults.
+Example `cube_20nm.p2`:
 ```ini
 [mesh]
 size = 1e-9         ; Length of one mesh unit in meters (default 1e-9 for nm)
@@ -155,8 +157,8 @@ hy = 0.0            ; Field direction y
 hz = 1.0            ; Field direction z
 hstart = 2.0        ; Start field (Tesla)
 hfinal = -8.0       ; End field (Tesla)
-hstep = -0.5        ; Step size (Tesla)
-loop = false        ; If true, runs a full hysteresis cycle
+hstep = -0.5        ; Step size magnitude (Tesla). Sign is adjusted automatically.
+loop = false        ; If true, runs a full hysteresis cycle (default: false)
 mstep = 0.1         ; Save snapshot if |J_par - J_last| > 0.1 T
 mfinal = 0.0        ; Stop sweep if J_par <= 0.0 T
 bias_type = circular ; Symmetry-breaking field ('circular' or 'random')
@@ -201,6 +203,9 @@ The file expects 6 columns (Classic format):
 ## 4. Output Files
 
 The simulation results are saved in the directory specified by `--out-dir` (default: `hyst_out`).
+
+### Parameter Log (`params.log`)
+A Markdown-formatted table generated at the start of the simulation. It lists all active configuration parameters, their final resolved values, and their source (e.g., `default`, `.p2`, or `cli`), providing a complete record of the simulation settings.
 
 ### Hysteresis Data (`hysteresis.csv`)
 A CSV file containing the global results of the field sweep. Columns include:
@@ -253,12 +258,16 @@ The primary entry point for running hysteresis loop simulations.
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
 | `--method` | choice | Energy minimizer algorithm: `pcohen` (default), `bb`, `lbfgs`, etc. |
-| `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
+| `--pc-iters` | int | Inner iterations for preconditioning (default: 8). |
 | `--pc-auto` | flag | Enable automated tuning of preconditioning accuracy (default: True). |
 | `--pc-no-auto`| flag | Disable automated tuning of preconditioning accuracy. |
 | `--pc-force-eta`| float | Base forcing parameter for adaptive preconditioning (default: 0.1). |
 | `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 1.0). |
-| `--phi-extrapolate`| flag | Enable linear extrapolation of scalar potential for faster Poisson solves. |
+| `--pc-tol` | float | Absolute tolerance target for preconditioning (default: 0.0). |
+| `--pc-rel-tol` | float | Relative tolerance reduction goal for preconditioning (default: 0.0). |
+| `--pc-stagnation-ratio` | float | Early exit threshold for preconditioner if residual improvement is slow (default: 1.1). |
+| `--phi-extrapolate`| flag | Enable linear extrapolation of scalar potential for faster Poisson solves (default: True). |
+| `--no-phi-extrapolate`| flag | Disable linear extrapolation of scalar potential. |
 | `--memory` | int | History size for L-BFGS and Anderson (default: 5). |
 | `--tn-iters` | int | Inner iterations for Newton-CG solvers (default: 5). |
 | `--lr` | float | Learning rate for Nesterov acceleration (default: 0.1). |

@@ -545,8 +545,8 @@ def main() -> None:
     ap.add_argument(
         "--pc-iters",
         type=int,
-        default=10,
-        help="Inner iterations for preconditioning (default: 10).",
+        default=6,
+        help="Inner iterations for preconditioning (default: 6).",
     )
     ap.add_argument(
         "--pc-auto",
@@ -606,8 +606,14 @@ def main() -> None:
     ap.add_argument(
         "--phi-extrapolate",
         action="store_true",
-        default=False,
-        help="Enable linear extrapolation of scalar potential for faster Poisson solves (default: False).",
+        default=True,
+        help="Enable linear extrapolation of scalar potential for faster Poisson solves (default: True).",
+    )
+    ap.add_argument(
+        "--no-phi-extrapolate",
+        action="store_false",
+        dest="phi_extrapolate",
+        help="Disable linear extrapolation of scalar potential.",
     )
     ap.add_argument(
         "--out-dir",
@@ -704,7 +710,7 @@ def main() -> None:
     if modelname:
         p2_path = Path(modelname).with_suffix(".p2")
         if p2_path.exists():
-            print(f"[config] Loading overrides from {p2_path}")
+            print(f"[config] Loading base settings from {p2_path}")
             p2_overrides = load_params_p2(p2_path)
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
@@ -802,6 +808,7 @@ def main() -> None:
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
     # 1. Start with defaults and CLI values
+    param_sources = {}
     params_dict = {
         "h_dir": h_dir,
         "B_start": float(args.B_start) / Js_ref,
@@ -815,7 +822,7 @@ def main() -> None:
         "cg_maxiter": int(args.cg_maxiter),
         "cg_tol": float(args.cg_tol),
         "poisson_reg": float(args.poisson_reg),
-        "loop": True,
+        "loop": False,
         "out_dir": args.out_dir,
         "snapshot_every": int(args.snapshot_every),
         "verbose": args.verbose,
@@ -834,6 +841,8 @@ def main() -> None:
         "pc_reg": float(args.pc_reg),
         "phi_extrapolate": bool(args.phi_extrapolate),
     }
+    for k in params_dict:
+        param_sources[k] = "default"
 
     # 2. Merge .p2 overrides
     if p2_overrides:
@@ -856,57 +865,51 @@ def main() -> None:
         # Merge p2 into defaults
         for k, v in p2_overrides.items():
             params_dict[k] = v
+            param_sources[k] = ".p2"
 
     # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
     # it should win over BOTH defaults and p2.
-    # We check if the arg is not the default value.
-    argparse.ArgumentParser()  # Dummy to get defaults easily
-    # (Actually simpler: just re-apply args values if they were changed from default)
-    # But for now, the standard merge is: Default -> p2 -> CLI.
-    # Since args already has defaults, we need to be careful.
+    # We check if the arg flag is actually present in sys.argv.
+    import sys
 
-    # Let's use a cleaner approach: only overwrite params_dict with args
-    # if they were explicitly passed.
-    # For simplicity in this script, we'll stick to p2 overriding defaults,
-    # and then re-applying any NON-DEFAULT CLI args.
-
-    # Create a fresh parser to identify which args were provided by user
-    # (Standard practice is a bit more complex, so we'll do a focused override for now)
-    # This ensures your --dB 1.0 would have worked.
-
-    def is_default(name, value):
-        return value == ap.get_default(name)
-
+    # Map destination variable names to the flags that can set them
+    dest_to_flags = {}
     for action in ap._actions:
-        if action.dest not in [
-            "help",
-            "modelname",
-            "mesh",
-            "add_shell",
-            "layers",
-            "K",
-            "beta",
-            "center",
-            "h0",
-            "hmax",
-            "minratio",
-            "max_steiner",
-            "no_exact",
-            "shell_verbose",
-            "materials",
-            "precond_type",
-            "geom_backend",
-            "chunk_elems",
-        ] and not is_default(action.dest, getattr(args, action.dest)):
-            params_dict[action.dest] = getattr(args, action.dest)
+        dest_to_flags[action.dest] = action.option_strings
+
+    # Identify which variables were explicitly set on the CLI
+    explicit_cli_args = set()
+    for dest, flags in dest_to_flags.items():
+        for flag in flags:
+            # Check if any flag matching this dest is in sys.argv
+            # (handles both --flag value and --flag=value)
+            if any(arg.startswith(flag) for arg in sys.argv):
+                explicit_cli_args.add(dest)
+                break
+
+    for dest in explicit_cli_args:
+        if dest in params_dict:
+            params_dict[dest] = getattr(args, dest)
+            param_sources[dest] = "cli"
             # Re-scale field units if they came from CLI
-            if action.dest in ["B_start", "B_end", "dB"]:
-                params_dict[action.dest] /= Js_ref
+            if dest in ["B_start", "B_end", "dB", "mfinal", "mstep"] and params_dict[dest] is not None:
+                params_dict[dest] /= Js_ref
 
     # Clean up params_dict to only include LoopParams fields
     import dataclasses
 
     loop_param_names = {f.name for f in dataclasses.fields(LoopParams)}
+
+    # Save parameter log
+    out_dir_path = Path(args.out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+    with open(out_dir_path / "params.log", "w") as f:
+        f.write("| Parameter | Value | Source |\n")
+        f.write("| :--- | :--- | :--- |\n")
+        for k in sorted(params_dict.keys()):
+            if k in loop_param_names:
+                f.write(f"| {k} | {params_dict[k]} | {param_sources.get(k, 'unknown')} |\n")
+
     params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
 
     params = LoopParams(**params_dict)
