@@ -2176,6 +2176,7 @@ def make_minimizer(
     **kwargs,
 ):
     """Factory function to create various micromagnetic energy minimizers."""
+    from curvilinear_bb_minimizer import make_minimizer as make_bb_minimizer
     from energy_kernels import make_energy_kernels
 
     if "energy_assembly" in kwargs:
@@ -2186,7 +2187,28 @@ def make_minimizer(
     )
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    if method == "cohen":
+    if method == "bb":
+        step_fn = make_bb_minimizer(
+            geom,
+            A_lookup,
+            K1_lookup,
+            Js_lookup,
+            k_easy_lookup,
+            V_mag,
+            node_volumes,
+            M_nodal,
+            solve_U,
+            cg_tol,
+            **kwargs,
+        )
+
+        # BB minimizer returns the whole minimizer function, not just a step function
+        # This factory expects a step_fn and init_state_fn
+        # To adapt it, we might need a wrapper, but let's try calling it directly
+        # or adapting the return
+        return step_fn
+
+    elif method == "cohen":
         step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
