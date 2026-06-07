@@ -92,6 +92,8 @@ Convergence is determined by the criteria established by *Gill, Murray, and Wrig
 - **U3 (Gradient)**: The infinity norm of the projected tangent gradient is below a threshold: $|g_{tan}|_\infty \leq \tau_f^{1/3} (1 + |E|)$.
 - **U4 (Absolute)**: The tangent gradient norm is below the absolute tolerance `eps_a`.
 
+The simulation terminates if either **(U1 AND U2 AND U3)** is satisfied, or if **U4** is reached. The absolute criterion (U4) is essential as a safety exit when numerical noise floor prevents the more stringent relative criteria from being simultaneously met.
+
 ### Matrix-Free Poisson Solver
 To solve the magnetic scalar potential $U$, we use a **Preconditioned Conjugate Gradient (PCG)** method. Instead of assembling a global stiffness matrix $A$, the operator-vector product $A u$ is computed element-wise in JAX.
 
