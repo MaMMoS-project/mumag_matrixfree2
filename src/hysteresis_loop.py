@@ -117,6 +117,8 @@ class LoopParams:
     mu: float = 0.9
     pc_reg: float = 0.0
     phi_extrapolate: bool = True
+    wg_gamma: int = 5
+    wg_threshold: float = 1e-6
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:

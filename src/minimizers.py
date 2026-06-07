@@ -1051,6 +1051,8 @@ class WGState:
     E: Array
     C: Array  # Reference value for non-monotone line search
     Q: Array  # Weight for C update
+    phase: jnp.int32  # 0: Gradient Descent, 1: BB
+    convex_count: jnp.int32
     gnorm: Array
     it: jnp.int32
     converged: Array
@@ -1067,6 +1069,8 @@ class WGState:
             self.E,
             self.C,
             self.Q,
+            self.phase,
+            self.convex_count,
             self.gnorm,
             self.it,
             self.converged,
@@ -1086,6 +1090,7 @@ def make_wen_goldfarb_minimizer(
 
     def step(state: WGState, B_ext: Array, params: dict) -> WGState:
         m, U, E_prev, C_k, Q_k = state.m, state.U, state.E, state.C, state.Q
+        phase, convex_count = state.phase, state.convex_count
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
@@ -1093,17 +1098,38 @@ def make_wen_goldfarb_minimizer(
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
-        # BB step size calculation
+        # Check convexity (curvature condition)
         s_k = (m - state.m_prev).reshape(-1)
         y_k = (g_tan - state.g_prev).reshape(-1)
         sty = jnp.vdot(s_k, y_k)
+        is_convex = sty > params.get("wg_threshold", 1e-6)
+
+        # Update phase and convex count
+        # 1. Restart logic: If in BB (1) and enter non-convex region, restart to Gradient Descent (0)
+        restarting = (phase == 1) & (~is_convex)
+        new_phase = jnp.where(restarting, 0, phase)
+        new_convex_count = jnp.where(restarting, 0, convex_count)
+
+        # 2. Increment count if in convex region and not yet in Phase 2
+        new_convex_count = jnp.where((new_phase == 0) & (is_convex), new_convex_count + 1, new_convex_count)
+        # 3. Reset count if in non-convex region while in Phase 1
+        new_convex_count = jnp.where((new_phase == 0) & (~is_convex), 0, new_convex_count)
+
+        # 4. Transition to BB (Phase 2)
+        new_phase = jnp.where((new_phase == 0) & (new_convex_count >= params.get("wg_gamma", 5)), 1, new_phase)
+
+        # BB step size calculation
         sts = jnp.vdot(s_k, s_k)
         yty = jnp.vdot(y_k, y_k)
-
         tau1 = sts / (sty + 1e-30)
         tau2 = sty / (yty + 1e-30)
         tau_bb = jnp.where((state.it % 2) == 0, tau1, tau2)
-        tau_init = jnp.where(state.it == 0, params.get("tau0", 0.1), jnp.clip(tau_bb, 1e-6, 1e3))
+
+        # Select step
+        # Phase 1: Steepest Descent (tau fixed or small)
+        # Phase 2: BB
+        tau_bb_clipped = jnp.clip(tau_bb, 1e-6, 1e3)
+        tau = jnp.where(new_phase == 1, tau_bb_clipped, 0.01)
 
         # f'(0) = -||g_tan||^2
         f_prime_0 = -jnp.vdot(g_tan, g_tan)
@@ -1113,15 +1139,14 @@ def make_wen_goldfarb_minimizer(
         eta = 0.85
 
         def ls_cond(ls_state):
-            tau, m_trial, U_trial, E_trial, it, done = ls_state
-            return (it < 10) & (~done)
+            tau, _, _, _, it, _ = ls_state
+            return (it < 10) & (tau > 1e-12)
 
         def ls_body(ls_state):
             tau, _, _, _, it, _ = ls_state
             H = -jnp.cross(m, g_tan)
             m_next = cayley_update(m, H, tau)
 
-            # Use U_new as guess for U_next
             U_next = solve_U(m_next, U_new, params["phi_tol"])
             E_next = energy_only(m_next, U_next, B_ext)
             E_next = jnp.where(jnp.isfinite(E_next), E_next, 1e20)
@@ -1135,7 +1160,7 @@ def make_wen_goldfarb_minimizer(
                 operand=None,
             )
 
-        init_ls = (tau_init, m, U_new, E, jnp.int32(0), jnp.array(False))
+        init_ls = (tau, m, U_new, E, jnp.int32(0), jnp.array(False))
         _, m_new, U_f, E_new, _, _ = lax.while_loop(ls_cond, ls_body, init_ls)
 
         Q_new = eta * Q_k + 1.0
@@ -1143,7 +1168,22 @@ def make_wen_goldfarb_minimizer(
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
 
-        return WGState(m_new, U_f, U_new, g_tan, m, g_tan, E_new, C_new, Q_new, gnorm_inf, state.it + 1, conv)
+        return WGState(
+            m_new,
+            U_f,
+            U_new,
+            g_tan,
+            m,
+            g_tan,
+            E_new,
+            C_new,
+            Q_new,
+            new_phase,
+            new_convex_count,
+            gnorm_inf,
+            state.it + 1,
+            conv,
+        )
 
     return step
 
@@ -2260,7 +2300,22 @@ def make_minimizer(
         step_fn = make_wen_goldfarb_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm):
-            return WGState(m, U, U, g, m, g, E, E, jnp.array(1.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
+            return WGState(
+                m,
+                U,
+                U,
+                g,
+                m,
+                g,
+                E,
+                E,
+                jnp.array(1.0, dtype=m.dtype),
+                jnp.int32(0),
+                jnp.int32(0),
+                gnorm,
+                0,
+                jnp.array(False),
+            )
 
     elif method == "tn":
         step_fn = make_tn_minimizer(

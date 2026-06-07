@@ -261,6 +261,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["mu"] = float(m_min["mu"])
         if "pc_reg" in m_min:
             overrides["pc_reg"] = float(m_min["pc_reg"])
+        if "wg_gamma" in m_min:
+            overrides["wg_gamma"] = int(m_min["wg_gamma"])
+        if "wg_threshold" in m_min:
+            overrides["wg_threshold"] = float(m_min["wg_threshold"])
         if "phi_extrapolate" in m_min:
             overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
 
@@ -613,6 +617,18 @@ def main() -> None:
         help="Diagonal regularization shift for the preconditioner (default: 0.0).",
     )
     ap.add_argument(
+        "--wg-gamma",
+        type=int,
+        default=5,
+        help="Number of steps in convex region before switching to BB (default: 5).",
+    )
+    ap.add_argument(
+        "--wg-threshold",
+        type=float,
+        default=1e-6,
+        help="Convexity threshold (sty) for WG algorithm (default: 1e-6).",
+    )
+    ap.add_argument(
         "--phi-extrapolate",
         action="store_true",
         default=True,
@@ -849,6 +865,8 @@ def main() -> None:
         "lr": float(args.lr),
         "mu": float(args.mu),
         "pc_reg": float(args.pc_reg),
+        "wg_gamma": int(args.wg_gamma),
+        "wg_threshold": float(args.wg_threshold),
         "phi_extrapolate": bool(args.phi_extrapolate),
     }
     for k in params_dict:
