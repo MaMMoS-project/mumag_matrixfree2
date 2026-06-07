@@ -48,6 +48,18 @@ def cayley_update(m: Array, H: Array, tau: Array) -> Array:
     return m_new / jnp.linalg.norm(m_new, axis=1, keepdims=True)
 
 
+def cayley_transport(v: Array, H: Array, tau: Array) -> Array:
+    """Transport a tangent vector v from T_m to T_m_new using the Cayley rotation matrix."""
+    k = 0.5 * tau * H
+    k2 = jnp.sum(k * k, axis=1, keepdims=True)
+    denom = 1.0 + k2
+    kv = jnp.cross(k, v)
+    kdotv = jnp.sum(k * v, axis=1, keepdims=True)
+    # R * v using the same Rodrigues-type rotation formula as cayley_update
+    v_new = ((1.0 - k2) * v + 2.0 * kv + 2.0 * kdotv * k) / denom
+    return v_new
+
+
 def tangent_grad(m: Array, g_raw: Array) -> Array:
     """Project a raw gradient onto the tangent space of the unit sphere."""
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
@@ -339,6 +351,48 @@ class PCGState:
         return cls(*children)
 
 
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class PCGExactState:
+    """State for the Exact Preconditioned Conjugate Gradient minimizer."""
+
+    m: Array
+    U: Array
+    U_prev: Array
+    g_tan: Array
+    z: Array
+    d: Array
+    E: Array
+    gnorm: Array
+    it: jnp.int32
+    H_prev: Array
+    tau_prev: Array
+    converged: Array
+
+    def tree_flatten(self):
+        """Flatten the PCGExactState for JAX tree operations."""
+        children = (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g_tan,
+            self.z,
+            self.d,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.H_prev,
+            self.tau_prev,
+            self.converged,
+        )
+        return children, None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Unflatten the PCGExactState for JAX tree operations."""
+        return cls(*children)
+
+
 def make_pcg_minimizer(
     energy_and_grad: Callable,
     energy_only: Callable,
@@ -542,6 +596,122 @@ def make_pcohen_minimizer(
         )
 
         return PCGState(m_new, U_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+
+    return step
+
+
+# -----------------------------------------------------------------------------
+# 3.5 Exact Preconditioned Cohen CG (1989 Rigorous Edition)
+# -----------------------------------------------------------------------------
+
+
+def make_pcohen_exact_minimizer(
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    local_grad_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+    beta_type: Literal["pr", "hs"] = "pr",
+):
+    """Create a Mathematically Rigorous Preconditioned Cohen CG minimizer step function."""
+    ls = make_armijo_ls(energy_only, solve_U)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+
+    def step(state: PCGExactState, B_ext: Array, params: dict) -> PCGExactState:
+        m, U, g_prev, z_prev, d_prev, E_prev = (
+            state.m,
+            state.U,
+            state.g_tan,
+            state.z,
+            state.d,
+            state.E,
+        )
+
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
+        g_s = g_raw * inv_M_rel
+        g_tan = tangent_grad(m, g_s)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Automated tuning of preconditioner accuracy (Forcing sequence)
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+        )
+
+        z = solve_P(
+            m,
+            g_s,
+            g_tan,
+            max_iter=params.get("pc_iters", 15),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+        )
+        gnorm_inf_smooth = jnp.max(jnp.abs(z))
+
+        # COHEN EXACT TRANSPORT (Eq 6.1 Scaling)
+        # Transport previous search direction and gradient to current tangent space
+        d_prev_transported = jnp.where(
+            state.it > 0,
+            cayley_transport(d_prev, state.H_prev, state.tau_prev),
+            jnp.zeros_like(d_prev),
+        )
+        z_prev_transported = jnp.where(
+            state.it > 0,
+            cayley_transport(z_prev, state.H_prev, state.tau_prev),
+            jnp.zeros_like(z_prev),
+        )
+
+        if beta_type == "pr":
+            # Polak-Ribiere (PR) Beta with Exact Transport
+            num = jnp.vdot(z, z - z_prev_transported)
+            den = jnp.vdot(z_prev, g_prev) + 1e-30  # Note: den uses previous space norms
+            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+        else:
+            # Hestenes-Stiefel (HS) Beta with Exact Transport
+            diff_z = z - z_prev_transported
+            num = jnp.vdot(z, diff_z)
+            den = jnp.vdot(d_prev_transported, diff_z) + 1e-30
+            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+
+        # Update search direction
+        d = -z + beta * d_prev_transported
+
+        # Ensure descent
+        d = jnp.where(jnp.vdot(d, g_tan) > 0, -z, d)
+
+        # Safety: Limit search direction magnitude to prevent huge rotations
+        # in a single step (max 0.1 rad approx).
+        d_max = jnp.max(jnp.abs(d))
+        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
+
+        H = -jnp.cross(m, -d)
+        pg = jnp.vdot(g_raw, d)
+
+        tau = ls(
+            m,
+            pg,
+            H,
+            E,
+            U_new,
+            B_ext,
+            params["phi_tol"],
+            params["ls_eta1"],
+            params["ls_eta2"],
+            params["ls_C"],
+            params["ls_c"],
+            1.0,
+            15,
+        )
+
+        m_new = cayley_update(m, H, tau)
+        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+
+        return PCGExactState(m_new, U_new, U, g_tan, z, d, E, gnorm_inf_smooth, state.it + 1, H, tau, conv)
 
     return step
 
@@ -2189,6 +2359,8 @@ def make_minimizer(
         "pcg",
         "pcohen",
         "pcohen_hs",
+        "pcohen_exact",
+        "pcohen_hs_exact",
         "lbfgs",
         "plbfgs",
         "dplbfgs",
@@ -2424,6 +2596,48 @@ def make_minimizer(
                 E,
                 gnorm,
                 0,
+                jnp.array(False),
+            )
+
+    elif method == "pcohen_exact":
+        step_fn = make_pcohen_exact_minimizer(
+            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="pr"
+        )
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return PCGExactState(
+                m,
+                U,
+                U,
+                g,
+                g,
+                -g,
+                E,
+                gnorm,
+                0,
+                jnp.zeros_like(g),
+                jnp.array(1.0, dtype=m.dtype),
+                jnp.array(False),
+            )
+
+    elif method == "pcohen_hs_exact":
+        step_fn = make_pcohen_exact_minimizer(
+            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="hs"
+        )
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return PCGExactState(
+                m,
+                U,
+                U,
+                g,
+                g,
+                -g,
+                E,
+                gnorm,
+                0,
+                jnp.zeros_like(g),
+                jnp.array(1.0, dtype=m.dtype),
                 jnp.array(False),
             )
 

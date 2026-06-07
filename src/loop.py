@@ -534,6 +534,8 @@ def main() -> None:
             "pcg",
             "pcohen",
             "pcohen_hs",
+            "pcohen_exact",
+            "pcohen_hs_exact",
             "lbfgs",
             "plbfgs",
             "dplbfgs",

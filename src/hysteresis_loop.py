@@ -59,7 +59,7 @@ class LoopParams:
         mstep (float | None): Magnetization change threshold for saving snapshots.
         bias_type (str | None): Type of symmetry-breaking field ('circular', 'random').
         bias_strength (float): Strength of the bias field relative to saturation.
-        method (str): Minimizer algorithm (e.g., 'pcohen', 'bb', 'lbfgs', 'wg').
+        method (str): Minimizer algorithm (e.g., 'pcohen', 'pcohen_exact', 'lbfgs', 'wg').
         pc_iters (int): Inner iterations for preconditioned methods.
         pc_auto (bool): Enable adaptive preconditioning accuracy.
         pc_force_eta (float): Base constant for adaptive forcing sequence.
