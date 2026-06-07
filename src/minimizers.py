@@ -830,7 +830,7 @@ def make_tn_split_minimizer(
 ):
     """Create a Split Truncated Newton minimizer step function."""
     ls = make_armijo_ls(energy_only, solve_U)
-    apply_P_local, _ = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         m, U, E_prev = state.m, state.U, state.E
@@ -851,28 +851,24 @@ def make_tn_split_minimizer(
             return Cv_local - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + shift
 
         def solve_newton_system(max_iter=10):
-            def solve_P_local(rhs, iters):
-                y_inner = jnp.zeros_like(rhs)
-                r_p = rhs
-                p_p = r_p
-                rho_p = jnp.vdot(r_p, r_p)
-
-                def p_body(state_inner):
-                    y, r, p, rho, i = state_inner
-                    Ap = apply_P_local(m, g_raw * inv_M_rel, p)
-                    alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
-                    y_n = y + alpha * p
-                    r_n = r - alpha * Ap
-                    rho_n = jnp.vdot(r_n, r_n)
-                    p_n = r_n + (rho_n / (rho + 1e-30)) * p
-                    return y_n, r_n, p_n, rho_n, i + 1
-
-                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y_inner, r_p, p_p, rho_p, 0))
-                return res[0]
+            # Eisenstat-Walker forcing
+            eta_base = params.get("pc_force_eta", 0.5)
+            alpha = params.get("pc_force_alpha", 0.5)
+            pc_tol = jnp.where(
+                params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            )
 
             d_inner = jnp.zeros_like(g_tan)
             r_inner = -g_tan
-            z_inner = solve_P_local(r_inner, 5)
+            z_inner = solve_P(
+                m,
+                g_raw * inv_M_rel,
+                r_inner,
+                max_iter=params.get("pc_iters", 15),
+                tol=pc_tol,
+                reg=params.get("pc_reg", 0.0),
+                stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+            )
             p_inner = z_inner
             rho_inner = jnp.vdot(r_inner, z_inner)
 
@@ -886,7 +882,15 @@ def make_tn_split_minimizer(
                 alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
                 d_new = d + alpha * p
                 r_new = r - alpha * Hp
-                z_new = solve_P_local(r_new, 5)
+                z_new = solve_P(
+                    m,
+                    g_raw * inv_M_rel,
+                    r_new,
+                    max_iter=params.get("pc_iters", 15),
+                    tol=pc_tol,
+                    reg=params.get("pc_reg", 0.0),
+                    stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+                )
                 rho_new = jnp.vdot(r_new, z_new)
                 beta = rho_new / (rho + 1e-30)
                 p_new = z_new + beta * p
@@ -1084,9 +1088,16 @@ class WGState:
 
 
 def make_wen_goldfarb_minimizer(
-    energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, inv_M_rel: Array, cg_tol: float
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    local_grad_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
 ):
     """Create a Wen and Goldfarb (2009) curvilinear search minimizer."""
+    make_armijo_ls(energy_only, solve_U)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: WGState, B_ext: Array, params: dict) -> WGState:
         m, U, E_prev, C_k, Q_k = state.m, state.U, state.E, state.C, state.Q
@@ -1095,12 +1106,31 @@ def make_wen_goldfarb_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_s = g_raw * inv_M_rel
+        g_tan = tangent_grad(m, g_s)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Automated tuning of preconditioner accuracy (Forcing sequence)
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+        )
+
+        z = solve_P(
+            m,
+            g_s,
+            g_tan,
+            max_iter=params.get("pc_iters", 15),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+        )
+        jnp.max(jnp.abs(z))
 
         # Check convexity (curvature condition)
         s_k = (m - state.m_prev).reshape(-1)
-        y_k = (g_tan - state.g_prev).reshape(-1)
+        y_k = (z - state.g_prev).reshape(-1)
         sty = jnp.vdot(s_k, y_k)
         is_convex = sty > params.get("wg_threshold", 1e-6)
 
@@ -1131,8 +1161,8 @@ def make_wen_goldfarb_minimizer(
         tau_bb_clipped = jnp.clip(tau_bb, 1e-6, 1e3)
         tau = jnp.where(new_phase == 1, tau_bb_clipped, params.get("tau0", 0.1))
 
-        # f'(0) = -||g_tan||^2
-        f_prime_0 = -jnp.vdot(g_tan, g_tan)
+        # f'(0) = -||z||^2
+        f_prime_0 = -jnp.vdot(z, z)
 
         delta = 1e-4
         rho = 0.5
@@ -1144,7 +1174,7 @@ def make_wen_goldfarb_minimizer(
 
         def ls_body(ls_state):
             tau, _, _, _, it, _ = ls_state
-            H = -jnp.cross(m, g_tan)
+            H = -jnp.cross(m, z)
             m_next = cayley_update(m, H, tau)
 
             U_next = solve_U(m_next, U_new, params["phi_tol"])
