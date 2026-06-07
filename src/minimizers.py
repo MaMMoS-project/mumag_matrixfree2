@@ -4,12 +4,19 @@ Advanced micromagnetic energy minimizers:
 1. Cohen Conjugate Gradient (1989)
 2. Preconditioned Nonlinear Conjugate Gradient (Exl 2019)
 3. Preconditioned Cohen CG
-4. L-BFGS (Limited-memory BFGS)
+4. L-BFGS (Memory-limited Quasi-Newton)
 5. Truncated Newton (Newton-CG)
-6. Split Truncated Newton (Approximate Hessian)
-7. Preconditioned L-BFGS
+6. Split Truncated Newton
+7. Preconditioned L-BFGS (PL-BFGS)
 8. Wen and Goldfarb (2009) Curvilinear Search
 9. Preconditioned Barzilai-Borwein (PBB)
+10. Damped Preconditioned L-BFGS (D-PL-BFGS)
+11. Trust-Region Newton-CG (Steihaug-Toint)
+12. Riemannian Preconditioned L-BFGS (R-PL-BFGS)
+13. Anderson Accelerated Preconditioned Gradient (AA-PG)
+14. Preconditioned Nesterov Accelerated Gradient (PNAG)
+15. Preconditioned Barzilai-Borwein with Steihaug (PBBS)
+16. LBFGS-Preconditioned Cohen CG Hybrid
 """
 
 from __future__ import annotations
@@ -1708,8 +1715,24 @@ def make_aapg_minimizer(
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
 
+        # Automated tuning of preconditioner accuracy (Forcing sequence)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+        )
+
         # Preconditioned gradient z is our "residual" f(m)
-        z = solve_P(m, g_s, g_tan, params.get("pc_iters", 10), stagnation_nu=params.get("pc_stagnation_nu", 1e-3))
+        z = solve_P(
+            m,
+            g_s,
+            g_tan,
+            max_iter=params.get("pc_iters", 10),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
+        )
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Anderson Acceleration
