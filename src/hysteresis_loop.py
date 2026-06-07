@@ -25,7 +25,7 @@ from io_utils import (
     write_hysteresis_header,
     write_vtu_tetra,
 )
-from minimizers import make_minimizer, tangent_grad
+from minimizers import make_minimizer
 from poisson_solve import make_solve_U
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
@@ -77,9 +77,9 @@ class LoopParams:
     loop: bool = True
 
     gamma: int = 5
-    max_iter: int = 200
-    tau_f: float = 1e-6
-    eps_a: float = 1e-10
+    max_iter: int = 2000
+    tau_f: float = 1e-8
+    eps_a: float = 1e-12
     tau0: float = 1e-2
     tau_min: float = 1e-6
     tau_max: float = 1.0
@@ -96,7 +96,7 @@ class LoopParams:
     snapshot_every: int = 1
     verbose: bool = False
     Js_ref: float = 1.0
-    cg_maxiter: int = 400
+    cg_maxiter: int = 2000
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
     mfinal: float | None = None
@@ -106,11 +106,11 @@ class LoopParams:
 
     # Advanced Minimizer Defaults (P-Cohen Auto Strict)
     method: str = "pcohen"
-    pc_iters: int = 10
+    pc_iters: int = 15
     pc_auto: bool = True
-    pc_force_eta: float = 0.1
-    pc_force_alpha: float = 1.0
-    pc_stagnation_nu: float = 1e-3
+    pc_force_eta: float = 0.5
+    pc_force_alpha: float = 0.5
+    pc_stagnation_nu: float = 0.01
     memory: int = 5
     tn_iters: int = 5
     lr: float = 0.1
@@ -272,10 +272,6 @@ def run_hysteresis_loop(
     h = np.asarray(params.h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
-    # inv_M_rel: node-wise scaling to go from (total_energy_grad / V_mag)
-    # to (local_energy_density_grad / Js). This is a physical preconditioner.
-    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-
     energy_and_grad, energy_only, _, _ = make_energy_kernels(
         geom,
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
@@ -325,53 +321,13 @@ def run_hysteresis_loop(
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
-    # Calculate initial state (Issue #25)
-    U_init = solve_U(m, jnp.zeros(m.shape[0]), params.cg_tol)
-    E_init, g_raw_init = energy_and_grad(m, U_init, jnp.asarray(params.B_start * h))
-    Jpar_init = jax_compute_volume_averaged_J_parallel(
-        m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
-    )
-    m_avg_init = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
-
-    B_tesla_init = float(params.B_start) * params.Js_ref
-    J_tesla_init = float(Jpar_init) * params.Js_ref
-    mx_init, my_init, mz_init = map(float, m_avg_init)
-    E_si_init = float(E_init) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
-
     config_idx = 0
-    J_par_last_saved = Jpar_init
-
-    # Record initial state
-    history = [[B_tesla_init, J_tesla_init, mx_init, my_init, mz_init, E_si_init]]
-    append_hysteresis_row(
-        csv_path,
-        config_idx,
-        B_tesla_init,
-        J_tesla_init,
-        float(E_init),
-        float(jnp.max(jnp.abs(tangent_grad(m, g_raw_init * inv_M_rel)))),
-    )
-
-    # Save initial VTU if snapshots are enabled
-    if params.snapshot_every > 0 or params.mstep is not None:
-        vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla_init:+.4e}T.vtu"
-        write_vtu_tetra(
-            vtu_path,
-            points,
-            np.array(geom.conn),
-            point_data={
-                "m": np.array(m).astype(np.float32),
-                "U": np.array(U_init).astype(np.float32),
-            },
-            cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
-        )
+    J_par_last_saved = None
+    history = []
 
     total_time = 0.0
-    U = U_init
+    U = jnp.zeros(m.shape[0], dtype=m.dtype)
     for step_idx, Bmag in enumerate(B_vals):
-        # Skip redundant first step if it matches start
-        if step_idx == 0 and Bmag == params.B_start:
-            continue
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
         start_step = time.time()

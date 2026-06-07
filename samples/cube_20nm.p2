@@ -13,12 +13,9 @@ hz = 0.999848
 hstart = 2.0
 hfinal = -8.0
 hstep = -0.5
-loop = false
 mstep = 0.5
 mfinal = -0.2
 
 [minimizer]
-tol_fun = 1e-6
-
-[poisson]
-cg_maxiter = 400
+tol_fun = 1e-8
+eps_a = 1e-10

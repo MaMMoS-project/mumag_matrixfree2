@@ -441,7 +441,7 @@ def make_solve_U(
     precond_type: PrecondType = "jacobi",
     order: int = 3,
     chunk_elems: int = 200_000,
-    cg_maxiter: int = 400,
+    cg_maxiter: int = 2000,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",

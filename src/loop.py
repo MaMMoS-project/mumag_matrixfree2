@@ -440,7 +440,7 @@ def main() -> None:
     ap.add_argument(
         "--cg-maxiter",
         type=int,
-        default=400,
+        default=2000,
         help="Maximum iterations for the Poisson PCG solver.",
     )
     ap.add_argument(
@@ -479,19 +479,19 @@ def main() -> None:
     ap.add_argument(
         "--max-iter",
         type=int,
-        default=200,
+        default=2000,
         help="Maximum iterations for the energy minimizer per field step.",
     )
     ap.add_argument(
         "--tau-f",
         type=float,
-        default=1e-6,
+        default=1e-8,
         help="Relative energy convergence tolerance for the minimizer.",
     )
     ap.add_argument(
         "--eps-a",
         type=float,
-        default=1e-10,
+        default=1e-12,
         help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
     )
     ap.add_argument(
@@ -547,8 +547,8 @@ def main() -> None:
     ap.add_argument(
         "--pc-iters",
         type=int,
-        default=6,
-        help="Inner iterations for preconditioning (default: 6).",
+        default=15,
+        help="Inner iterations for preconditioning (default: 15).",
     )
     ap.add_argument(
         "--pc-auto",
@@ -565,20 +565,20 @@ def main() -> None:
     ap.add_argument(
         "--pc-force-eta",
         type=float,
-        default=0.1,
-        help="Base forcing parameter for adaptive preconditioning (default: 0.1).",
+        default=0.5,
+        help="Base forcing parameter for adaptive preconditioning (default: 0.5).",
     )
     ap.add_argument(
         "--pc-force-alpha",
         type=float,
-        default=1.0,
-        help="Exponent forcing parameter for adaptive preconditioning (default: 1.0).",
+        default=0.5,
+        help="Exponent forcing parameter for adaptive preconditioning (default: 0.5).",
     )
     ap.add_argument(
         "--pc-stagnation-nu",
         type=float,
-        default=1e-3,
-        help="Relative threshold for quadratic model stagnation detection (default: 1e-3).",
+        default=0.01,
+        help="Relative threshold for quadratic model stagnation detection (default: 0.01).",
     )
     ap.add_argument(
         "--memory",

@@ -167,18 +167,19 @@ bias_strength = 0.01 ; Magnitude relative to saturation
 
 [minimizer]
 method = pcohen     ; Algorithm: pcohen, bb, lbfgs, etc.
-tol_fun = 1e-6      ; Energy convergence tolerance (tau_f)
-eps_a = 1e-10       ; Absolute tangent gradient tolerance
-max_iter = 200      ; Max iterations per field step
-pc_iters = 30       ; Inner preconditioning iterations
+tol_fun = 1e-8      ; Energy convergence tolerance (tau_f)
+eps_a = 1e-12       ; Absolute tangent gradient tolerance
+max_iter = 2000     ; Max iterations per field step
+pc_iters = 15       ; Inner preconditioning iterations
 pc_auto = true      ; Enable adaptive forcing sequence
-pc_force_eta = 0.1  ; Forcing base (Eisenstat-Walker)
-pc_force_alpha = 1.0; Forcing exponent (Eisenstat-Walker)
+pc_force_eta = 0.5  ; Forcing base (Eisenstat-Walker)
+pc_force_alpha = 0.5; Forcing exponent (Eisenstat-Walker)
+pc_stagnation_nu = 0.01; Stagnation detection threshold
 phi_extrapolate = true; Enable potential extrapolation
 memory = 5          ; BFGS history
 
 [poisson]
-cg_maxiter = 400    ; Poisson solver max iterations
+cg_maxiter = 2000   ; Poisson solver max iterations
 cg_tol = 1e-8       ; Poisson solver relative tolerance
 reg = 1e-12         ; Poisson regularization (poisson_reg)
 ```
@@ -198,6 +199,7 @@ The file expects 6 columns (Classic format):
 ### Key Parameters: mfinal, mstep, and tau limits
 - **`mfinal` (Tesla)**: The threshold for early termination of the field sweep. If the volume-averaged magnetization component parallel to the field ($J_{par}$) drops to or below this value, the simulation stops. Default: None (no early stopping).
 - **`mstep` (Tesla)**: The threshold for saving state snapshots. A new `.vtu` file and `config` index are generated only when the change in $J_{par}$ since the last snapshot exceeds this value. Default: None (falls back to `--snapshot-every`).
+- **`Adaptive Poisson Tolerance`**: To ensure stable energy minimization, the Poisson solver's target precision (`phi_tol`) is automatically adjusted to be one order of magnitude stricter than the energy convergence target: `phi_tol = min(cg_tol, 0.1 * tau_f)`. This prevents numerical noise in the demagnetization field from stalling the minimizer.
 - **`bias_type` & `bias_strength`**: (In `[field]` section) Used for symmetry breaking to trigger specific reversal modes (e.g., curling in spheres). `bias_type` can be `circular` or `random`. `bias_strength` is the magnitude relative to saturation (e.g., 0.01).
 - **`tau_min` & `tau_max`**: Bounds for the Barzilai-Borwein step size. `tau_max` is particularly important as it limits the maximum rotation angle allowed in a single iteration. Default: `1e-6` to `1.0`.
 
@@ -248,25 +250,25 @@ The primary entry point for running hysteresis loop simulations.
 | `--precond-type` | choice | Poisson preconditioner: `amgcl` (default), `jacobi`, `chebyshev`, or `amg`. |
 | `--geom-backend` | choice | Gradient info strategy: `stored_JinvT` (default), `stored_grad_phi`, or `on_the_fly`. |
 | `--chunk-elems` | int | Elements processed per loop iteration (default: 200,000). Controls GPU memory. |
-| `--cg-maxiter` | int | Maximum iterations for the Poisson PCG solver (default: 400). |
+| `--cg-maxiter` | int | Maximum iterations for the Poisson PCG solver (default: 2000). |
 | `--cg-tol` | float | Relative residual tolerance for the Poisson solver (default: 1e-8). |
 | `--poisson-reg` | float | Tikhonov regularization constant for Poisson diagonal (default: 1e-12). |
 | `--h-dir` | CSV | Applied field direction as unit vector "hx,hy,hz" (default: 0,0,1). |
 | `--B-start` | float | Starting magnitude of the applied field (Tesla, default: -1.0). |
 | `--B-end` | float | Final magnitude of the applied field (Tesla, default: 1.0). |
 | `--dB` | float | Field step size magnitude (Tesla, default: 0.05). |
-| `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 200). |
-| `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-6). |
-| `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-10). |
+| `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 2000). |
+| `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-8). |
+| `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-12). |
 | `--method` | choice | Energy minimizer algorithm: `pcohen` (default), `bb`, `lbfgs`, etc. |
-| `--pc-iters` | int | Inner iterations for preconditioning (default: 8). |
+| `--pc-iters` | int | Inner iterations for preconditioning (default: 15). |
 | `--pc-auto` | flag | Enable automated tuning of preconditioning accuracy (default: True). |
 | `--pc-no-auto`| flag | Disable automated tuning of preconditioning accuracy. |
-| `--pc-force-eta`| float | Base forcing parameter for adaptive preconditioning (default: 0.1). |
-| `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 1.0). |
+| `--pc-force-eta`| float | Base forcing parameter for adaptive preconditioning (default: 0.5). |
+| `--pc-force-alpha`| float | Exponent forcing parameter for adaptive preconditioning (default: 0.5). |
 | `--pc-tol` | float | Absolute tolerance target for preconditioning (default: 0.0). |
 | `--pc-rel-tol` | float | Relative tolerance reduction goal for preconditioning (default: 0.0). |
-| `--pc-stagnation-nu` | float | Relative threshold $\nu$ for quadratic model stagnation detection (default: 1e-3). |
+| `--pc-stagnation-nu` | float | Relative threshold $\nu$ for quadratic model stagnation detection (default: 0.01). |
 | `--phi-extrapolate`| flag | Enable linear extrapolation of scalar potential for faster Poisson solves (default: True). |
 | `--no-phi-extrapolate`| flag | Disable linear extrapolation of scalar potential. |
 | `--memory` | int | History size for L-BFGS and Anderson (default: 5). |
