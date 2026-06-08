@@ -57,6 +57,7 @@ The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses p
 - **`pcohen_lbfgs`**: LBFGS-Preconditioned Cohen CG Hybrid. Superior for complex landscapes.
 - **`tr`**: Trust-Region Newton-CG (Steihaug-Toint).
 - **`aapg`**: Anderson Accelerated Preconditioned Gradient.
+- **`aapg_exact`**: Anderson Accelerated Preconditioned Gradient with Cayley-based vector transport.
 - **`pnag`**: Preconditioned Nesterov Accelerated Gradient.
 - **`wg`**: Algorithm 2 of Wen and Goldfarb (2009) - Non-monotone Curvilinear Search with BB steps.
 
