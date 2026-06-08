@@ -1939,6 +1939,147 @@ class AAState:
         return cls(*children)
 
 
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class AAExactState:
+    """State for the Exact Anderson Accelerated Preconditioned Gradient minimizer."""
+
+    m: Array
+    U: Array
+    U_prev: Array
+    E: Array
+    gnorm: Array
+    X_hist: Array  # History of magnetization states m
+    F_hist: Array  # History of preconditioned gradients z
+    H_hist: Array  # History of rotation torques H
+    tau_hist: Array  # History of step sizes tau
+    it: jnp.int32
+    converged: Array
+
+    def tree_flatten(self):
+        """Flatten the AAExactState for JAX tree operations."""
+        children = (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.E,
+            self.gnorm,
+            self.X_hist,
+            self.F_hist,
+            self.H_hist,
+            self.tau_hist,
+            self.it,
+            self.converged,
+        )
+        return children, None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Unflatten the AAExactState for JAX tree operations."""
+        return cls(*children)
+
+
+def make_aapg_exact_minimizer(
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    local_grad_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+    memory: int = 1,
+):
+    """Create an Anderson Accelerated Preconditioned Gradient minimizer with Cayley transport."""
+    ls = make_armijo_ls(energy_only, solve_U)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+
+    def step(state: AAExactState, B_ext: Array, params: dict) -> AAExactState:
+        m, U, E_prev = state.m, state.U, state.E
+
+        # 1. Standard Step
+        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
+        U_new = solve_U(m, U_guess, params["phi_tol"])
+        E, g_raw = energy_and_grad(m, U_new, B_ext)
+        g_s = g_raw * inv_M_rel
+        g_tan = tangent_grad(m, g_s)
+
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha = params.get("pc_force_alpha", 0.5)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+        pc_tol = jnp.where(
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+        )
+        z = solve_P(
+            m,
+            g_s,
+            g_tan,
+            max_iter=params.get("pc_iters", 15),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+        )
+
+        # 2. Cayley Transport History (Memory=1)
+        X_hist_trans = jnp.where(
+            state.it > 0, cayley_transport(state.X_hist, state.H_hist, state.tau_hist), state.X_hist
+        )
+        F_hist_trans = jnp.where(
+            state.it > 0, cayley_transport(state.F_hist, state.H_hist, state.tau_hist), state.F_hist
+        )
+
+        # 3. Acceleration logic (Memory=1)
+        delta_X = m - X_hist_trans[0]
+        delta_F = z - F_hist_trans[0]
+
+        gamma = jnp.vdot(z, delta_F) / (jnp.vdot(delta_F, delta_F) + 1e-30)
+        m_aa = (m - gamma * delta_X) / jnp.linalg.norm(m - gamma * delta_X, axis=1, keepdims=True)
+        z_aa = z - gamma * delta_F
+
+        m_next, z_next = lax.cond(state.it > 1, lambda _: (m_aa, z_aa), lambda _: (m, z), operand=None)
+
+        # 4. Descent
+        d = -z_next
+        d = jnp.where(jnp.vdot(d, g_tan) > 0, -z, d)
+
+        d_max = jnp.max(jnp.abs(d))
+        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
+
+        H = -jnp.cross(m, -d)
+        pg = jnp.vdot(g_raw, d)
+
+        tau = ls(
+            m,
+            pg,
+            H,
+            E,
+            U_new,
+            B_ext,
+            params["phi_tol"],
+            params["ls_eta1"],
+            params["ls_eta2"],
+            params["ls_C"],
+            params["ls_c"],
+            1.0,
+            15,
+        )
+
+        m_new = cayley_update(m, H, tau)
+        conv = check_convergence(
+            state.it, E, E_prev, m, m_new, jnp.max(jnp.abs(z_next)), params["tau_f"], params["eps_a"]
+        )
+
+        # Store history
+        X_next = state.X_hist.at[0].set(m)
+        F_next = state.F_hist.at[0].set(z)
+        H_next = state.H_hist.at[0].set(H)
+        tau_next = state.tau_hist.at[0].set(tau)
+
+        return AAExactState(
+            m_new, U_new, U, E, jnp.max(jnp.abs(z_next)), X_next, F_next, H_next, tau_next, state.it + 1, conv
+        )
+
+    return step
+
+
 def make_aapg_minimizer(
     energy_and_grad: Callable,
     energy_only: Callable,
