@@ -105,7 +105,7 @@ class LoopParams:
     bias_strength: float = 0.0
 
     # Advanced Minimizer Defaults (P-Cohen Auto Strict)
-    method: str = "pcohen"
+    method: str = "pcohen_hs"
     pc_iters: int = 15
     pc_auto: bool = True
     pc_force_eta: float = 0.5

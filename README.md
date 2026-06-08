@@ -41,8 +41,8 @@ The package implements a **Curvilinear Search Method** specifically tailored for
 The default optimizer is **Preconditioned Cohen CG (Strict Auto)**, which uses physics-based preconditioning for the exchange interaction and adaptive accuracy tuning.
 
 #### Choice of Optimizers
-- **`pcohen` (Default)**: Preconditioned Cohen Conjugate Gradient with Polak-Ribière update. Superior for most problems.
-- **`pcohen_hs`**: Preconditioned Cohen CG with Hestenes-Stiefel update.
+- **`pcohen_hs` (Default)**: Preconditioned Cohen CG with Hestenes-Stiefel update.
+- **`pcohen`**: Preconditioned Cohen Conjugate Gradient with Polak-Ribière update.
 - **`pcohen_exact`**: Mathematically rigorous Cohen CG (1989) using explicit Cayley-based vector transport to maintain exact conjugacy.
 - **`pcohen_hs_exact`**: Rigorous Cohen CG using Hestenes-Stiefel update and vector transport.
 - **`cohen`**: Cohen CG without preconditioning.
@@ -172,7 +172,7 @@ bias_type = circular ; Symmetry-breaking field ('circular' or 'random')
 bias_strength = 0.01 ; Magnitude relative to saturation
 
 [minimizer]
-method = pcohen     ; Algorithm: pcohen, pcohen_exact, lbfgs, etc.
+method = pcohen_hs     ; Algorithm: pcohen, pcohen_exact, lbfgs, etc.
 tol_fun = 1e-8      ; Energy convergence tolerance (tau_f)
 eps_a = 1e-12       ; Absolute tangent gradient tolerance
 max_iter = 2000     ; Max iterations per field step
@@ -266,7 +266,7 @@ The primary entry point for running hysteresis loop simulations.
 | `--max-iter` | int | Maximum iterations for the energy minimizer per field step (default: 2000). |
 | `--tau-f` | float | Relative energy convergence tolerance for the minimizer (default: 1e-8). |
 | `--eps-a` | float | Absolute tangent gradient norm tolerance (default: 1e-12). |
-| `--method` | choice | Energy minimizer algorithm: `pcohen` (default), `pcohen_exact`, `lbfgs`, etc. |
+| `--method` | choice | Energy minimizer algorithm: `pcohen_hs` (default), `pcohen_exact`, `lbfgs`, etc. |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 15). |
 | `--pc-auto` | flag | Enable automated tuning of preconditioning accuracy (default: True). |
 | `--pc-no-auto`| flag | Disable automated tuning of preconditioning accuracy. |

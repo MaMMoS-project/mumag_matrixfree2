@@ -528,7 +528,7 @@ def main() -> None:
     ap.add_argument(
         "--method",
         type=str,
-        default="pcohen",
+        default="pcohen_hs",
         choices=[
             "cohen",
             "pcg",
