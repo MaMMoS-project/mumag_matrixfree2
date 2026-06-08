@@ -619,7 +619,7 @@ def make_pcohen_exact_minimizer(
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: PCGExactState, B_ext: Array, params: dict) -> PCGExactState:
-        m, U, g_prev, z_prev, d_prev, E_prev = (
+        m, U, _g_prev, z_prev, d_prev, E_prev = (
             state.m,
             state.U,
             state.g_tan,
@@ -669,7 +669,7 @@ def make_pcohen_exact_minimizer(
         if beta_type == "pr":
             # Polak-Ribiere (PR) Beta with Exact Transport
             num = jnp.vdot(z, z - z_prev_transported)
-            den = jnp.vdot(z_prev, g_prev) + 1e-30  # Note: den uses previous space norms
+            den = jnp.vdot(z_prev, z_prev) + 1e-30
             beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
         else:
             # Hestenes-Stiefel (HS) Beta with Exact Transport
