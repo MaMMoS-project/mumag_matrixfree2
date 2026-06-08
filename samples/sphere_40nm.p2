@@ -20,6 +20,6 @@ bias_type = circular
 bias_strength = 1.0e-5
 
 [minimizer]
-method = aapg
+method = aapg_exact
 tol_fun = 1e-8
 eps_a = 1e-12

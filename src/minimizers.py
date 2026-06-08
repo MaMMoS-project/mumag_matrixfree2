@@ -2729,8 +2729,8 @@ def make_minimizer(
                 gnorm,
                 jnp.zeros((memory, m.shape[0], 3)),
                 jnp.zeros((memory, m.shape[0], 3)),
-                jnp.zeros((m.shape[0], 3)),
-                jnp.array(1.0, dtype=m.dtype),
+                jnp.zeros((memory, m.shape[0], 3)),
+                jnp.zeros(memory, dtype=m.dtype),
                 0,
                 jnp.array(False),
             )

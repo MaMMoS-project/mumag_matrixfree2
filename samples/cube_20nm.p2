@@ -17,6 +17,6 @@ mstep = 0.5
 mfinal = -0.2
 
 [minimizer]
-method = wg
+method = aapg_exact
 tol_fun = 1e-8
 eps_a = 1e-10
