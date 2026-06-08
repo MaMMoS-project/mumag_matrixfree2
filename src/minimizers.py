@@ -2518,6 +2518,7 @@ def make_minimizer(
         "pbb",
         "tr",
         "aapg",
+        "aapg_exact",
         "pnag",
         "pbbs",
         "pcohen_lbfgs",
@@ -2709,6 +2710,27 @@ def make_minimizer(
                 gnorm,
                 jnp.zeros((memory, m.shape[0], 3)),
                 jnp.zeros((memory, m.shape[0], 3)),
+                0,
+                jnp.array(False),
+            )
+
+    elif method == "aapg_exact":
+        memory = 1
+        step_fn = make_aapg_exact_minimizer(
+            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, memory=memory
+        )
+
+        def init_state_fn(m, U, E, g, gnorm):
+            return AAExactState(
+                m,
+                U,
+                U,
+                E,
+                gnorm,
+                jnp.zeros((memory, m.shape[0], 3)),
+                jnp.zeros((memory, m.shape[0], 3)),
+                jnp.zeros((m.shape[0], 3)),
+                jnp.array(1.0, dtype=m.dtype),
                 0,
                 jnp.array(False),
             )
