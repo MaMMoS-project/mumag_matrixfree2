@@ -619,7 +619,7 @@ def make_pcohen_exact_minimizer(
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: PCGExactState, B_ext: Array, params: dict) -> PCGExactState:
-        m, U, _g_prev, z_prev, d_prev, E_prev = (
+        m, U, g_prev, z_prev, d_prev, E_prev = (
             state.m,
             state.U,
             state.g_tan,
@@ -660,22 +660,28 @@ def make_pcohen_exact_minimizer(
             cayley_transport(d_prev, state.H_prev, state.tau_prev),
             jnp.zeros_like(d_prev),
         )
-        z_prev_transported = jnp.where(
+        jnp.where(
             state.it > 0,
             cayley_transport(z_prev, state.H_prev, state.tau_prev),
             jnp.zeros_like(z_prev),
         )
+        g_prev_transported = jnp.where(
+            state.it > 0,
+            cayley_transport(g_prev, state.H_prev, state.tau_prev),
+            jnp.zeros_like(g_prev),
+        )
+
+        diff_g = g_tan - g_prev_transported
 
         if beta_type == "pr":
             # Polak-Ribiere (PR) Beta with Exact Transport
-            num = jnp.vdot(z, z - z_prev_transported)
-            den = jnp.vdot(z_prev, z_prev) + 1e-30
+            num = jnp.vdot(z, diff_g)
+            den = jnp.vdot(z_prev, g_prev_transported) + 1e-30
             beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
         else:
             # Hestenes-Stiefel (HS) Beta with Exact Transport
-            diff_z = z - z_prev_transported
-            num = jnp.vdot(z, diff_z)
-            den = jnp.vdot(d_prev_transported, diff_z) + 1e-30
+            num = jnp.vdot(z, diff_g)
+            den = jnp.vdot(d_prev_transported, diff_g) + 1e-30
             beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         # Update search direction
