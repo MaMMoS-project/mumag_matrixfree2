@@ -115,6 +115,37 @@ To handle meshes with millions of elements on GPUs with limited memory, element-
 - Smaller values reduce peak GPU memory usage but may slightly increase overhead.
 - This allows simulations to scale far beyond the memory limits of traditional matrix-assembly FEM codes.
 
+### Airbox / Shell Configuration
+The demagnetization field calculation requires a large exterior "airbox" to accurately capture the magnetic scalar potential as it decays towards infinity. The `src/loop.py` and `src/add_shell.py` tools use a **graded homothetic shell** approach to add this airbox efficiently.
+
+#### Key Parameters & Defaults
+By default, simply passing `--add-shell` uses: `--layers 4`, `--K 1.3`, and `--beta 1.0` (with `h0` inferred from the core mesh's surface).
+
+| Parameter | Default | Description | Impact on Element Count |
+| :--- | :--- | :--- | :--- |
+| `--layers` | `4` | Number of discrete shell layers. | **Moderate**: Adds elements. With `beta=1.0`, each layer adds roughly the same number of elements. With `beta > 1.0`, outer layers add progressively fewer elements. |
+| `--K` | `1.3` | Geometric growth factor for layer thickness. | **Low**: Controls how fast the shell volume expands. When combined with `beta=1.0`, it scales the target element size proportionally, maintaining a stable element density per layer. |
+| `--beta` | `1.0` | Mesh-size/geometry coupling exponent. | **Extreme**: The primary dial for total element count. (See detailed explanation below). |
+| `--h0` | *Auto* | Target edge length at the body-air interface. | **High**: The foundation for all shell element sizes. A smaller `h0` globally increases the element count across all layers by a factor of roughly $\approx O(1/h_0^3)$. |
+| `--hmax` | *None* | Maximum allowed edge length at the boundary. | **Extreme (if reached)**: Capping the element size in the massive outer layers forces the mesher to fill vast physical volumes with small elements, causing a severe element explosion. |
+
+#### Understanding the `--beta` Parameter
+The `--beta` parameter dictates the relationship between the physical expansion of the shell layers (controlled by `K`) and the growth of the tetrahedral elements inside them. The target edge length for a layer is calculated as $h_{layer} = h_0 \cdot (K^\beta)^{layer}$. 
+- **`beta = 1.0` (Linear / Default)**: The element size grows at the exact same rate as the layer volume. The number of elements remains roughly constant across each successive layer.
+- **`beta > 1.0` (Aggressive Grading)**: The element size grows *faster* than the layer volume (e.g., `beta=1.5`). The outermost layers will be meshed with very few, massive tetrahedra. This drastically reduces the total number of elements while still covering a vast physical volume.
+- **`beta < 1.0` (Conservative Grading)**: The element size grows *slower* than the layer volume. The massive outer layers will be densely packed with elements, leading to a dramatic and rapid increase in the total element count.
+
+#### Recommendations for Efficient Wide Airboxes
+To capture the far-field behavior with minimal computational overhead, you want an airbox that is physically wide but contains few, large elements far from the source.
+
+**Suggested High-Efficiency Wide Airbox:**
+```bash
+--add-shell --layers 8 --K 1.6 --beta 1.5
+```
+- **Total Extent**: $\approx 43\times$ the body size ($1.6^8$).
+- **Mesh Grading**: The elements grow significantly faster than the geometry, ensuring the outer regions are sparsely sampled.
+- **Benefit**: This provides excellent accuracy for the demagnetization field with only a small increase in the total number of degrees of freedom.
+
 ## 3. Usage & Examples
 
 ### Running the Sample
