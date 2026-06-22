@@ -33,6 +33,29 @@ from jax import lax
 Array = jnp.ndarray
 
 # -----------------------------------------------------------------------------
+# Global callback variables for tracking performance metrics and preconditioning mapping
+# -----------------------------------------------------------------------------
+_preco_callback = None
+_eval_callback = None
+_PRECOND_MAP = {}
+
+def register_preco_callback(cb):
+    global _preco_callback
+    _preco_callback = cb
+
+def _trigger_preco_callback(it):
+    if _preco_callback is not None:
+        _preco_callback(it)
+
+def register_eval_callback(cb):
+    global _eval_callback
+    _eval_callback = cb
+
+def _trigger_eval_callback():
+    if _eval_callback is not None:
+        _eval_callback()
+
+# -----------------------------------------------------------------------------
 # Common Utilities
 # -----------------------------------------------------------------------------
 
@@ -125,7 +148,7 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
 
         s_start = jnp.asarray(s0, dtype=m.dtype)
         init_exp = (s_start, jnp.zeros_like(s_start), jnp.int32(0), jnp.array(False))
-        s_exp, s_min_exp, _, _ = lax.while_loop(exp_cond, exp_body, init_exp)
+        s_exp, s_min_exp, it_exp, _ = lax.while_loop(exp_cond, exp_body, init_exp)
 
         def con_cond(state):
             s, it, done = state
@@ -139,13 +162,27 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
             return (s_next, it + 1, stop)
 
         init_con = (s_exp, jnp.int32(0), jnp.array(False))
-        s_final, _, _ = lax.while_loop(con_cond, con_body, init_con)
+        s_final, it_con, _ = lax.while_loop(con_cond, con_body, init_con)
 
         # Final safety: if it still doesn't decrease, return a tiny step or 0
         final_d = D(s_final)
         s_safe = jnp.where(final_d >= 0, s_final, 0.0)
 
-        return jnp.where(pg >= 0, 0.0, s_safe)
+        # Calculate metrics for logging
+        ls_iters = it_exp + it_con
+        ls_evals = ls_iters + 1
+
+        final_iters = jnp.where(pg >= 0, jnp.int32(0), ls_iters)
+        final_evals = jnp.where(pg >= 0, jnp.int32(0), ls_evals)
+        final_it_exp = jnp.where(pg >= 0, jnp.int32(0), it_exp)
+        final_it_con = jnp.where(pg >= 0, jnp.int32(0), it_con)
+        final_tau = jnp.where(pg >= 0, 0.0, s_safe)
+
+        # Report to standard output during JIT execution
+        jax.debug.print("Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
+                        iters=final_iters, it_exp=final_it_exp, it_con=final_it_con, evals=final_evals, tau=final_tau)
+
+        return final_tau
 
     return jax.jit(armijo_ls)
 
@@ -155,52 +192,55 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
 # -----------------------------------------------------------------------------
 
 
-def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
+def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_prec: Array = None):
     """Create the Hessian-based preconditioner operation Py = g."""
+    if inv_M_prec is None:
+        inv_M_prec = _PRECOND_MAP.get(id(inv_M_rel), inv_M_rel)
 
-    def apply_P(m: Array, g_raw_scaled: Array, v: Array, reg: float = 0.0) -> Array:
-        """Action of the approximate Hessian P on vector v, scaled by inv_M_rel."""
+    def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0) -> Array:
+        """Action of the extensive Hessian P on vector v.
+        NOTE: No inv_M_rel scaling here to preserve symmetry!"""
         Cv = local_grad_only(v)
-        Cv_s = Cv * inv_M_rel
-        g_s = g_raw_scaled
 
-        m_dot_Cv_s = jnp.sum(m * Cv_s, axis=1, keepdims=True)
-        comp2 = m_dot_Cv_s * m
+        m_dot_Cv = jnp.sum(m * Cv, axis=1, keepdims=True)
+        comp2 = m_dot_Cv * m
 
-        m_dot_g_s = jnp.sum(m * g_s, axis=1, keepdims=True)
-        comp3 = m_dot_g_s * v
+        m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
+        comp3 = m_dot_g * v
 
         # Optional Regularization: Add a small diagonal shift.
         # If reg=0, we rely on Steihaug exit for indefiniteness.
-        return Cv_s - comp2 - comp3 + reg * v
+        return Cv - comp2 - comp3 + reg * v
 
     def solve_Py_g(
         m: Array,
-        g_raw_scaled: Array,
-        g_tan: Array,
+        g_ext: Array,
+        g_tan_ext: Array,
         max_iter: int = 20,
         tol: float = 0.0,
         reg: float = 0.0,
         stagnation_nu: float = 1e-3,
     ) -> Array:
-        """Solve Py = g_tan for y using linear CG with Steihaug-style negative curvature and stagnation exit."""
+        """Solve Py = g_tan for y using Preconditioned Conjugate Gradient (PCG) with Steihaug-style exit.
+        The preconditioner is inv_M_prec, restoring the L2 metric for irregular meshes."""
 
         def inner_op(v):
-            return apply_P(m, g_raw_scaled, v, reg)
+            return apply_P(m, g_ext, v, reg)
 
-        y = jnp.zeros_like(g_tan)
-        r = g_tan
-        p = r
-        rho = jnp.vdot(r, r)
-        target_rho = tol**2
+        y = jnp.zeros_like(g_tan_ext)
+        r = g_tan_ext
+        z = r * inv_M_prec
+        p = z
+        rho = jnp.vdot(r, z)
+        target_rho = (tol**2) * rho
 
         def cond_fun(state):
-            y_loop, r_loop, p_loop, rho_loop, Q_loop, it_loop, done = state
+            y_loop, r_loop, z_loop, p_loop, rho_loop, Q_loop, it_loop, done = state
             # Exit if iterations reached, residual small, blowup, or done (neg_curv or stagnation)
             return (it_loop < max_iter) & (rho_loop > target_rho) & (rho_loop > 1e-25) & (rho_loop < 1e20) & (~done)
 
         def body_fun(state):
-            y_loop, r_loop, p_loop, rho_loop, Q_loop, it_loop, _ = state
+            y_loop, r_loop, z_loop, p_loop, rho_loop, Q_loop, it_loop, _ = state
             Ap = inner_op(p_loop)
             pAp = jnp.vdot(p_loop, Ap)
 
@@ -218,24 +258,34 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array):
 
             y_next = jnp.where(done_now, y_loop, y_loop + alpha * p_loop)
             r_next = jnp.where(done_now, r_loop, r_loop - alpha * Ap)
+            z_next = r_next * inv_M_prec
 
-            rho_next = jnp.vdot(r_next, r_next)
-            p_next = r_next + (rho_next / (rho_loop + 1e-30)) * p_loop
+            rho_next = jnp.vdot(r_next, z_next)
+            # p_next only updates if not done
+            p_next = jnp.where(done_now, p_loop, z_next + (rho_next / (rho_loop + 1e-30)) * p_loop)
             Q_next = Q_loop + dq
 
-            return y_next, r_next, p_next, rho_next, Q_next, it_loop + 1, done_now
+            return y_next, r_next, z_next, p_next, rho_next, Q_next, it_loop + 1, done_now
 
-        state_init = (y, r, p, rho, 0.0, 0, False)
+        state_init = (y, r, z, p, rho, 0.0, 0, False)
         final_state = lax.while_loop(cond_fun, body_fun, state_init)
         y_final = final_state[0]
 
+        # Count CG iterations (now at index 6 of final_state)
+        jax.debug.callback(_trigger_preco_callback, final_state[6])
+
+        # Fallback direction (preconditioned gradient)
+        z_fallback = g_tan_ext * inv_M_prec
+
         # Safety Clipping: prevent preconditioned direction from exploding
         y_norm = jnp.linalg.norm(y_final)
-        g_norm = jnp.linalg.norm(g_tan)
-        y_final = jnp.where(y_norm > 10.0 * g_norm, y_final * (10.0 * g_norm / (y_norm + 1e-30)), y_final)
+        z_norm = jnp.linalg.norm(z_fallback)
+        y_final = jnp.where(y_norm > 10.0 * z_norm, y_final * (10.0 * z_norm / (y_norm + 1e-30)), y_final)
 
         # Fallback to gradient if not a descent direction
-        return jnp.where(jnp.vdot(y_final, g_tan) > 1e-12, y_final, g_tan)
+        return jnp.where(jnp.vdot(y_final, g_tan_ext) > 1e-12, y_final, z_fallback)
+
+    return apply_P, solve_Py_g
 
     return apply_P, solve_Py_g
 
@@ -406,25 +456,26 @@ def make_pcg_minimizer(
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
-        m, U, g_prev, _y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
+        m, U, g_prev, y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
         y = solve_P(
             m,
-            g_raw * inv_M_rel,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -512,19 +563,20 @@ def make_pcohen_minimizer(
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
         y = solve_P(
             m,
-            g_raw * inv_M_rel,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -556,8 +608,8 @@ def make_pcohen_minimizer(
 
         # Safety: Limit search direction magnitude to prevent huge rotations
         # in a single step (max 0.1 rad approx).
-        d_max = jnp.max(jnp.abs(d))
-        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
+        #d_max = jnp.max(jnp.abs(d))
+        #d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
 
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
@@ -631,21 +683,21 @@ def make_pcohen_exact_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 15),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -692,8 +744,8 @@ def make_pcohen_exact_minimizer(
 
         # Safety: Limit search direction magnitude to prevent huge rotations
         # in a single step (max 0.1 rad approx).
-        d_max = jnp.max(jnp.abs(d))
-        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
+        #d_max = jnp.max(jnp.abs(d))
+        #d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
 
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
@@ -901,6 +953,7 @@ def make_tn_minimizer(
     apply_P_local, _ = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
+        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, E_prev = state.m, state.U, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
@@ -928,7 +981,8 @@ def make_tn_minimizer(
 
                 def p_body(state_inner):
                     y, r, p, rho, i = state_inner
-                    Ap = apply_P_local(m, g_raw * inv_M_rel, p)
+                    Ap_ext = apply_P_local(m, g_raw, p * inv_inv_M)
+                    Ap = Ap_ext * inv_M_rel
                     alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
                     y_n = y + alpha * p
                     r_n = r - alpha * Ap
@@ -1009,6 +1063,7 @@ def make_tn_split_minimizer(
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
+        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, E_prev = state.m, state.U, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
@@ -1031,15 +1086,15 @@ def make_tn_split_minimizer(
             eta_base = params.get("pc_force_eta", 0.5)
             alpha = params.get("pc_force_alpha", 0.5)
             pc_tol = jnp.where(
-                params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+                params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
             )
 
             d_inner = jnp.zeros_like(g_tan)
             r_inner = -g_tan
             z_inner = solve_P(
                 m,
-                g_raw * inv_M_rel,
-                r_inner,
+                g_raw,
+                r_inner * inv_inv_M,
                 max_iter=params.get("pc_iters", 15),
                 tol=pc_tol,
                 reg=params.get("pc_reg", 0.0),
@@ -1060,8 +1115,8 @@ def make_tn_split_minimizer(
                 r_new = r - alpha * Hp
                 z_new = solve_P(
                     m,
-                    g_raw * inv_M_rel,
-                    r_new,
+                    g_raw,
+                    r_new * inv_inv_M,
                     max_iter=params.get("pc_iters", 15),
                     tol=pc_tol,
                     reg=params.get("pc_reg", 0.0),
@@ -1121,18 +1176,20 @@ def make_plbfgs_minimizer(
     apply_P_local, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
+        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, _, E_prev = state.m, state.U, state.g, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
         y = solve_P(
             m,
-            g_raw * inv_M_rel,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
         )
@@ -1155,8 +1212,8 @@ def make_plbfgs_minimizer(
             # Initial Hessian approximation: Use the PCG preconditioner P^-1
             r = solve_P(
                 m,
-                g_raw * inv_M_rel,
-                q_after_first,
+                g_raw,
+                q_after_first * inv_inv_M,
                 params.get("pc_iters", 10),
                 reg=params.get("pc_reg", 0.0),
                 stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -1282,21 +1339,21 @@ def make_wen_goldfarb_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 15),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -1459,14 +1516,14 @@ def make_pbb_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Preconditioned gradient
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             params.get("pc_iters", 10),
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -1490,7 +1547,7 @@ def make_pbb_minimizer(
         use_bb = (~is_initial) & (sty > 1e-12) & tau_ok
 
         H = -jnp.cross(m, z)
-        pg = -jnp.vdot(g_s, z)
+        pg = -jnp.vdot(g_raw, z)
 
         tau = lax.cond(
             use_bb,
@@ -1540,18 +1597,20 @@ def make_dplbfgs_minimizer(
     apply_P_local, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
+        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, _, E_prev = state.m, state.U, state.g, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
         y = solve_P(
             m,
-            g_raw * inv_M_rel,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
         )
@@ -1573,8 +1632,8 @@ def make_dplbfgs_minimizer(
 
             r = solve_P(
                 m,
-                g_raw * inv_M_rel,
-                q_after_first,
+                g_raw,
+                q_after_first * inv_inv_M,
                 params.get("pc_iters", 10),
                 reg=params.get("pc_reg", 0.0),
                 stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -1622,7 +1681,7 @@ def make_dplbfgs_minimizer(
         s_k = m_new - m
         y_k = g_tan - state.g
 
-        B0s = apply_P_local(m, g_raw * inv_M_rel, s_k)
+        B0s = apply_P_local(m, g_raw, s_k) * inv_M_rel
         sk_yk = jnp.vdot(s_k, y_k)
         sk_B0sk = jnp.vdot(s_k, B0s)
 
@@ -1800,18 +1859,20 @@ def make_rplbfgs_minimizer(
     apply_P_local, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
+        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, _, E_prev = state.m, state.U, state.g, state.E
 
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
         y = solve_P(
             m,
-            g_raw * inv_M_rel,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
         )
@@ -1840,8 +1901,8 @@ def make_rplbfgs_minimizer(
 
             r = solve_P(
                 m,
-                g_raw * inv_M_rel,
-                q_after_first,
+                g_raw,
+                q_after_first * inv_inv_M,
                 params.get("pc_iters", 10),
                 reg=params.get("pc_reg", 0.0),
                 stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -1890,7 +1951,7 @@ def make_rplbfgs_minimizer(
         y_k = g_tan - state.g
 
         # Powell Damping
-        B0s = apply_P_local(m, g_raw * inv_M_rel, s_k)
+        B0s = apply_P_local(m, g_raw, s_k) * inv_M_rel
         sk_yk = jnp.vdot(s_k, y_k)
         sk_B0sk = jnp.vdot(s_k, B0s)
         theta = jnp.where(sk_yk >= 0.2 * sk_B0sk, 1.0, 0.8 * sk_B0sk / (sk_B0sk - sk_yk + 1e-30))
@@ -1999,19 +2060,19 @@ def make_aapg_exact_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 15),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -2040,8 +2101,8 @@ def make_aapg_exact_minimizer(
         d = -z_next
         d = jnp.where(jnp.vdot(d, g_tan) > 0, -z, d)
 
-        d_max = jnp.max(jnp.abs(d))
-        d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
+        #d_max = jnp.max(jnp.abs(d))
+        #d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
 
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
@@ -2099,22 +2160,22 @@ def make_aapg_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)) * gnorm_inf, 0.0
+            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
         # Preconditioned gradient z is our "residual" f(m)
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             max_iter=params.get("pc_iters", 10),
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
@@ -2276,14 +2337,14 @@ def make_pnag_minimizer(
         U_guess_look = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_look = solve_U(m_look, U_guess_look, params["phi_tol"])
         E_look, g_raw_look = energy_and_grad(m_look, U_look, B_ext)
-        g_s_look = g_raw_look * inv_M_rel
-        g_tan_look = tangent_grad(m_look, g_s_look)
+        g_tan_look = tangent_grad(m_look, g_raw_look * inv_M_rel)
+        g_tan_look_ext = tangent_grad(m_look, g_raw_look)
 
         # Preconditioned gradient at look-ahead
         z = solve_P(
             m_look,
-            g_s_look,
-            g_tan_look,
+            g_raw_look,
+            g_tan_look_ext,
             params.get("pc_iters", 10),
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -2327,14 +2388,14 @@ def make_pbbs_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_s = g_raw * inv_M_rel
-        g_tan = tangent_grad(m, g_s)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         # Preconditioned gradient with Steihaug exit in solve_P
         z = solve_P(
             m,
-            g_s,
-            g_tan,
+            g_raw,
+            g_tan_ext,
             params.get("pc_iters", 10),
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
@@ -2357,7 +2418,7 @@ def make_pbbs_minimizer(
         use_bb = (~is_initial) & (sty > 1e-12) & tau_ok
 
         H = -jnp.cross(m, z)
-        pg = -jnp.vdot(g_s, z)
+        pg = -jnp.vdot(g_raw, z)
 
         tau = lax.cond(
             use_bb,
@@ -2531,10 +2592,32 @@ def make_minimizer(
     if "energy_assembly" in kwargs:
         kwargs["assembly"] = kwargs.pop("energy_assembly")
 
-    energy_and_grad, energy_only, grad_only, local_grad_only = make_energy_kernels(
+    _energy_and_grad_raw, _energy_only_raw, grad_only, local_grad_only = make_energy_kernels(
         geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal, **kwargs
     )
+
+    def energy_and_grad(*args, **kwargs):
+        jax.debug.callback(_trigger_eval_callback)
+        return _energy_and_grad_raw(*args, **kwargs)
+
+    def energy_only(*args, **kwargs):
+        jax.debug.callback(_trigger_eval_callback)
+        return _energy_only_raw(*args, **kwargs)
+
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
+
+    # Compute Jacobi preconditioner using the diagonal of the exchange matrix
+    from energy_kernels import compute_exchange_diagonal
+    d_diag = compute_exchange_diagonal(
+        geom,
+        A_lookup,
+        V_mag,
+        chunk_elems=kwargs.get("chunk_elems", 200_000),
+        assembly=kwargs.get("assembly", "segment_sum"),
+        grad_backend=kwargs.get("grad_backend", "stored_grad_phi"),
+    )
+    inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
+    _PRECOND_MAP[id(inv_M_rel)] = inv_M_prec
 
     if method == "cohen":
         step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
@@ -2820,23 +2903,61 @@ def make_minimizer(
         )
 
     def minimize(m0, B_ext, **params):
-        if "phi_tol" not in params:
-            # The most restrictive relative criterion is u1 (energy) at tau_f.
-            # Poisson precision needs to be roughly one order of magnitude better
-            # than the target energy precision to ensure stable convergence.
-            tau_f = params.get("tau_f", 1e-6)
-            params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
+        # Local stats counters
+        stats = {
+            "evals": 0,
+            "preco_iters": 0,
+            "demag_iters": 0
+        }
 
-        m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
-        U = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
-        E, g_raw = energy_and_grad(m, U, B_ext)
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        gnorm_init = jnp.max(jnp.abs(g_tan))
-        state = init_state_fn(m, U, E, g_tan, gnorm_init)
-        start = time.time()
-        final_state = kernel(state, B_ext, params)
-        final_state.m.block_until_ready()
-        time_val = time.time() - start
+        # Setup local callback functions
+        def cb_eval():
+            stats["evals"] += 1
+
+        def cb_preco(n):
+            stats["preco_iters"] += int(n)
+
+        def cb_demag(n):
+            stats["demag_iters"] += int(n)
+
+        # Register callbacks
+        register_eval_callback(cb_eval)
+        register_preco_callback(cb_preco)
+        
+        import poisson_solve
+        poisson_solve.register_demag_callback(cb_demag)
+
+        try:
+            if "phi_tol" not in params:
+                # The most restrictive relative criterion is u1 (energy) at tau_f.
+                # Poisson precision needs to be roughly one order of magnitude better
+                # than the target energy precision to ensure stable convergence.
+                tau_f = params.get("tau_f", 1e-6)
+                params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
+
+            m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
+            U = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
+            E, g_raw = energy_and_grad(m, U, B_ext)
+            g_tan = tangent_grad(m, g_raw * inv_M_rel)
+            gnorm_init = jnp.max(jnp.abs(g_tan))
+            state = init_state_fn(m, U, E, g_tan, gnorm_init)
+            start = time.time()
+            final_state = kernel(state, B_ext, params)
+            final_state.m.block_until_ready()
+            time_val = time.time() - start
+
+            # Print final stats in the format requested by the user
+            print(f"          number of iterations   : {int(final_state.it)}")
+            print(f"number of iterations for preco   : {stats['preco_iters']}")
+            print(f"number of function evaluations   : {stats['evals']}")
+            print(f"number of iterations for demag   : {stats['demag_iters']}")
+            print("done")
+
+        finally:
+            # Clean up/unregister callbacks
+            register_eval_callback(None)
+            register_preco_callback(None)
+            poisson_solve.register_demag_callback(None)
 
         return (
             final_state.m,
@@ -2846,6 +2967,9 @@ def make_minimizer(
                 "time": time_val,
                 "E": float(final_state.E),
                 "gnorm": float(final_state.gnorm),
+                "preco_iters": stats["preco_iters"],
+                "evals": stats["evals"],
+                "demag_iters": stats["demag_iters"],
             },
         )
 

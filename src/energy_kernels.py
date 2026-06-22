@@ -87,7 +87,12 @@ def _B_from_JinvT(JinvT_c: Array, dtype) -> Array:
     Returns:
         Array: Shape function gradients (chunk_elems, 4, 3).
     """
-    return jnp.einsum("eij,aj->eai", JinvT_c.astype(dtype), _GRAD_HAT.astype(dtype))
+    J_cast = JinvT_c.astype(dtype)
+    B_1 = J_cast[:, :, 0]
+    B_2 = J_cast[:, :, 1]
+    B_3 = J_cast[:, :, 2]
+    B_0 = -(B_1 + B_2 + B_3)
+    return jnp.stack([B_0, B_1, B_2, B_3], axis=1)
 
 
 def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
@@ -119,7 +124,7 @@ def make_energy_kernels(
     k1me: Array | None = None,
     k1me_p: Array | None = None,
     chunk_elems: int = 200_000,
-    assembly: Assembly = "scatter",
+    assembly: Assembly = "segment_sum",
     grad_backend: GradBackend = "stored_grad_phi",
 ) -> tuple[
     Callable[[Array, Array, Array], tuple[Array, Array]],
@@ -428,3 +433,77 @@ def make_energy_kernels(
         return g
 
     return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
+
+
+def compute_exchange_diagonal(
+    geom: TetGeom,
+    A_lookup: Array,
+    V_mag: float,
+    *,
+    chunk_elems: int = 200_000,
+    assembly: Assembly = "segment_sum",
+    grad_backend: GradBackend = "stored_grad_phi",
+) -> Array:
+    """Compute the diagonal of the exchange (stiffness) matrix.
+    
+    This is used for Jacobi preconditioning.
+    """
+    geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
+    conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
+    
+    if geom_p.x_nodes is not None:
+        N = geom_p.x_nodes.shape[0]
+    else:
+        N = int(jnp.max(geom.conn)) + 1
+        
+    dtype = jnp.float64
+    inv_Vmag = 1.0 / V_mag
+    
+    g_ids = mat_id - 1
+    A_Ve = 2.0 * A_lookup[g_ids] * Ve
+    
+    # We need grad_phi or other variables for _get_B
+    grad_phi = geom_p.grad_phi
+    JinvT = geom_p.JinvT
+    x_nodes = geom_p.x_nodes
+    
+    def _get_B(conn_c: Array, s: int) -> Array:
+        if grad_backend == "stored_grad_phi":
+            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
+        elif grad_backend == "stored_JinvT":
+            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
+            return _B_from_JinvT(JinvT_c, dtype)
+        else:
+            x_e = x_nodes[conn_c].astype(dtype)
+            JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
+            return _B_from_JinvT(JinvT_c, dtype)
+            
+    E_pad = int(conn.shape[0])
+    n_chunks = E_pad // chunk_elems
+    
+    def body(i: int, d_acc: Array) -> Array:
+        s = i * chunk_elems
+        conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
+        B_c = _get_B(conn_c, s)
+        mask = chunk_mask(E_orig, s, chunk_elems, dtype)
+        
+        a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
+        
+        # B_c has shape (chunk_elems, 4, 3)
+        # We compute sum_{k=0}^2 (B_c[:, a, k]**2) for each a in {0, 1, 2, 3}
+        grad_phi_sq = jnp.sum(B_c ** 2, axis=-1)  # (chunk_elems, 4)
+        contrib = a_ve_c[:, None] * grad_phi_sq  # (chunk_elems, 4)
+        
+        if assembly == "scatter":
+            d_acc = assemble_scatter(d_acc, conn_c, contrib)
+        else:
+            d_acc = d_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
+        return d_acc
+        
+    d0 = jnp.zeros((N,), dtype=dtype)
+    d_diag = jax.lax.fori_loop(0, n_chunks, body, d0)
+    
+    # Scale by inv_Vmag to match the scaling of local_grad_only
+    d_diag = d_diag * inv_Vmag
+    return jax.jit(lambda: d_diag)()
+

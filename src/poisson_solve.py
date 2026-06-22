@@ -52,7 +52,12 @@ def _B_from_JinvT(JinvT_c: Array, dtype) -> Array:
     Returns:
         Array: Shape function gradients (chunk_elems, 4, 3).
     """
-    return jnp.einsum("eij,aj->eai", JinvT_c.astype(dtype), _GRAD_HAT.astype(dtype))
+    J_cast = JinvT_c.astype(dtype)
+    B_1 = J_cast[:, :, 0]
+    B_2 = J_cast[:, :, 1]
+    B_3 = J_cast[:, :, 2]
+    B_0 = -(B_1 + B_2 + B_3)
+    return jnp.stack([B_0, B_1, B_2, B_3], axis=1)
 
 
 def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
@@ -124,7 +129,7 @@ def make_poisson_ops(
     chunk_elems: int = 200_000,
     reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
-    assembly: Assembly = "scatter",
+    assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
 ) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
     """Create JIT-compiled matrix-free Poisson operators.
@@ -431,7 +436,7 @@ def make_pcg_solve(
         it_final, x_final, _, _, _, _, r2_final = final_state
         return x_final, it_final, r2_final
 
-    return jax.jit(solve, static_argnums=(3,))
+    return jax.jit(solve)
 
 
 def make_solve_U(
@@ -579,40 +584,63 @@ def make_solve_U(
         l_max=l_max,
     )
 
-    @partial(jax.jit, static_argnums=(3,))
-    def solve_U(
-        m: Array, x0: Array, tol: float | None = None, return_info: bool = False
-    ) -> Array | tuple[Array, int, float]:
-        """Perform the Poisson solve for a given magnetization state m.
+    if hierarchy_jax is None:
+        @partial(jax.jit, static_argnums=(3,))
+        def solve_U(
+            m: Array, x0: Array, tol: float | None = None, return_info: bool = False
+        ) -> Array | tuple[Array, int, float]:
+            b = rhs_from_m(m)
+            bnorm2 = jnp.vdot(b, b)
 
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            x0 (Array): Initial guess for the potential U (N,).
-            tol: float | None = None,
-            return_info (bool, optional): If True, return (U, iterations, residual).
-                Defaults to False.
+            if enforce_zero_mean:
+                b = b - jnp.mean(b)
+                x0 = x0 - jnp.mean(x0)
 
-        Returns:
-            Array | tuple[Array, int, float]: Potential U (N,) or solver info.
-        """
-        b = rhs_from_m(m)
-        bnorm2 = jnp.vdot(b, b)
+            U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=None)
+            
+            # Dynamic callback for counting AMG iterations
+            jax.debug.callback(_trigger_demag_callback, it)
 
-        # Choice: For open boundary problems (no Dirichlet mask), the Poisson
-        # equation is only solvable up to an additive constant (pure Neumann).
-        # Projecting both b and x0 to zero mean removes the null-space component
-        # and stabilizes the CG solver.
-        if enforce_zero_mean:
-            b = b - jnp.mean(b)
-            x0 = x0 - jnp.mean(x0)
+            if enforce_zero_mean:
+                U = U - jnp.mean(U)
+            if return_info:
+                rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                return U, it, rel_res
+            return U
+    else:
+        @partial(jax.jit, static_argnums=(3,))
+        def solve_U(
+            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, hierarchy_dyn=hierarchy_jax
+        ) -> Array | tuple[Array, int, float]:
+            b = rhs_from_m(m)
+            bnorm2 = jnp.vdot(b, b)
 
-        U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_jax)
+            if enforce_zero_mean:
+                b = b - jnp.mean(b)
+                x0 = x0 - jnp.mean(x0)
 
-        if enforce_zero_mean:
-            U = U - jnp.mean(U)
-        if return_info:
-            rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
-            return U, it, rel_res
-        return U
+            U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_dyn)
+
+            # Dynamic callback for counting AMG iterations
+            jax.debug.callback(_trigger_demag_callback, it)
+
+            if enforce_zero_mean:
+                U = U - jnp.mean(U)
+            if return_info:
+                rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                return U, it, rel_res
+            return U
 
     return solve_U
+
+
+# Global callback registration for tracking AMG/CG iteration counts
+_demag_callback = None
+
+def register_demag_callback(cb):
+    global _demag_callback
+    _demag_callback = cb
+
+def _trigger_demag_callback(it):
+    if _demag_callback is not None:
+        _demag_callback(it)

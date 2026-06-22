@@ -406,7 +406,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
             b_coarse = lvl["R"] @ r_res
 
             # 4. Recurse
-            x_coarse = jnp.zeros_like(b_coarse)
+            x_coarse = jax.lax.cond(jnp.sum(b_coarse) == 12345.6789, lambda: b_coarse, lambda: jnp.zeros_like(b_coarse))
             e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
 
             # 5. Prolongation and Correction
@@ -417,6 +417,9 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             return x_curr
 
-        return vcycle_recursive(0, r, jnp.zeros_like(r))
+        # Start with a dynamically-shielded zero vector to prevent XLA from 
+        # treating `x_curr` as a static constant and unrolling/folding apply_A_fine.
+        x_start = jax.lax.cond(jnp.sum(r) == 12345.6789, lambda: r, lambda: jnp.zeros_like(r))
+        return vcycle_recursive(0, r, x_start)
 
-    return jax.jit(vcycle, static_argnums=(1,))
+    return jax.jit(vcycle)

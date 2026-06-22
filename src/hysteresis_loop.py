@@ -433,7 +433,9 @@ def run_hysteresis_loop(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
             f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
             f"it={info.get('iters', 0):.0f}  "
-            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
+            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
+            f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
+            f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
         )
 
         # Early termination check
