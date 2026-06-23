@@ -487,7 +487,7 @@ def make_pcg_minimizer(
         # in the natural metric of the problem.
         gnorm_inf_smooth = jnp.max(jnp.abs(y))
 
-        diff_g = g_tan - g_prev
+        diff_g = g_tan_ext - g_prev
         num = jnp.vdot(diff_g, y)
         den = jnp.vdot(diff_g, d_prev) + 1e-30
 
@@ -495,7 +495,7 @@ def make_pcg_minimizer(
         beta = jnp.where(restart, 0.0, jnp.maximum(0.0, num / den))
 
         d = -y + beta * d_prev
-        d = jnp.where(jnp.vdot(d, g_tan) > 0, -y, d)
+        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -y, d)
 
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
@@ -533,7 +533,7 @@ def make_pcg_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan_ext, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -590,12 +590,12 @@ def make_pcohen_minimizer(
 
         if beta_type == "pr":
             # Polak-Ribiere (PR) Beta
-            num = jnp.vdot(y, g_tan - g_prev)
+            num = jnp.vdot(y, g_tan_ext - g_prev)
             den = jnp.vdot(y_prev, g_prev) + 1e-30
             beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
         else:
             # Hestenes-Stiefel (HS) Beta
-            diff_g = g_tan - g_prev
+            diff_g = g_tan_ext - g_prev
             num = jnp.vdot(y, diff_g)
             den = jnp.vdot(d_prev, diff_g) + 1e-30
             beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
@@ -604,7 +604,7 @@ def make_pcohen_minimizer(
         d = -y + beta * d_prev_proj
 
         # Ensure descent
-        d = jnp.where(jnp.vdot(d, g_tan) > 0, -y, d)
+        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -y, d)
 
         # Safety: Limit search direction magnitude to prevent huge rotations
         # in a single step (max 0.1 rad approx).
@@ -647,7 +647,7 @@ def make_pcohen_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan_ext, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -723,7 +723,7 @@ def make_pcohen_exact_minimizer(
             jnp.zeros_like(g_prev),
         )
 
-        diff_g = g_tan - g_prev_transported
+        diff_g = g_tan_ext - g_prev_transported
 
         if beta_type == "pr":
             # Polak-Ribiere (PR) Beta with Exact Transport
@@ -740,7 +740,7 @@ def make_pcohen_exact_minimizer(
         d = -z + beta * d_prev_transported
 
         # Ensure descent
-        d = jnp.where(jnp.vdot(d, g_tan) > 0, -z, d)
+        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -z, d)
 
         # Safety: Limit search direction magnitude to prevent huge rotations
         # in a single step (max 0.1 rad approx).
@@ -769,7 +769,7 @@ def make_pcohen_exact_minimizer(
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PCGExactState(m_new, U_new, U, g_tan, z, d, E, gnorm_inf_smooth, state.it + 1, H, tau, conv)
+        return PCGExactState(m_new, U_new, U, g_tan_ext, z, d, E, gnorm_inf_smooth, state.it + 1, H, tau, conv)
 
     return step
 
@@ -2471,7 +2471,7 @@ def make_pcohen_lbfgs_minimizer(
         U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_new = solve_U(m, U_guess, params["phi_tol"])
         E, g_raw = energy_and_grad(m, U_new, B_ext)
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        g_tan_ext = tangent_grad(m, g_raw)
 
         def get_lbfgs_z(g, S, Y, rho, it):
             n_history = jnp.minimum(it, memory)
@@ -2501,16 +2501,16 @@ def make_pcohen_lbfgs_minimizer(
 
             return lax.fori_loop(0, n_history, second_loop, r)
 
-        z = get_lbfgs_z(g_tan, state.S, state.Y, state.rho, state.it)
+        z = get_lbfgs_z(g_tan_ext, state.S, state.Y, state.rho, state.it)
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Cohen CG Beta (Polak-Ribiere)
-        num = jnp.vdot(z, g_tan - state.g)
+        num = jnp.vdot(z, g_tan_ext - state.g)
         den = jnp.vdot(state.g, state.z) + 1e-30
         beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         p = -z + beta * tangent_grad(m, state.p)
-        p = jnp.where(jnp.vdot(p, g_tan) > 0, -z, p)
+        p = jnp.where(jnp.vdot(p, g_tan_ext) > 0, -z, p)
 
         H = -jnp.cross(m, -p)
         pg = jnp.vdot(g_raw, p)
@@ -2535,7 +2535,7 @@ def make_pcohen_lbfgs_minimizer(
         conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         s_new = m_new - m
-        y_new = g_tan - state.g
+        y_new = g_tan_ext - state.g
         curv = jnp.vdot(y_new, s_new)
         update_ok = (state.it > 0) & (curv > 1e-12 * jnp.vdot(s_new, s_new))
         idx = state.it % memory
@@ -2544,7 +2544,7 @@ def make_pcohen_lbfgs_minimizer(
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
         return PCohenLBFGSState(
-            m_new, U_new, U, g_tan, z, p, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv
+            m_new, U_new, U, g_tan_ext, z, p, S_next, Y_next, rho_next, E, gnorm_inf_smooth, state.it + 1, conv
         )
 
     return step
