@@ -597,9 +597,6 @@ def make_solve_U(
                 x0 = x0 - jnp.mean(x0)
 
             U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=None)
-            
-            # Dynamic callback for counting AMG iterations
-            jax.debug.callback(_trigger_demag_callback, it)
 
             if enforce_zero_mean:
                 U = U - jnp.mean(U)
@@ -621,9 +618,6 @@ def make_solve_U(
 
             U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_dyn)
 
-            # Dynamic callback for counting AMG iterations
-            jax.debug.callback(_trigger_demag_callback, it)
-
             if enforce_zero_mean:
                 U = U - jnp.mean(U)
             if return_info:
@@ -632,15 +626,3 @@ def make_solve_U(
             return U
 
     return solve_U
-
-
-# Global callback registration for tracking AMG/CG iteration counts
-_demag_callback = None
-
-def register_demag_callback(cb):
-    global _demag_callback
-    _demag_callback = cb
-
-def _trigger_demag_callback(it):
-    if _demag_callback is not None:
-        _demag_callback(it)

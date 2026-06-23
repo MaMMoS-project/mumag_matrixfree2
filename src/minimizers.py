@@ -25,6 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -33,27 +34,9 @@ from jax import lax
 Array = jnp.ndarray
 
 # -----------------------------------------------------------------------------
-# Global callback variables for tracking performance metrics and preconditioning mapping
+# Global variables and preconditioning mapping
 # -----------------------------------------------------------------------------
-_preco_callback = None
-_eval_callback = None
 _PRECOND_MAP = {}
-
-def register_preco_callback(cb):
-    global _preco_callback
-    _preco_callback = cb
-
-def _trigger_preco_callback(it):
-    if _preco_callback is not None:
-        _preco_callback(it)
-
-def register_eval_callback(cb):
-    global _eval_callback
-    _eval_callback = cb
-
-def _trigger_eval_callback():
-    if _eval_callback is not None:
-        _eval_callback()
 
 # -----------------------------------------------------------------------------
 # Common Utilities
@@ -192,6 +175,7 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
     This version uses energy_and_grad to return (tau, E_new, g_raw_new, U_new, m_new).
     """
 
+    @partial(jax.jit, static_argnums=(14,))
     def armijo_ls(
         m: Array,
         pg: Array,
@@ -207,27 +191,28 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
         c: float,
         s0: Array,
         max_evals: int,
-    ) -> tuple[Array, Array, Array, Array, Array]:
-        def D(s: Array) -> tuple[Array, Array, Array, Array, Array]:
+        return_info: bool = False,
+    ):
+        def D(s: Array) -> tuple[Array, Array, Array, Array, Array, Array]:
             m_trial = cayley_update(m, H, s)
-            U_trial = solve_U(m_trial, U_base, phi_tol)
+            U_trial, it_demag, _ = solve_U(m_trial, U_base, phi_tol, return_info=True)
             E_trial, g_trial = energy_and_grad(m_trial, U_trial, B_ext)
             # Handle NaN/Inf in energy: treat as very high energy to force backtracking
             E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
             d = (E_trial - E0) / (s * pg + 1e-30)
-            return d, E_trial, g_trial, U_trial, m_trial
+            return d, E_trial, g_trial, U_trial, m_trial, it_demag
 
         def exp_cond(state):
-            s, s_min, it, done, _, _, _, _, _ = state
+            s, s_min, it, done, _, _, _, _, _, _ = state
             return (it < max_evals) & (~done)
 
         def exp_body(state):
-            s, s_min, it, done, E_val, g_raw_val, U_val, m_val, d_val = state
-            d_next, E_next, g_raw_next, U_next, m_next = D(s)
+            s, s_min, it, done, E_val, g_raw_val, U_val, m_val, d_val, demag_accum = state
+            d_next, E_next, g_raw_next, U_next, m_next, demag_it = D(s)
             stop = (jnp.abs(1.0 - d_next) >= eta2) | (d_next < 0)  # Stop if energy increases or sufficiently far
             s_next = jnp.where(stop, s, C * s)
             s_min_next = jnp.where(stop, s_min, s)
-            return (s_next, s_min_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next)
+            return (s_next, s_min_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next, demag_accum + demag_it)
 
         s_start = jnp.asarray(s0, dtype=m.dtype)
         # Dummy initialization values
@@ -241,27 +226,28 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
             U_base,
             m,
             jnp.array(0.0, dtype=m.dtype),
+            jnp.int32(0),
         )
-        s_exp, s_min_exp, it_exp, _, E_exp, g_raw_exp, U_exp, m_exp, d_exp = lax.while_loop(
+        s_exp, s_min_exp, it_exp, _, E_exp, g_raw_exp, U_exp, m_exp, d_exp, demag_exp = lax.while_loop(
             exp_cond, exp_body, init_exp
         )
 
         def con_cond(state):
-            s, it, done, _, _, _, _, _ = state
+            s, it, done, _, _, _, _, _, _ = state
             return (it < max_evals) & (~done)
 
         def con_body(state):
-            s, it, done, E_val, g_raw_val, U_val, m_val, d_val = state
+            s, it, done, E_val, g_raw_val, U_val, m_val, d_val, demag_accum = state
             # Contract the step length first, since the current 's' is known to be insufficient
             s_next = s_min_exp + c * (s - s_min_exp)
-            d_next, E_next, g_raw_next, U_next, m_next = D(s_next)
+            d_next, E_next, g_raw_next, U_next, m_next, demag_it = D(s_next)
             stop = (d_next >= eta1) & (d_next < 1e10)  # Sufficient decrease and finite
-            return (s_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next)
+            return (s_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next, demag_accum + demag_it)
 
         # Skip contraction if the step from expansion loop already satisfies the condition
         con_done_init = (d_exp >= eta1) & (d_exp < 1e10)
-        init_con = (s_exp, jnp.int32(0), con_done_init, E_exp, g_raw_exp, U_exp, m_exp, d_exp)
-        s_final, it_con, _, E_final, g_raw_final, U_final, m_final, d_final = lax.while_loop(
+        init_con = (s_exp, jnp.int32(0), con_done_init, E_exp, g_raw_exp, U_exp, m_exp, d_exp, demag_exp)
+        s_final, it_con, _, E_final, g_raw_final, U_final, m_final, d_final, demag_final = lax.while_loop(
             con_cond, con_body, init_con
         )
 
@@ -277,16 +263,6 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
         ls_iters = it_exp + it_con
         ls_evals = ls_iters
 
-        final_iters = jnp.where(pg >= 0, jnp.int32(0), ls_iters)
-        final_evals = jnp.where(pg >= 0, jnp.int32(0), ls_evals)
-        final_it_exp = jnp.where(pg >= 0, jnp.int32(0), it_exp)
-        final_it_con = jnp.where(pg >= 0, jnp.int32(0), it_con)
-        final_tau = jnp.where(pg >= 0, 0.0, s_safe)
-
-        # Report to standard output during JIT execution
-        jax.debug.print("Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
-                        iters=final_iters, it_exp=final_it_exp, it_con=final_it_con, evals=final_evals, tau=final_tau)
-
         is_active = pg < 0
         tau_ret = jnp.where(is_active, s_safe, 0.0)
         E_ret = jnp.where(is_active, E_safe, E0)
@@ -294,9 +270,14 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
         U_ret = jnp.where(is_active, U_safe, U_base)
         m_ret = jnp.where(is_active, m_safe, m)
 
+        if return_info:
+            evals_ret = jnp.where(is_active, ls_evals, jnp.int32(0))
+            demag_ret = jnp.where(is_active, demag_final, jnp.int32(0))
+            return tau_ret, E_ret, g_raw_ret, U_ret, m_ret, evals_ret, demag_ret
+
         return tau_ret, E_ret, g_raw_ret, U_ret, m_ret
 
-    return jax.jit(armijo_ls)
+    return armijo_ls
 
 
 # -----------------------------------------------------------------------------
@@ -332,7 +313,8 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         tol: float = 0.0,
         reg: float = 0.0,
         stagnation_nu: float = 1e-3,
-    ) -> Array:
+        return_info: bool = False,
+    ):
         """Solve Py = g_tan for y using Preconditioned Conjugate Gradient (PCG) with Steihaug-style exit.
         The preconditioner is inv_M_prec, restoring the L2 metric for irregular meshes."""
 
@@ -383,9 +365,6 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         final_state = lax.while_loop(cond_fun, body_fun, state_init)
         y_final = final_state[0]
 
-        # Count CG iterations (now at index 6 of final_state)
-        jax.debug.callback(_trigger_preco_callback, final_state[6])
-
         # Fallback direction (preconditioned gradient)
         z_fallback = g_tan_ext * inv_M_prec
 
@@ -395,9 +374,11 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         y_final = jnp.where(y_norm > 10.0 * z_norm, y_final * (10.0 * z_norm / (y_norm + 1e-30)), y_final)
 
         # Fallback to gradient if not a descent direction
-        return jnp.where(jnp.vdot(y_final, g_tan_ext) > 1e-12, y_final, z_fallback)
+        y_ret = jnp.where(jnp.vdot(y_final, g_tan_ext) > 1e-12, y_final, z_fallback)
 
-    return apply_P, solve_Py_g
+        if return_info:
+            return y_ret, final_state[6]
+        return y_ret
 
     return apply_P, solve_Py_g
 
@@ -501,10 +482,16 @@ class PCGState:
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32
+    preco_iters: jnp.int32
+    demag_iters: jnp.int32
 
     def tree_flatten(self):
         """Flatten the PCGState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g, self.g_raw, self.y, self.d, self.E, self.gnorm, self.it, self.converged), None
+        return (
+            self.m, self.U, self.U_prev, self.g, self.g_raw, self.y, self.d, self.E, self.gnorm, self.it, self.converged,
+            self.evals, self.preco_iters, self.demag_iters
+        ), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -584,7 +571,7 @@ def make_pcg_minimizer(
             params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
-        y = solve_P(
+        y, preco_it = solve_P(
             m,
             g_raw,
             g_tan_ext,
@@ -592,6 +579,7 @@ def make_pcg_minimizer(
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
+            return_info=True,
         )
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
@@ -612,7 +600,7 @@ def make_pcg_minimizer(
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
 
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -627,6 +615,7 @@ def make_pcg_minimizer(
             params["ls_c"],
             1.0,
             15,
+            return_info=True,
         )
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
@@ -645,7 +634,22 @@ def make_pcg_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan_ext, g_raw_new, y, d, E_new, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(
+            m_new,
+            U_new,
+            U,
+            g_tan_ext,
+            g_raw_new,
+            y,
+            d,
+            E_new,
+            gnorm_inf_smooth,
+            state.it + 1,
+            conv,
+            state.evals + ls_evals,
+            state.preco_iters + preco_it,
+            state.demag_iters + ls_demag,
+        )
 
     return step
 
@@ -684,7 +688,7 @@ def make_pcohen_minimizer(
             params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
         )
 
-        y = solve_P(
+        y, preco_it = solve_P(
             m,
             g_raw,
             g_tan_ext,
@@ -692,6 +696,7 @@ def make_pcohen_minimizer(
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
+            return_info=True,
         )
 
         # Use the smoothed (preconditioned) gradient for the convergence check.
@@ -720,7 +725,7 @@ def make_pcohen_minimizer(
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
 
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -735,6 +740,7 @@ def make_pcohen_minimizer(
             params["ls_c"],
             1.0,
             15,
+            return_info=True,
         )
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
@@ -753,7 +759,22 @@ def make_pcohen_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan_ext, g_raw_new, y, d, E_new, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(
+            m_new,
+            U_new,
+            U,
+            g_tan_ext,
+            g_raw_new,
+            y,
+            d,
+            E_new,
+            gnorm_inf_smooth,
+            state.it + 1,
+            conv,
+            state.evals + ls_evals,
+            state.preco_iters + preco_it,
+            state.demag_iters + ls_demag,
+        )
 
     return step
 
@@ -2680,13 +2701,8 @@ def make_minimizer(
         geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal, **kwargs
     )
 
-    def energy_and_grad(*args, **kwargs):
-        jax.debug.callback(_trigger_eval_callback)
-        return _energy_and_grad_raw(*args, **kwargs)
-
-    def energy_only(*args, **kwargs):
-        jax.debug.callback(_trigger_eval_callback)
-        return _energy_only_raw(*args, **kwargs)
+    energy_and_grad = _energy_and_grad_raw
+    energy_only = _energy_only_raw
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
@@ -2716,7 +2732,13 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
             g_tan_ext = kwargs.get("g_tan_ext")
-            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
+            return PCGState(
+                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
+                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+            )
 
     elif method == "pcohen":
         step_fn = make_pcohen_minimizer(
@@ -2726,7 +2748,13 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
             g_tan_ext = kwargs.get("g_tan_ext")
-            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
+            return PCGState(
+                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
+                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+            )
 
     elif method == "pcohen_hs":
         step_fn = make_pcohen_minimizer(
@@ -2736,7 +2764,13 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
             g_tan_ext = kwargs.get("g_tan_ext")
-            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
+            return PCGState(
+                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
+                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+            )
 
     elif method == "lbfgs":
         memory = kwargs.get("memory", 10)
@@ -3020,63 +3054,40 @@ def make_minimizer(
         )
 
     def minimize(m0, B_ext, **params):
-        # Local stats counters
-        stats = {
-            "evals": 0,
-            "preco_iters": 0,
-            "demag_iters": 0
-        }
+        if "phi_tol" not in params:
+            # The most restrictive relative criterion is u1 (energy) at tau_f.
+            # Poisson precision needs to be roughly one order of magnitude better
+            # than the target energy precision to ensure stable convergence.
+            tau_f = params.get("tau_f", 1e-6)
+            params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
 
-        # Setup local callback functions
-        def cb_eval():
-            stats["evals"] += 1
-
-        def cb_preco(n):
-            stats["preco_iters"] += int(n)
-
-        def cb_demag(n):
-            stats["demag_iters"] += int(n)
-
-        # Register callbacks
-        register_eval_callback(cb_eval)
-        register_preco_callback(cb_preco)
+        m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
+        U, init_demag, _ = solve_U(m, jnp.zeros(m.shape[0]), cg_tol, return_info=True)
+        E, g_raw = energy_and_grad(m, U, B_ext)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        gnorm_init = jnp.max(jnp.abs(g_tan))
         
-        import poisson_solve
-        poisson_solve.register_demag_callback(cb_demag)
+        g_tan_ext = tangent_grad(m, g_raw)
+        state = init_state_fn(
+            m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext,
+            evals=1, preco_iters=0, demag_iters=int(init_demag)
+        )
+        start = time.time()
+        final_state = kernel(state, B_ext, params)
+        final_state.m.block_until_ready()
+        time_val = time.time() - start
 
-        try:
-            if "phi_tol" not in params:
-                # The most restrictive relative criterion is u1 (energy) at tau_f.
-                # Poisson precision needs to be roughly one order of magnitude better
-                # than the target energy precision to ensure stable convergence.
-                tau_f = params.get("tau_f", 1e-6)
-                params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
+        # Extract stats from final state if available (pure on-device counters)
+        evals = int(final_state.evals) if hasattr(final_state, "evals") else 0
+        preco_iters = int(final_state.preco_iters) if hasattr(final_state, "preco_iters") else 0
+        demag_iters = int(final_state.demag_iters) if hasattr(final_state, "demag_iters") else 0
 
-            m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
-            U = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
-            E, g_raw = energy_and_grad(m, U, B_ext)
-            g_tan = tangent_grad(m, g_raw * inv_M_rel)
-            gnorm_init = jnp.max(jnp.abs(g_tan))
-            
-            g_tan_ext = tangent_grad(m, g_raw)
-            state = init_state_fn(m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext)
-            start = time.time()
-            final_state = kernel(state, B_ext, params)
-            final_state.m.block_until_ready()
-            time_val = time.time() - start
-
-            # Print final stats in the format requested by the user
-            print(f"          number of iterations   : {int(final_state.it)}")
-            print(f"number of iterations for preco   : {stats['preco_iters']}")
-            print(f"number of function evaluations   : {stats['evals']}")
-            print(f"number of iterations for demag   : {stats['demag_iters']}")
-            print("done")
-
-        finally:
-            # Clean up/unregister callbacks
-            register_eval_callback(None)
-            register_preco_callback(None)
-            poisson_solve.register_demag_callback(None)
+        # Print final stats in the format requested by the user
+        print(f"          number of iterations   : {int(final_state.it)}")
+        print(f"number of iterations for preco   : {preco_iters}")
+        print(f"number of function evaluations   : {evals}")
+        print(f"number of iterations for demag   : {demag_iters}")
+        print("done")
 
         return (
             final_state.m,
@@ -3086,9 +3097,9 @@ def make_minimizer(
                 "time": time_val,
                 "E": float(final_state.E),
                 "gnorm": float(final_state.gnorm),
-                "preco_iters": stats["preco_iters"],
-                "evals": stats["evals"],
-                "demag_iters": stats["demag_iters"],
+                "preco_iters": preco_iters,
+                "evals": evals,
+                "demag_iters": demag_iters,
             },
         )
 
