@@ -187,6 +187,118 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
     return jax.jit(armijo_ls)
 
 
+def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
+    """Create a JAX-native Armijo line search on the curvilinear path.
+    This version uses energy_and_grad to return (tau, E_new, g_raw_new, U_new, m_new).
+    """
+
+    def armijo_ls(
+        m: Array,
+        pg: Array,
+        H: Array,
+        E0: Array,
+        U_base: Array,
+        g_raw_init: Array,
+        B_ext: Array,
+        phi_tol: Array,
+        eta1: float,
+        eta2: float,
+        C: float,
+        c: float,
+        s0: Array,
+        max_evals: int,
+    ) -> tuple[Array, Array, Array, Array, Array]:
+        def D(s: Array) -> tuple[Array, Array, Array, Array, Array]:
+            m_trial = cayley_update(m, H, s)
+            U_trial = solve_U(m_trial, U_base, phi_tol)
+            E_trial, g_trial = energy_and_grad(m_trial, U_trial, B_ext)
+            # Handle NaN/Inf in energy: treat as very high energy to force backtracking
+            E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
+            d = (E_trial - E0) / (s * pg + 1e-30)
+            return d, E_trial, g_trial, U_trial, m_trial
+
+        def exp_cond(state):
+            s, s_min, it, done, _, _, _, _, _ = state
+            return (it < max_evals) & (~done)
+
+        def exp_body(state):
+            s, s_min, it, done, E_val, g_raw_val, U_val, m_val, d_val = state
+            d_next, E_next, g_raw_next, U_next, m_next = D(s)
+            stop = (jnp.abs(1.0 - d_next) >= eta2) | (d_next < 0)  # Stop if energy increases or sufficiently far
+            s_next = jnp.where(stop, s, C * s)
+            s_min_next = jnp.where(stop, s_min, s)
+            return (s_next, s_min_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next)
+
+        s_start = jnp.asarray(s0, dtype=m.dtype)
+        # Dummy initialization values
+        init_exp = (
+            s_start,
+            jnp.zeros_like(s_start),
+            jnp.int32(0),
+            jnp.array(False),
+            E0,
+            g_raw_init,
+            U_base,
+            m,
+            jnp.array(0.0, dtype=m.dtype),
+        )
+        s_exp, s_min_exp, it_exp, _, E_exp, g_raw_exp, U_exp, m_exp, d_exp = lax.while_loop(
+            exp_cond, exp_body, init_exp
+        )
+
+        def con_cond(state):
+            s, it, done, _, _, _, _, _ = state
+            return (it < max_evals) & (~done)
+
+        def con_body(state):
+            s, it, done, E_val, g_raw_val, U_val, m_val, d_val = state
+            # Contract the step length first, since the current 's' is known to be insufficient
+            s_next = s_min_exp + c * (s - s_min_exp)
+            d_next, E_next, g_raw_next, U_next, m_next = D(s_next)
+            stop = (d_next >= eta1) & (d_next < 1e10)  # Sufficient decrease and finite
+            return (s_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next)
+
+        # Skip contraction if the step from expansion loop already satisfies the condition
+        con_done_init = (d_exp >= eta1) & (d_exp < 1e10)
+        init_con = (s_exp, jnp.int32(0), con_done_init, E_exp, g_raw_exp, U_exp, m_exp, d_exp)
+        s_final, it_con, _, E_final, g_raw_final, U_final, m_final, d_final = lax.while_loop(
+            con_cond, con_body, init_con
+        )
+
+        # Safety check using the carried d_final from the last iteration in the loop
+        is_safe = d_final >= 0
+        s_safe = jnp.where(is_safe, s_final, 0.0)
+        E_safe = jnp.where(is_safe, E_final, E0)
+        g_raw_safe = jnp.where(is_safe, g_raw_final, g_raw_init)
+        U_safe = jnp.where(is_safe, U_final, U_base)
+        m_safe = jnp.where(is_safe, m_final, m)
+
+        # Calculate metrics for logging
+        ls_iters = it_exp + it_con
+        ls_evals = ls_iters
+
+        final_iters = jnp.where(pg >= 0, jnp.int32(0), ls_iters)
+        final_evals = jnp.where(pg >= 0, jnp.int32(0), ls_evals)
+        final_it_exp = jnp.where(pg >= 0, jnp.int32(0), it_exp)
+        final_it_con = jnp.where(pg >= 0, jnp.int32(0), it_con)
+        final_tau = jnp.where(pg >= 0, 0.0, s_safe)
+
+        # Report to standard output during JIT execution
+        jax.debug.print("Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
+                        iters=final_iters, it_exp=final_it_exp, it_con=final_it_con, evals=final_evals, tau=final_tau)
+
+        is_active = pg < 0
+        tau_ret = jnp.where(is_active, s_safe, 0.0)
+        E_ret = jnp.where(is_active, E_safe, E0)
+        g_raw_ret = jnp.where(is_active, g_raw_safe, g_raw_init)
+        U_ret = jnp.where(is_active, U_safe, U_base)
+        m_ret = jnp.where(is_active, m_safe, m)
+
+        return tau_ret, E_ret, g_raw_ret, U_ret, m_ret
+
+    return jax.jit(armijo_ls)
+
+
 # -----------------------------------------------------------------------------
 # Preconditioner Operation
 # -----------------------------------------------------------------------------
@@ -383,9 +495,10 @@ class PCGState:
     m: Array
     U: Array
     U_prev: Array
-    g: Array
-    y: Array
-    d: Array
+    g: Array      # Stores previous g_tan_ext
+    g_raw: Array  # Stores current g_raw
+    y: Array      # Stores previous y
+    d: Array      # Stores previous d
     E: Array
     gnorm: Array
     it: jnp.int32
@@ -393,7 +506,7 @@ class PCGState:
 
     def tree_flatten(self):
         """Flatten the PCGState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g, self.y, self.d, self.E, self.gnorm, self.it, self.converged), None
+        return (self.m, self.U, self.U_prev, self.g, self.g_raw, self.y, self.d, self.E, self.gnorm, self.it, self.converged), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -452,15 +565,14 @@ def make_pcg_minimizer(
     cg_tol: float,
 ):
     """Create a Preconditioned Conjugate Gradient minimizer step function."""
-    ls = make_armijo_ls(energy_only, solve_U)
+    ls = make_armijo_ls_v2(energy_and_grad, solve_U)
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
-        m, U, g_prev, y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
+        m, U, g_prev, g_raw, y_prev, d_prev, E_prev = (
+            state.m, state.U, state.g, state.g_raw, state.y, state.d, state.E
+        )
 
-        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
-        U_new = solve_U(m, U_guess, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
@@ -500,12 +612,13 @@ def make_pcg_minimizer(
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
 
-        tau = ls(
+        tau, E_new, g_raw_new, U_new, m_new = ls(
             m,
             pg,
             H,
-            E,
-            U_new,
+            E_prev,
+            U,
+            g_raw,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -516,15 +629,14 @@ def make_pcg_minimizer(
             15,
         )
 
-        m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         jax.lax.cond(
             params.get("debug", False),
             lambda _: jax.debug.print(
                 "it={it:03d} E={E:.8e} g={g:.3e} tau={tau:.3e} conv={c}",
                 it=state.it,
-                E=E,
+                E=E_new,
                 g=gnorm_inf_smooth,
                 tau=tau,
                 c=conv,
@@ -533,7 +645,7 @@ def make_pcg_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan_ext, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan_ext, g_raw_new, y, d, E_new, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -553,15 +665,14 @@ def make_pcohen_minimizer(
     beta_type: Literal["pr", "hs"] = "pr",
 ):
     """Create a Preconditioned Cohen Conjugate Gradient minimizer step function."""
-    ls = make_armijo_ls(energy_only, solve_U)
+    ls = make_armijo_ls_v2(energy_and_grad, solve_U)
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
-        m, U, g_prev, y_prev, d_prev, E_prev = state.m, state.U, state.g, state.y, state.d, state.E
+        m, U, g_prev, g_raw, y_prev, d_prev, E_prev = (
+            state.m, state.U, state.g, state.g_raw, state.y, state.d, state.E
+        )
 
-        U_guess = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
-        U_new = solve_U(m, U_guess, params["phi_tol"])
-        E, g_raw = energy_and_grad(m, U_new, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
@@ -606,20 +717,16 @@ def make_pcohen_minimizer(
         # Ensure descent
         d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -y, d)
 
-        # Safety: Limit search direction magnitude to prevent huge rotations
-        # in a single step (max 0.1 rad approx).
-        #d_max = jnp.max(jnp.abs(d))
-        #d = jnp.where(d_max > 0.1, d * (0.1 / d_max), d)
-
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
 
-        tau = ls(
+        tau, E_new, g_raw_new, U_new, m_new = ls(
             m,
             pg,
             H,
-            E,
-            U_new,
+            E_prev,
+            U,
+            g_raw,
             B_ext,
             params["phi_tol"],
             params["ls_eta1"],
@@ -630,15 +737,14 @@ def make_pcohen_minimizer(
             15,
         )
 
-        m_new = cayley_update(m, H, tau)
-        conv = check_convergence(state.it, E, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         jax.lax.cond(
             params.get("debug", False),
             lambda _: jax.debug.print(
                 "it={it:03d} E={E:.8e} g={g:.3e} tau={tau:.3e} conv={c}",
                 it=state.it,
-                E=E,
+                E=E_new,
                 g=gnorm_inf_smooth,
                 tau=tau,
                 c=conv,
@@ -647,7 +753,7 @@ def make_pcohen_minimizer(
             operand=None,
         )
 
-        return PCGState(m_new, U_new, U, g_tan_ext, y, d, E, gnorm_inf_smooth, state.it + 1, conv)
+        return PCGState(m_new, U_new, U, g_tan_ext, g_raw_new, y, d, E_new, gnorm_inf_smooth, state.it + 1, conv)
 
     return step
 
@@ -2628,24 +2734,30 @@ def make_minimizer(
     elif method == "pcg":
         step_fn = make_pcg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
 
-        def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+        def init_state_fn(m, U, E, g, gnorm, **kwargs):
+            g_raw = kwargs.get("g_raw")
+            g_tan_ext = kwargs.get("g_tan_ext")
+            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
 
     elif method == "pcohen":
         step_fn = make_pcohen_minimizer(
             energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="pr"
         )
 
-        def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+        def init_state_fn(m, U, E, g, gnorm, **kwargs):
+            g_raw = kwargs.get("g_raw")
+            g_tan_ext = kwargs.get("g_tan_ext")
+            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
 
     elif method == "pcohen_hs":
         step_fn = make_pcohen_minimizer(
             energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="hs"
         )
 
-        def init_state_fn(m, U, E, g, gnorm):
-            return PCGState(m, U, U, g, g, -g, E, gnorm, 0, jnp.array(False))
+        def init_state_fn(m, U, E, g, gnorm, **kwargs):
+            g_raw = kwargs.get("g_raw")
+            g_tan_ext = kwargs.get("g_tan_ext")
+            return PCGState(m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False))
 
     elif method == "lbfgs":
         memory = kwargs.get("memory", 10)
@@ -2940,7 +3052,12 @@ def make_minimizer(
             E, g_raw = energy_and_grad(m, U, B_ext)
             g_tan = tangent_grad(m, g_raw * inv_M_rel)
             gnorm_init = jnp.max(jnp.abs(g_tan))
-            state = init_state_fn(m, U, E, g_tan, gnorm_init)
+            
+            g_tan_ext = tangent_grad(m, g_raw)
+            if method in ["pcg", "pcohen", "pcohen_hs"]:
+                state = init_state_fn(m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext)
+            else:
+                state = init_state_fn(m, U, E, g_tan, gnorm_init)
             start = time.time()
             final_state = kernel(state, B_ext, params)
             final_state.m.block_until_ready()
