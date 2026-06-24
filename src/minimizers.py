@@ -3053,6 +3053,22 @@ def make_minimizer(
             lambda s: (~s.converged) & (s.it < params["max_iter"]), lambda s: step_fn(s, B_ext, params), state
         )
 
+    @partial(jax.jit, static_argnames=("params_static",))
+    def solve_and_minimize(m0, B_ext, U_init, params_static):
+        params_dict = dict(params_static)
+        m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
+        U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True)
+        E, g_raw = energy_and_grad(m, U, B_ext)
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        gnorm_init = jnp.max(jnp.abs(g_tan))
+        
+        g_tan_ext = tangent_grad(m, g_raw)
+        state = init_state_fn(
+            m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext,
+            evals=jnp.int32(1), preco_iters=jnp.int32(0), demag_iters=init_demag
+        )
+        return kernel(state, B_ext, params_dict)
+
     def minimize(m0, B_ext, **params):
         if "phi_tol" not in params:
             # The most restrictive relative criterion is u1 (energy) at tau_f.
@@ -3065,18 +3081,22 @@ def make_minimizer(
         U_init = params.get("U0", None)
         if U_init is None:
             U_init = jnp.zeros(m0.shape[0], dtype=m0.dtype)
-        U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True)
-        E, g_raw = energy_and_grad(m, U, B_ext)
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        gnorm_init = jnp.max(jnp.abs(g_tan))
-        
-        g_tan_ext = tangent_grad(m, g_raw)
-        state = init_state_fn(
-            m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext,
-            evals=1, preco_iters=0, demag_iters=int(init_demag)
-        )
+
+        # Convert dictionary to hashable static tuple (filter out dynamic U0 and convert arrays/lists to tuples)
+        params_static_list = []
+        for k, v in params.items():
+            if k == "U0":
+                continue
+            if hasattr(v, "tolist"):
+                v_list = v.tolist()
+                v = tuple(v_list) if isinstance(v_list, list) else v_list
+            elif isinstance(v, list):
+                v = tuple(v)
+            params_static_list.append((k, v))
+        params_static = tuple(params_static_list)
+
         start = time.time()
-        final_state = kernel(state, B_ext, params)
+        final_state = solve_and_minimize(m, B_ext, U_init, params_static)
         final_state.m.block_until_ready()
         time_val = time.time() - start
 
