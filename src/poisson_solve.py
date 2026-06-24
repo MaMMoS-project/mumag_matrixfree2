@@ -24,6 +24,8 @@ from fem_utils import (  # noqa: E402
     assemble_scatter,
     assemble_segment_sum,
     pad_geom_for_chunking,
+    _B_split_from_JinvT,
+    _compute_JinvT_from_coords,
 )
 
 Array = jnp.ndarray
@@ -42,43 +44,9 @@ _GRAD_HAT = jnp.array(
 )
 
 
-def _B_from_JinvT(JinvT_c: Array, dtype) -> Array:
-    """Compute shape function gradients B from inverse Jacobian transpose.
-
-    Args:
-        JinvT_c (Array): Inverse Jacobian transpose (chunk_elems, 3, 3).
-        dtype (jnp.dtype): Target data type.
-
-    Returns:
-        Array: Shape function gradients (chunk_elems, 4, 3).
-    """
-    J_cast = JinvT_c.astype(dtype)
-    B_1 = J_cast[:, :, 0]
-    B_2 = J_cast[:, :, 1]
-    B_3 = J_cast[:, :, 2]
-    B_0 = -(B_1 + B_2 + B_3)
-    return jnp.stack([B_0, B_1, B_2, B_3], axis=1)
-
-
-def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
-    """Compute inverse Jacobian transpose from tetrahedron node coordinates.
-
-    Args:
-        x_e (Array): Node coordinates for the chunk (chunk_elems, 4, 3).
-        dtype (jnp.dtype): Target data type.
-
-    Returns:
-        Array: Inverse Jacobian transpose (chunk_elems, 3, 3).
-    """
-    x0 = x_e[:, 0, :]
-    J = jnp.stack([x_e[:, 1, :] - x0, x_e[:, 2, :] - x0, x_e[:, 3, :] - x0], axis=2)
-    invJ = jnp.linalg.inv(J.astype(dtype))
-    return jnp.swapaxes(invJ, 1, 2)
-
-
 def _make_B_getter(
     geom_p: TetGeom, chunk_elems: int, grad_backend: GradBackend
-) -> Callable[[Array, int, jnp.dtype], Array]:
+) -> Callable[[Array, int, jnp.dtype], tuple[Array, Array, Array]]:
     """Create a helper function to retrieve shape function gradients for a chunk.
 
     Args:
@@ -87,15 +55,21 @@ def _make_B_getter(
         grad_backend (GradBackend): Strategy for gradients.
 
     Returns:
-        Callable: A function _get_B(connectivity, chunk_start_index, dtype).
+        Callable: A function _get_B(connectivity, chunk_start_index, dtype) -> (Bx, By, Bz).
     """
     if grad_backend == "stored_grad_phi":
         if geom_p.grad_phi is None:
             raise ValueError("stored_grad_phi requires geom.grad_phi")
         grad_phi = geom_p.grad_phi
+        grad_phi_x = grad_phi[:, :, 0]
+        grad_phi_y = grad_phi[:, :, 1]
+        grad_phi_z = grad_phi[:, :, 2]
 
-        def _get_B(conn_c: Array, s: int, dtype) -> Array:
-            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
+        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
+            bx = lax.dynamic_slice(grad_phi_x, (s, 0), (chunk_elems, 4)).astype(dtype)
+            by = lax.dynamic_slice(grad_phi_y, (s, 0), (chunk_elems, 4)).astype(dtype)
+            bz = lax.dynamic_slice(grad_phi_z, (s, 0), (chunk_elems, 4)).astype(dtype)
+            return bx, by, bz
 
         return _get_B
 
@@ -104,9 +78,9 @@ def _make_B_getter(
             raise ValueError("stored_JinvT requires geom.JinvT")
         JinvT = geom_p.JinvT
 
-        def _get_B(conn_c: Array, s: int, dtype) -> Array:
+        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
             JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
-            return _B_from_JinvT(JinvT_c, dtype)
+            return _B_split_from_JinvT(JinvT_c, dtype)
 
         return _get_B
 
@@ -114,10 +88,10 @@ def _make_B_getter(
         raise ValueError("on_the_fly requires geom.x_nodes")
     x_nodes = geom_p.x_nodes
 
-    def _get_B(conn_c: Array, s: int, dtype) -> Array:
+    def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
         x_e = x_nodes[conn_c].astype(dtype)
         JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
-        return _B_from_JinvT(JinvT_c, dtype)
+        return _B_split_from_JinvT(JinvT_c, dtype)
 
     return _get_B
 
@@ -183,22 +157,36 @@ def make_poisson_ops(
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             U_e = U[conn_c]
 
             # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
             # Manual unrolling here minimizes temporary array creation and
             # improves register allocation in the XLA-compiled kernel.
-            grad_U = (
-                B_c[:, 0, :] * U_e[:, 0, None]
-                + B_c[:, 1, :] * U_e[:, 1, None]
-                + B_c[:, 2, :] * U_e[:, 2, None]
-                + B_c[:, 3, :] * U_e[:, 3, None]
+            grad_Ux = (
+                Bx[:, 0] * U_e[:, 0]
+                + Bx[:, 1] * U_e[:, 1]
+                + Bx[:, 2] * U_e[:, 2]
+                + Bx[:, 3] * U_e[:, 3]
+            )
+            grad_Uy = (
+                By[:, 0] * U_e[:, 0]
+                + By[:, 1] * U_e[:, 1]
+                + By[:, 2] * U_e[:, 2]
+                + By[:, 3] * U_e[:, 3]
+            )
+            grad_Uz = (
+                Bz[:, 0] * U_e[:, 0]
+                + Bz[:, 1] * U_e[:, 1]
+                + Bz[:, 2] * U_e[:, 2]
+                + Bz[:, 3] * U_e[:, 3]
             )
 
             # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
             contrib = Ve_c[:, None] * (
-                B_c[..., 0] * grad_U[:, 0, None] + B_c[..., 1] * grad_U[:, 1, None] + B_c[..., 2] * grad_U[:, 2, None]
+                Bx * grad_Ux[:, None]
+                + By * grad_Uy[:, None]
+                + Bz * grad_Uz[:, None]
             )
 
             if assembly == "scatter":
@@ -224,14 +212,19 @@ def make_poisson_ops(
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
 
             # Unrolled RHS: contrib_a = (Js * Ve / 4) * (sum_b m_b . grad_phi_a)
-            m_sum = m_e[:, 0, :] + m_e[:, 1, :] + m_e[:, 2, :] + m_e[:, 3, :]
+            mx_sum = m_e[:, 0, 0] + m_e[:, 1, 0] + m_e[:, 2, 0] + m_e[:, 3, 0]
+            my_sum = m_e[:, 0, 1] + m_e[:, 1, 1] + m_e[:, 2, 1] + m_e[:, 3, 1]
+            mz_sum = m_e[:, 0, 2] + m_e[:, 1, 2] + m_e[:, 2, 2] + m_e[:, 3, 2]
+
             dot_term = 0.25 * (
-                B_c[..., 0] * m_sum[:, 0, None] + B_c[..., 1] * m_sum[:, 1, None] + B_c[..., 2] * m_sum[:, 2, None]
+                Bx * mx_sum[:, None]
+                + By * my_sum[:, None]
+                + Bz * mz_sum[:, None]
             )
 
             contrib = (Ve_c * Js_c)[:, None] * dot_term
@@ -250,9 +243,9 @@ def make_poisson_ops(
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             # Unrolled norm squared: |grad_phi_a|^2
-            local = Ve_c[:, None] * (B_c[..., 0] ** 2 + B_c[..., 1] ** 2 + B_c[..., 2] ** 2)
+            local = Ve_c[:, None] * (Bx ** 2 + By ** 2 + Bz ** 2)
             if assembly == "scatter":
                 return assemble_scatter(d_acc, conn_c, local)
             else:
