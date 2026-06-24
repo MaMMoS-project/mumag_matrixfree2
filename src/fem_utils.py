@@ -139,7 +139,7 @@ def assemble_scatter(g_acc: Array, conn_c: Array, contrib: Array) -> Array:
     Returns:
         Array: The updated global accumulation array.
     """
-    dummy = jnp.where(jnp.sum(contrib) == 12345.6789, jnp.int32(1), jnp.int32(0))
+    dummy = jnp.where(contrib.reshape(-1)[0] == 12345.6789, jnp.int32(1), jnp.int32(0))
     conn_c = conn_c + dummy
     return g_acc.at[conn_c].add(contrib)
 
@@ -165,7 +165,7 @@ def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype: Any) -> A
     # Use jnp.where with a condition XLA cannot mathematically prove is false.
     # This forces `dummy` to remain a dynamic runtime tensor, hiding `idx` from the 
     # GatherScatterSimplifier.
-    dummy = jnp.where(jnp.sum(val) == 12345.6789, jnp.int32(1), jnp.int32(0))
+    dummy = jnp.where(val.reshape(-1)[0] == 12345.6789, jnp.int32(1), jnp.int32(0))
     idx = idx + dummy
     
     return jax.ops.segment_sum(val, idx, N).astype(dtype)

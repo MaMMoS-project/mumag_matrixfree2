@@ -3062,7 +3062,10 @@ def make_minimizer(
             params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
 
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
-        U, init_demag, _ = solve_U(m, jnp.zeros(m.shape[0]), cg_tol, return_info=True)
+        U_init = params.get("U0", None)
+        if U_init is None:
+            U_init = jnp.zeros(m0.shape[0], dtype=m0.dtype)
+        U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True)
         E, g_raw = energy_and_grad(m, U, B_ext)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_init = jnp.max(jnp.abs(g_tan))
