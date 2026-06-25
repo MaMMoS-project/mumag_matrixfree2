@@ -140,23 +140,27 @@ def make_poisson_ops(
         if A_sparse is None or Dx_sparse is None or Dy_sparse is None or Dz_sparse is None or A_diag is None:
             raise ValueError("assembled mode requires A_sparse, Dx_sparse, Dy_sparse, Dz_sparse, and A_diag")
 
-        def apply_A(U: Array) -> Array:
-            y = A_sparse @ U
-            if boundary_mask is not None:
-                y = y * boundary_mask
+        def apply_A(A_sparse_arg, boundary_mask_arg, U: Array) -> Array:
+            y = A_sparse_arg @ U
+            if boundary_mask_arg is not None:
+                y = y * boundary_mask_arg
             return y
 
-        def rhs_from_m(m: Array) -> Array:
-            y = Dx_sparse @ m[:, 0] + Dy_sparse @ m[:, 1] + Dz_sparse @ m[:, 2]
-            if boundary_mask is not None:
+        def rhs_from_m(Dx_sparse_arg, Dy_sparse_arg, Dz_sparse_arg, boundary_mask_arg, m: Array) -> Array:
+            y = Dx_sparse_arg @ m[:, 0] + Dy_sparse_arg @ m[:, 1] + Dz_sparse_arg @ m[:, 2]
+            if boundary_mask_arg is not None:
                 # Although matrix-free doesn't do it inside rhs_from_m, we do it for parity
-                y = y * boundary_mask
+                y = y * boundary_mask_arg
             return y
 
-        def assemble_diag(N: int) -> Array:
-            return A_diag
+        def assemble_diag(A_diag_arg, N: int) -> Array:
+            return A_diag_arg
 
-        return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(0,))
+        return (
+            jax.tree_util.Partial(jax.jit(apply_A), A_sparse, boundary_mask),
+            jax.tree_util.Partial(jax.jit(rhs_from_m), Dx_sparse, Dy_sparse, Dz_sparse, boundary_mask),
+            jax.tree_util.Partial(jax.jit(assemble_diag, static_argnums=(1,)), A_diag),
+        )
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id

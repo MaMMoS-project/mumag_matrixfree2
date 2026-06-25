@@ -146,54 +146,59 @@ def make_energy_kernels(
         if Kex_sparse is None or Gx_sparse is None or Gy_sparse is None or Gz_sparse is None or Kan_sparse is None or k_nodes is None:
             raise ValueError("assembled mode requires Kex_sparse, Gx_sparse, Gy_sparse, Gz_sparse, Kan_sparse, and k_nodes")
 
-        def energy_and_grad(m: Array, U: Array, B_ext: Array) -> tuple[Array, Array]:
+        def energy_and_grad(Kex_sparse_arg, Kan_sparse_arg, Gx_sparse_arg, Gy_sparse_arg, Gz_sparse_arg, k_nodes_arg, M_nodal_arg, inv_Vmag_arg, B_bias_arg, m: Array, U: Array, B_ext: Array) -> tuple[Array, Array]:
             N = m.shape[0]
             dtype = m.dtype
             B_ext = jnp.asarray(B_ext, dtype=dtype)
 
             # 1. Exchange gradient: Kex @ m (shape (N, 3))
-            g_ex = Kex_sparse @ m
+            g_ex = Kex_sparse_arg @ m
 
             # 2. Uniaxial anisotropy gradient: Kan @ (m . k) * k (shape (N, 3))
-            p = m[:, 0] * k_nodes[:, 0] + m[:, 1] * k_nodes[:, 1] + m[:, 2] * k_nodes[:, 2]
-            w = Kan_sparse @ p
-            g_an = w[:, None] * k_nodes
+            p = m[:, 0] * k_nodes_arg[:, 0] + m[:, 1] * k_nodes_arg[:, 1] + m[:, 2] * k_nodes_arg[:, 2]
+            w = Kan_sparse_arg @ p
+            g_an = w[:, None] * k_nodes_arg
 
             # 3. Demag gradient: G @ U (shape (N, 3))
-            g_dem_x = Gx_sparse @ U
-            g_dem_y = Gy_sparse @ U
-            g_dem_z = Gz_sparse @ U
+            g_dem_x = Gx_sparse_arg @ U
+            g_dem_y = Gy_sparse_arg @ U
+            g_dem_z = Gz_sparse_arg @ U
             g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
 
             # 4. Zeeman gradient
             B_eff = B_ext[None, :]
-            if B_bias is not None:
-                B_eff = B_eff + B_bias
-            g_z = -2.0 * M_nodal[:, None] * B_eff
+            if B_bias_arg is not None:
+                B_eff = B_eff + B_bias_arg
+            g_z = -2.0 * M_nodal_arg[:, None] * B_eff
 
             # Total gradient
             g_total = g_ex + g_an + g_dem + g_z
 
             # Energy calculation trick: E = 0.5 * sum(m * (g_total + g_z))
             E = 0.5 * jnp.sum(m * (g_total + g_z))
-            return E * inv_Vmag, g_total * inv_Vmag
+            return E * inv_Vmag_arg, g_total * inv_Vmag_arg
 
-        def energy_only(m: Array, U: Array, B_ext: Array) -> Array:
-            E, _ = energy_and_grad(m, U, B_ext)
+        def energy_only(Kex_sparse_arg, Kan_sparse_arg, Gx_sparse_arg, Gy_sparse_arg, Gz_sparse_arg, k_nodes_arg, M_nodal_arg, inv_Vmag_arg, B_bias_arg, m: Array, U: Array, B_ext: Array) -> Array:
+            E, _ = energy_and_grad(Kex_sparse_arg, Kan_sparse_arg, Gx_sparse_arg, Gy_sparse_arg, Gz_sparse_arg, k_nodes_arg, M_nodal_arg, inv_Vmag_arg, B_bias_arg, m, U, B_ext)
             return E
 
-        def grad_only(m: Array, U: Array, B_ext: Array) -> Array:
-            _, g = energy_and_grad(m, U, B_ext)
+        def grad_only(Kex_sparse_arg, Kan_sparse_arg, Gx_sparse_arg, Gy_sparse_arg, Gz_sparse_arg, k_nodes_arg, M_nodal_arg, inv_Vmag_arg, B_bias_arg, m: Array, U: Array, B_ext: Array) -> Array:
+            _, g = energy_and_grad(Kex_sparse_arg, Kan_sparse_arg, Gx_sparse_arg, Gy_sparse_arg, Gz_sparse_arg, k_nodes_arg, M_nodal_arg, inv_Vmag_arg, B_bias_arg, m, U, B_ext)
             return g
 
-        def local_grad_only(v: Array) -> Array:
+        def local_grad_only(Kex_sparse_arg, Kan_sparse_arg, k_nodes_arg, inv_Vmag_arg, v: Array) -> Array:
             # Action of local Hessian (Ex + An)
-            g_ex = Kex_sparse @ v
-            p = v[:, 0] * k_nodes[:, 0] + v[:, 1] * k_nodes[:, 1] + v[:, 2] * k_nodes[:, 2]
-            g_an = (Kan_sparse @ p)[:, None] * k_nodes
-            return (g_ex + g_an) * inv_Vmag
+            g_ex = Kex_sparse_arg @ v
+            p = v[:, 0] * k_nodes_arg[:, 0] + v[:, 1] * k_nodes_arg[:, 1] + v[:, 2] * k_nodes_arg[:, 2]
+            g_an = (Kan_sparse_arg @ p)[:, None] * k_nodes_arg
+            return (g_ex + g_an) * inv_Vmag_arg
 
-        return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
+        return (
+            jax.tree_util.Partial(jax.jit(energy_and_grad), Kex_sparse, Kan_sparse, Gx_sparse, Gy_sparse, Gz_sparse, k_nodes, M_nodal, inv_Vmag, B_bias),
+            jax.tree_util.Partial(jax.jit(energy_only), Kex_sparse, Kan_sparse, Gx_sparse, Gy_sparse, Gz_sparse, k_nodes, M_nodal, inv_Vmag, B_bias),
+            jax.tree_util.Partial(jax.jit(grad_only), Kex_sparse, Kan_sparse, Gx_sparse, Gy_sparse, Gz_sparse, k_nodes, M_nodal, inv_Vmag, B_bias),
+            jax.tree_util.Partial(jax.jit(local_grad_only), Kex_sparse, Kan_sparse, k_nodes, inv_Vmag),
+        )
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id

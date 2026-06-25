@@ -56,21 +56,18 @@ def assemble_poisson_matrix_cpu(
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
         mask = np.array(boundary_mask)
         boundary_nodes = np.where(mask == 0)[0]
+        is_boundary = (mask == 0)
 
         # Zero out rows and columns to maintain symmetry
-        # 1. Zero rows
-        for i in boundary_nodes:
-            r_start = A.indptr[i]
-            r_end = A.indptr[i + 1]
-            A.data[r_start:r_end] = 0.0
+        # 1. Zero rows (vectorized)
+        row_indices = np.repeat(np.arange(N), np.diff(A.indptr))
+        A.data[is_boundary[row_indices]] = 0.0
 
-        # 2. Zero columns
-        A = A.tocoo()
-        mask_indices = (mask[A.row] > 0) & (mask[A.col] > 0)
-        A.data = A.data[mask_indices]
-        A.row = A.row[mask_indices]
-        A.col = A.col[mask_indices]
-        A = sp.csr_matrix((A.data, (A.row, A.col)), shape=(N, N))
+        # 2. Zero columns (vectorized)
+        A.data[is_boundary[A.indices]] = 0.0
+
+        # Remove explicit zeros
+        A.eliminate_zeros()
 
     # Add regularization to diagonal
     A = A + reg * sp.eye(N, format="csr")
@@ -99,28 +96,16 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
     Returns:
         np.ndarray: The SPAI0 diagonal elements.
     """
-    N = A.shape[0]
-    m_diag = np.zeros(N)
-
     # Square of each element
-    A_data_sq = A.data**2
+    A_sq = sp.csr_matrix((A.data**2, A.indices, A.indptr), shape=A.shape)
+    
+    # Sum over rows
+    row_sum_sq = np.array(A_sq.sum(axis=1)).ravel()
+    
+    # Diagonal elements A_ii
+    a_ii = A.diagonal()
 
-    for i in range(N):
-        row_start = A.indptr[i]
-        row_end = A.indptr[i + 1]
-
-        row_sum_sq = np.sum(A_data_sq[row_start:row_end])
-
-        # Find diagonal element A_ii
-        a_ii = 0.0
-        for j in range(row_start, row_end):
-            if A.indices[j] == i:
-                a_ii = A.data[j]
-                break
-
-        m_diag[i] = a_ii / (row_sum_sq + 1e-30)
-
-    return m_diag
+    return a_ii / (row_sum_sq + 1e-30)
 
 
 def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict]:
