@@ -137,30 +137,22 @@ def make_poisson_ops(
             assemble_diag: Computes the diagonal of A.
     """
     if mode == "assembled":
-        if A_sparse is None or Dx_sparse is None or Dy_sparse is None or Dz_sparse is None or A_diag is None:
-            raise ValueError("assembled mode requires A_sparse, Dx_sparse, Dy_sparse, Dz_sparse, and A_diag")
-
-        def apply_A(A_sparse_arg, boundary_mask_arg, U: Array) -> Array:
-            y = A_sparse_arg @ U
-            if boundary_mask_arg is not None:
-                y = y * boundary_mask_arg
+        def apply_A(sparse_ops: dict, U: Array) -> Array:
+            y = sparse_ops["A_sparse"] @ U
+            if boundary_mask is not None:
+                y = y * boundary_mask
             return y
 
-        def rhs_from_m(Dx_sparse_arg, Dy_sparse_arg, Dz_sparse_arg, boundary_mask_arg, m: Array) -> Array:
-            y = Dx_sparse_arg @ m[:, 0] + Dy_sparse_arg @ m[:, 1] + Dz_sparse_arg @ m[:, 2]
-            if boundary_mask_arg is not None:
-                # Although matrix-free doesn't do it inside rhs_from_m, we do it for parity
-                y = y * boundary_mask_arg
+        def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
+            y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
+            if boundary_mask is not None:
+                y = y * boundary_mask
             return y
 
-        def assemble_diag(A_diag_arg, N: int) -> Array:
-            return A_diag_arg
+        def assemble_diag(sparse_ops: dict, N: int) -> Array:
+            return sparse_ops["A_diag"]
 
-        return (
-            jax.tree_util.Partial(jax.jit(apply_A), A_sparse, boundary_mask),
-            jax.tree_util.Partial(jax.jit(rhs_from_m), Dx_sparse, Dy_sparse, Dz_sparse, boundary_mask),
-            jax.tree_util.Partial(jax.jit(assemble_diag, static_argnums=(1,)), A_diag),
-        )
+        return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(1,))
 
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
@@ -178,7 +170,7 @@ def make_poisson_ops(
 
     _get_B = _make_B_getter(geom_p, chunk_elems, grad_backend)
 
-    def apply_A(U: Array) -> Array:
+    def apply_A(sparse_ops, U: Array) -> Array:
         """Compute the matrix-vector product A @ U.
 
         Optimization Choice: Matrix-free implementation.
@@ -240,7 +232,7 @@ def make_poisson_ops(
             y = y * boundary_mask
         return y
 
-    def rhs_from_m(m: Array) -> Array:
+    def rhs_from_m(sparse_ops, m: Array) -> Array:
         dtype = m.dtype
 
         def body(i: int, b_acc: Array) -> Array:
@@ -272,7 +264,7 @@ def make_poisson_ops(
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
         return lax.fori_loop(0, n_chunks, body, b0)
 
-    def assemble_diag(N: int) -> Array:
+    def assemble_diag(sparse_ops, N: int) -> Array:
         dtype = jnp.float64
 
         def body(i: int, d_acc: Array) -> Array:
@@ -294,7 +286,7 @@ def make_poisson_ops(
     return (
         jax.jit(apply_A),
         jax.jit(rhs_from_m),
-        jax.jit(assemble_diag, static_argnums=(0,)),
+        jax.jit(assemble_diag, static_argnums=(1,)),
     )
 
 
@@ -323,13 +315,13 @@ def estimate_spectral_radius(
         v = v * boundary_mask
 
     def body(i: int, v_curr: Array) -> Array:
-        v_next = apply_A(v_curr) / (Mdiag + 1e-30)
+        v_next = apply_A(None, v_curr) / (Mdiag + 1e-30)
         if boundary_mask is not None:
             v_next = v_next * boundary_mask
         return v_next / (jnp.linalg.norm(v_next) + 1e-30)
 
     v_final = lax.fori_loop(0, n_iters, body, v)
-    lam_max = jnp.vdot(v_final, (apply_A(v_final) / (Mdiag + 1e-30)))
+    lam_max = jnp.vdot(v_final, (apply_A(None, v_final) / (Mdiag + 1e-30)))
     return float(lam_max)
 
 
@@ -368,14 +360,14 @@ def make_pcg_solve(
     """
     default_tol = float(tol)
 
-    def apply_Minv(r: Array, hierarchy: list | None = None) -> Array:
+    def apply_Minv(sparse_ops: dict, r: Array, hierarchy: list | None = None) -> Array:
         if precond_type == "none":
             if boundary_mask is not None:
                 return r * boundary_mask
             return r
 
         if precond_type in ["amg", "amgcl"] and apply_Minv_amg is not None:
-            return apply_Minv_amg(r, hierarchy)
+            return apply_Minv_amg(sparse_ops, r, hierarchy)
 
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
@@ -393,7 +385,7 @@ def make_pcg_solve(
             y_prev = jnp.zeros_like(y)
             curr_alpha = alpha
             for _k in range(1, order):
-                res = r - apply_A(y)
+                res = r - apply_A(sparse_ops, y)
                 if boundary_mask is not None:
                     res = res * boundary_mask
                 z = res / (Mdiag.astype(dtype) + eps)
@@ -411,6 +403,7 @@ def make_pcg_solve(
         return z
 
     def solve(
+        sparse_ops: dict,
         b: Array,
         x0: Array,
         tol: float | None = None,
@@ -426,11 +419,11 @@ def make_pcg_solve(
         else:
             x = x0
 
-        r = b - apply_A(x)
+        r = b - apply_A(sparse_ops, x)
         if boundary_mask is not None:
             r = r * boundary_mask
 
-        z = apply_Minv(r, hierarchy)
+        z = apply_Minv(sparse_ops, r, hierarchy)
         p = z
         rz = jnp.dot(r, z)
         r2 = jnp.dot(r, r)
@@ -447,13 +440,13 @@ def make_pcg_solve(
             state: tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
         ) -> tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
             it, x, r, z, p, rz, r2 = state
-            Ap = apply_A(p)
+            Ap = apply_A(sparse_ops, p)
             if boundary_mask is not None:
                 Ap = Ap * boundary_mask
             alpha = rz / (jnp.dot(p, Ap) + eps)
             x_new = x + alpha * p
             r_new = r - alpha * Ap
-            z_new = apply_Minv(r_new, hierarchy)
+            z_new = apply_Minv(sparse_ops, r_new, hierarchy)
             rz_new = jnp.dot(r_new, z_new)
             beta = rz_new / (rz + eps)
             p_new = z_new + beta * p
@@ -544,12 +537,13 @@ def make_solve_U(
 
         N = int(np.max(geom.conn)) + 1
 
-    Mdiag = assemble_diag(N)
+    Mdiag = None
     l_max = 2.0
     apply_Minv_amg = None
     hierarchy_jax = None
 
     if precond_type == "chebyshev":
+        Mdiag = assemble_diag(None, N)
         l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
 
     elif precond_type in ["amg", "amgcl"]:
@@ -606,8 +600,8 @@ def make_solve_U(
 
         hierarchy_jax = AMGHierarchy(levels_jax)
 
-        def apply_A_masked(v: Array) -> Array:
-            res = apply_A(v)
+        def apply_A_masked(sparse_ops, v: Array) -> Array:
+            res = apply_A(sparse_ops, v)
             if boundary_mask is not None:
                 res = res * boundary_mask
             return res
@@ -632,16 +626,16 @@ def make_solve_U(
     if hierarchy_jax is None:
         @partial(jax.jit, static_argnums=(3,))
         def solve_U(
-            m: Array, x0: Array, tol: float | None = None, return_info: bool = False
+            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
         ) -> Array | tuple[Array, int, float]:
-            b = rhs_from_m(m)
+            b = rhs_from_m(sparse_ops, m)
             bnorm2 = jnp.vdot(b, b)
 
             if enforce_zero_mean:
                 b = b - jnp.mean(b)
                 x0 = x0 - jnp.mean(x0)
 
-            U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=None)
+            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=None)
 
             if enforce_zero_mean:
                 U = U - jnp.mean(U)
@@ -652,16 +646,16 @@ def make_solve_U(
     else:
         @partial(jax.jit, static_argnums=(3,))
         def solve_U(
-            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, hierarchy_dyn=hierarchy_jax
+            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None, hierarchy_dyn=hierarchy_jax
         ) -> Array | tuple[Array, int, float]:
-            b = rhs_from_m(m)
+            b = rhs_from_m(sparse_ops, m)
             bnorm2 = jnp.vdot(b, b)
 
             if enforce_zero_mean:
                 b = b - jnp.mean(b)
                 x0 = x0 - jnp.mean(x0)
 
-            U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_dyn)
+            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
 
             if enforce_zero_mean:
                 U = U - jnp.mean(U)

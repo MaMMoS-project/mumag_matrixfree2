@@ -1008,23 +1008,11 @@ def main() -> None:
         Gy_sparse = csr_to_jax_bCOO(Gy_scipy.tocsr())
         Gz_sparse = csr_to_jax_bCOO(Gz_scipy.tocsr())
 
-        Kex_scipy = assemble_exchange_matrix_cpu(
-            conn32, volume, l_grad_phi, A_red, mat_id
+        from amg_utils import assemble_exchange_anisotropy_matrix_cpu
+        K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+            conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
         )
-        Kex_diag_cpu = Kex_scipy.diagonal()
-        Kex_diag = jnp.asarray(Kex_diag_cpu)
-        Kex_sparse = csr_to_jax_bCOO(Kex_scipy)
-
-        Kan_scipy = assemble_anisotropy_matrix_cpu(
-            conn32, volume, K1_red, mat_id
-        )
-        Kan_sparse = csr_to_jax_bCOO(Kan_scipy)
-
-        N = knt.shape[0]
-        node_mat = np.ones(N, dtype=np.int32)
-        node_mat[conn32] = mat_id[:, None]
-        k_nodes_np = k_easy_lookup[node_mat - 1]
-        k_nodes = jnp.asarray(k_nodes_np)
+        K_eff_sparse = csr_to_jax_bCOO(K_eff_scipy)
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
@@ -1032,13 +1020,10 @@ def main() -> None:
             "Dy_sparse": Dy_sparse,
             "Dz_sparse": Dz_sparse,
             "A_diag": A_diag,
-            "Kex_sparse": Kex_sparse,
+            "K_eff_sparse": K_eff_sparse,
             "Gx_sparse": Gx_sparse,
             "Gy_sparse": Gy_sparse,
             "Gz_sparse": Gz_sparse,
-            "Kan_sparse": Kan_sparse,
-            "k_nodes": k_nodes,
-            "Kex_diag": Kex_diag,
         }
         print("[ok] Finished assembly and GPU transfer.")
 

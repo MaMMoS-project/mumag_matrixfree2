@@ -245,13 +245,10 @@ def run_hysteresis_loop(
     Dy_sparse: Any = None,
     Dz_sparse: Any = None,
     A_diag: Any = None,
-    Kex_sparse: Any = None,
+    K_eff_sparse: Any = None,
     Gx_sparse: Any = None,
     Gy_sparse: Any = None,
     Gz_sparse: Any = None,
-    Kan_sparse: Any = None,
-    k_nodes: Any = None,
-    Kex_diag: Any = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -303,12 +300,6 @@ def run_hysteresis_loop(
         assembly=energy_assembly,
         grad_backend=grad_backend,
         mode=mode,
-        Kex_sparse=Kex_sparse,
-        Gx_sparse=Gx_sparse,
-        Gy_sparse=Gy_sparse,
-        Gz_sparse=Gz_sparse,
-        Kan_sparse=Kan_sparse,
-        k_nodes=k_nodes,
     )
 
     solve_U = make_solve_U(
@@ -323,11 +314,6 @@ def run_hysteresis_loop(
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
         mode=mode,
-        A_sparse=A_sparse,
-        Dx_sparse=Dx_sparse,
-        Dy_sparse=Dy_sparse,
-        Dz_sparse=Dz_sparse,
-        A_diag=A_diag,
     )
 
     minimize = make_minimizer(
@@ -347,13 +333,6 @@ def run_hysteresis_loop(
         energy_assembly=energy_assembly,
         grad_backend=grad_backend,
         mode=mode,
-        Kex_sparse=Kex_sparse,
-        Gx_sparse=Gx_sparse,
-        Gy_sparse=Gy_sparse,
-        Gz_sparse=Gz_sparse,
-        Kan_sparse=Kan_sparse,
-        k_nodes=k_nodes,
-        Kex_diag=Kex_diag,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
@@ -403,6 +382,17 @@ def run_hysteresis_loop(
             mu=params.mu,
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
+            sparse_ops={
+                "A_sparse": A_sparse,
+                "Dx_sparse": Dx_sparse,
+                "Dy_sparse": Dy_sparse,
+                "Dz_sparse": Dz_sparse,
+                "A_diag": A_diag,
+                "K_eff_sparse": K_eff_sparse,
+                "Gx_sparse": Gx_sparse,
+                "Gy_sparse": Gy_sparse,
+                "Gz_sparse": Gz_sparse,
+            }
         )
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
