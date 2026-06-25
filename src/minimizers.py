@@ -2697,6 +2697,8 @@ def make_minimizer(
     if "energy_assembly" in kwargs:
         kwargs["assembly"] = kwargs.pop("energy_assembly")
 
+    Kex_diag = kwargs.pop("Kex_diag", None)
+
     _energy_and_grad_raw, _energy_only_raw, grad_only, local_grad_only = make_energy_kernels(
         geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal, **kwargs
     )
@@ -2707,9 +2709,8 @@ def make_minimizer(
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
     # Compute Jacobi preconditioner using the diagonal of the exchange matrix
-    # Compute Jacobi preconditioner using the diagonal of the exchange matrix
-    if kwargs.get("mode", "matrix_free") == "assembled" and "Kex_diag" in kwargs:
-        d_diag = kwargs["Kex_diag"]
+    if kwargs.get("mode", "matrix_free") == "assembled" and Kex_diag is not None:
+        d_diag = Kex_diag
     else:
         from energy_kernels import compute_exchange_diagonal
         d_diag = compute_exchange_diagonal(
