@@ -105,8 +105,14 @@ def make_poisson_ops(
     grad_backend: GradBackend = "stored_grad_phi",
     assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
+    mode: str = "matrix_free",
+    A_sparse: Any | None = None,
+    Dx_sparse: Any | None = None,
+    Dy_sparse: Any | None = None,
+    Dz_sparse: Any | None = None,
+    A_diag: Array | None = None,
 ) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
-    """Create JIT-compiled matrix-free Poisson operators.
+    """Create JIT-compiled matrix-free or matrix-assembled Poisson operators.
 
     Args:
         geom (TetGeom): Geometry container.
@@ -119,6 +125,10 @@ def make_poisson_ops(
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
         boundary_mask (Array | None, optional): Dirichlet boundary mask
             (0.0 at boundary). Defaults to None.
+        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
+        A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
+        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
+        A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
         tuple[Callable, Callable, Callable]: (apply_A, rhs_from_m, assemble_diag).
@@ -126,6 +136,28 @@ def make_poisson_ops(
             rhs_from_m: Computes demag RHS from magnetization m.
             assemble_diag: Computes the diagonal of A.
     """
+    if mode == "assembled":
+        if A_sparse is None or Dx_sparse is None or Dy_sparse is None or Dz_sparse is None or A_diag is None:
+            raise ValueError("assembled mode requires A_sparse, Dx_sparse, Dy_sparse, Dz_sparse, and A_diag")
+
+        def apply_A(U: Array) -> Array:
+            y = A_sparse @ U
+            if boundary_mask is not None:
+                y = y * boundary_mask
+            return y
+
+        def rhs_from_m(m: Array) -> Array:
+            y = Dx_sparse @ m[:, 0] + Dy_sparse @ m[:, 1] + Dz_sparse @ m[:, 2]
+            if boundary_mask is not None:
+                # Although matrix-free doesn't do it inside rhs_from_m, we do it for parity
+                y = y * boundary_mask
+            return y
+
+        def assemble_diag(N: int) -> Array:
+            return A_diag
+
+        return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(0,))
+
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
     Js_lookup = jnp.asarray(Js_lookup)
@@ -446,8 +478,14 @@ def make_solve_U(
     enforce_zero_mean: bool | None = None,
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
+    mode: str = "matrix_free",
+    A_sparse: Any = None,
+    Dx_sparse: Any = None,
+    Dy_sparse: Any = None,
+    Dz_sparse: Any = None,
+    A_diag: Any = None,
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
-    """Create a high-level function to solve the Poisson potential U.
+    """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
     Orchestrates operator creation, preconditioning setup (including AMG on CPU),
     and PCG execution.
@@ -468,6 +506,10 @@ def make_solve_U(
         boundary_mask (Array | None, optional): Dirichlet boundary mask.
             Defaults to None.
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
+        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
+        A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
+        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
+        A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
         Callable: solve_U(m, x0, tol, return_info) -> U or (U, iterations, residual).
@@ -483,6 +525,12 @@ def make_solve_U(
         grad_backend=grad_backend,
         assembly=assembly,
         boundary_mask=boundary_mask,
+        mode=mode,
+        A_sparse=A_sparse,
+        Dx_sparse=Dx_sparse,
+        Dy_sparse=Dy_sparse,
+        Dz_sparse=Dz_sparse,
+        A_diag=A_diag,
     )
 
     if geom.x_nodes is not None:

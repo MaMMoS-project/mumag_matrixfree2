@@ -442,6 +442,12 @@ def main() -> None:
         help="Number of elements processed per loop iteration (chunking to control GPU memory).",
     )
     ap.add_argument(
+        "--operator-mode",
+        choices=["matrix_free", "assembled"],
+        default="matrix_free",
+        help="Solver operator execution mode: matrix_free (on-the-fly) or assembled (sparse matrix SpMV).",
+    )
+    ap.add_argument(
         "--cg-maxiter",
         type=int,
         default=2000,
@@ -964,6 +970,78 @@ def main() -> None:
     # Scale by strength relative to saturation (dimensionless in our code)
     B_bias *= params.bias_strength
 
+    mode = args.operator_mode
+    assembled_kwargs = {}
+
+    if mode == "assembled":
+        print("Assembling global sparse operators on CPU...")
+        from amg_utils import (
+            assemble_poisson_matrix_cpu,
+            assemble_exchange_matrix_cpu,
+            assemble_divergence_matrices_cpu,
+            assemble_anisotropy_matrix_cpu,
+            csr_to_jax_bCOO,
+        )
+
+        # Ensure grad_phi is computed
+        l_grad_phi = grad_phi if 'grad_phi' in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
+
+        A_scipy = assemble_poisson_matrix_cpu(
+            conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
+        )
+        A_diag_cpu = A_scipy.diagonal()
+        A_diag = jnp.asarray(A_diag_cpu)
+        A_sparse = csr_to_jax_bCOO(A_scipy)
+
+        Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(
+            conn32, volume, l_grad_phi, Js_red, mat_id
+        )
+        Dx_sparse = csr_to_jax_bCOO(Dx_scipy)
+        Dy_sparse = csr_to_jax_bCOO(Dy_scipy)
+        Dz_sparse = csr_to_jax_bCOO(Dz_scipy)
+
+        Gx_scipy = 2.0 * Dx_scipy.transpose()
+        Gy_scipy = 2.0 * Dy_scipy.transpose()
+        Gz_scipy = 2.0 * Dz_scipy.transpose()
+
+        Gx_sparse = csr_to_jax_bCOO(Gx_scipy.tocsr())
+        Gy_sparse = csr_to_jax_bCOO(Gy_scipy.tocsr())
+        Gz_sparse = csr_to_jax_bCOO(Gz_scipy.tocsr())
+
+        Kex_scipy = assemble_exchange_matrix_cpu(
+            conn32, volume, l_grad_phi, A_red, mat_id
+        )
+        Kex_diag_cpu = Kex_scipy.diagonal()
+        Kex_diag = jnp.asarray(Kex_diag_cpu)
+        Kex_sparse = csr_to_jax_bCOO(Kex_scipy)
+
+        Kan_scipy = assemble_anisotropy_matrix_cpu(
+            conn32, volume, K1_red, mat_id
+        )
+        Kan_sparse = csr_to_jax_bCOO(Kan_scipy)
+
+        N = knt.shape[0]
+        node_mat = np.ones(N, dtype=np.int32)
+        node_mat[conn32] = mat_id[:, None]
+        k_nodes_np = k_easy_lookup[node_mat - 1]
+        k_nodes = jnp.asarray(k_nodes_np)
+
+        assembled_kwargs = {
+            "A_sparse": A_sparse,
+            "Dx_sparse": Dx_sparse,
+            "Dy_sparse": Dy_sparse,
+            "Dz_sparse": Dz_sparse,
+            "A_diag": A_diag,
+            "Kex_sparse": Kex_sparse,
+            "Gx_sparse": Gx_sparse,
+            "Gy_sparse": Gy_sparse,
+            "Gz_sparse": Gz_sparse,
+            "Kan_sparse": Kan_sparse,
+            "k_nodes": k_nodes,
+            "Kex_diag": Kex_diag,
+        }
+        print("[ok] Finished assembly and GPU transfer.")
+
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
@@ -981,6 +1059,8 @@ def main() -> None:
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
         boundary_mask=boundary_mask,
+        mode=mode,
+        **assembled_kwargs,
     )
 
     # Write .mh file for mammos-mumag compatibility

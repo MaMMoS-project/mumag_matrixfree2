@@ -2707,15 +2707,19 @@ def make_minimizer(
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
     # Compute Jacobi preconditioner using the diagonal of the exchange matrix
-    from energy_kernels import compute_exchange_diagonal
-    d_diag = compute_exchange_diagonal(
-        geom,
-        A_lookup,
-        V_mag,
-        chunk_elems=kwargs.get("chunk_elems", 200_000),
-        assembly=kwargs.get("assembly", "segment_sum"),
-        grad_backend=kwargs.get("grad_backend", "stored_grad_phi"),
-    )
+    # Compute Jacobi preconditioner using the diagonal of the exchange matrix
+    if kwargs.get("mode", "matrix_free") == "assembled" and "Kex_diag" in kwargs:
+        d_diag = kwargs["Kex_diag"]
+    else:
+        from energy_kernels import compute_exchange_diagonal
+        d_diag = compute_exchange_diagonal(
+            geom,
+            A_lookup,
+            V_mag,
+            chunk_elems=kwargs.get("chunk_elems", 200_000),
+            assembly=kwargs.get("assembly", "segment_sum"),
+            grad_backend=kwargs.get("grad_backend", "stored_grad_phi"),
+        )
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     _PRECOND_MAP[id(inv_M_rel)] = inv_M_prec
 

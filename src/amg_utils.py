@@ -423,3 +423,120 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
         return vcycle_recursive(0, r, x_start)
 
     return jax.jit(vcycle)
+
+
+def assemble_exchange_matrix_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    A_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> sp.csr_matrix:
+    """Assemble the Exchange stiffness matrix K_ex in CSR format on the CPU.
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
+        A_lookup (np.ndarray): Material exchange constants (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        sp.csr_matrix: The assembled exchange matrix of shape (N, N).
+    """
+    N = np.max(conn) + 1
+    A_elem = A_lookup[mat_id - 1]
+
+    # Ke_ab = 2 * A_ex * Ve * (grad_phi_a . grad_phi_b)
+    Ke = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+    data = Ke.flatten()
+
+    Kex = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
+    Kex.sum_duplicates()
+    return Kex
+
+
+def assemble_divergence_matrices_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    Js_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]:
+    """Assemble the Divergence matrices Dx, Dy, Dz in CSR format on the CPU.
+
+    These matrices map magnetization components to the Poisson charge density.
+    (D_i)_ab^e = Js_e * (Ve / 4) * (grad_phi_a)_i for all column indices b.
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
+        Js_lookup (np.ndarray): Material saturation polarizations (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]: (Dx, Dy, Dz) CSR matrices.
+    """
+    N = np.max(conn) + 1
+    Js_elem = Js_lookup[mat_id - 1]
+    factor = Js_elem * volume / 4.0
+
+    De_x = factor[:, None, None] * np.tile(grad_phi[:, :, 0][:, :, None], (1, 1, 4))
+    De_y = factor[:, None, None] * np.tile(grad_phi[:, :, 1][:, :, None], (1, 1, 4))
+    De_z = factor[:, None, None] * np.tile(grad_phi[:, :, 2][:, :, None], (1, 1, 4))
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+
+    Dx = sp.coo_matrix((De_x.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dx.sum_duplicates()
+
+    Dy = sp.coo_matrix((De_y.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dy.sum_duplicates()
+
+    Dz = sp.coo_matrix((De_z.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dz.sum_duplicates()
+
+    return Dx, Dy, Dz
+
+
+def assemble_anisotropy_matrix_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    K1_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> sp.csr_matrix:
+    """Assemble the Uniaxial Anisotropy stiffness matrix K_an in CSR format on the CPU.
+
+    Local element stiffness contribution:
+    (K_an)_ab^e = - K1_e * (Ve / 10) * (1 + delta_ab)
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        K1_lookup (np.ndarray): Material anisotropy constants (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        sp.csr_matrix: The assembled anisotropy matrix of shape (N, N).
+    """
+    N = np.max(conn) + 1
+    K1_elem = K1_lookup[mat_id - 1]
+    val_elem = -K1_elem * volume / 10.0
+
+    # Local 4x4 matrix: Ke_ab = val_elem * (1.0 + delta_ab)
+    Ke = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+    data = Ke.flatten()
+
+    Kan = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
+    Kan.sum_duplicates()
+    return Kan
+
+

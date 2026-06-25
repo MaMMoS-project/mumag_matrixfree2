@@ -238,6 +238,20 @@ def run_hysteresis_loop(
     grad_backend: GradBackend = "stored_grad_phi",
     chunk_elems: int = 200_000,
     boundary_mask: jnp.ndarray | None = None,
+    *,
+    mode: str = "matrix_free",
+    A_sparse: Any = None,
+    Dx_sparse: Any = None,
+    Dy_sparse: Any = None,
+    Dz_sparse: Any = None,
+    A_diag: Any = None,
+    Kex_sparse: Any = None,
+    Gx_sparse: Any = None,
+    Gy_sparse: Any = None,
+    Gz_sparse: Any = None,
+    Kan_sparse: Any = None,
+    k_nodes: Any = None,
+    Kex_diag: Any = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -248,24 +262,27 @@ def run_hysteresis_loop(
         K1_lookup (np.ndarray): Anisotropy constants.
         Js_lookup (np.ndarray): Saturation polarization constants.
         k_easy_lookup (np.ndarray): Easy axis vectors.
-        m0 (np.ndarray): Initial magnetization state.
-        params (LoopParams): Loop control parameters.
-        V_mag (float): Total magnetic volume.
-        node_volumes (jnp.ndarray): Lumped nodal volumes.
-        M_nodal (jnp.ndarray): Nodal magnetic moments.
-        B_bias (np.ndarray, optional): Per-node bias field for mode initialization.
-        precond_type (str, optional): Poisson solver preconditioner.
-            Defaults to 'jacobi'.
-        order (int, optional): Chebyshev order. Defaults to 3.
-        energy_assembly (str, optional): assembly method. Defaults to 'segment_sum'.
-        grad_backend (GradBackend, optional): Strategy for gradients.
-            Defaults to 'stored_grad_phi'.
-        chunk_elems (int, optional): Loop chunk size. Defaults to 200_000.
-        boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
-            Defaults to None.
-
-    Returns:
-        dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
+        m0 (np.ndarray): Initial magnetization vector.
+        params (LoopParams): sweep and solver settings.
+        V_mag (float): Magnetic volume.
+        node_volumes (Array): Nodal volume vector.
+        M_nodal (Array): Nodal magnetic moment scaling.
+        B_bias (np.ndarray | None): Bias field.
+        precond_type (str): Preconditioning strategy.
+        order (int): Chebyshev preconditioner order.
+        energy_assembly (str): Nodal assembly strategy.
+        grad_backend (GradBackend): shape function gradients source.
+        chunk_elems (int): Chunk size for loops.
+        boundary_mask (Array | None): Boundary mask.
+        mode (str): Operator mode ('matrix_free' or 'assembled').
+        A_sparse: Assembled stiffness matrix.
+        Dx_sparse, Dy_sparse, Dz_sparse: Assembled divergence component matrices.
+        A_diag: Precomputed diagonal of A.
+        Kex_sparse: Assembled exchange matrix.
+        Gx_sparse, Gy_sparse, Gz_sparse: Assembled demag gradient component matrices.
+        Kan_sparse: Assembled anisotropy matrix.
+        k_nodes: Precomputed easy axis per node.
+        Kex_diag: Precomputed diagonal of Kex.
     """
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
@@ -285,6 +302,13 @@ def run_hysteresis_loop(
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
+        mode=mode,
+        Kex_sparse=Kex_sparse,
+        Gx_sparse=Gx_sparse,
+        Gy_sparse=Gy_sparse,
+        Gz_sparse=Gz_sparse,
+        Kan_sparse=Kan_sparse,
+        k_nodes=k_nodes,
     )
 
     solve_U = make_solve_U(
@@ -298,6 +322,12 @@ def run_hysteresis_loop(
         poisson_reg=params.poisson_reg,
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
+        mode=mode,
+        A_sparse=A_sparse,
+        Dx_sparse=Dx_sparse,
+        Dy_sparse=Dy_sparse,
+        Dz_sparse=Dz_sparse,
+        A_diag=A_diag,
     )
 
     minimize = make_minimizer(
@@ -316,6 +346,14 @@ def run_hysteresis_loop(
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
         grad_backend=grad_backend,
+        mode=mode,
+        Kex_sparse=Kex_sparse,
+        Gx_sparse=Gx_sparse,
+        Gy_sparse=Gy_sparse,
+        Gz_sparse=Gz_sparse,
+        Kan_sparse=Kan_sparse,
+        k_nodes=k_nodes,
+        Kex_diag=Kex_diag,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
