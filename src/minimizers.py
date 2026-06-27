@@ -24,8 +24,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
 from functools import partial
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -162,8 +162,14 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
         final_tau = jnp.where(pg >= 0, 0.0, s_safe)
 
         # Report to standard output during JIT execution
-        jax.debug.print("Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
-                        iters=final_iters, it_exp=final_it_exp, it_con=final_it_con, evals=final_evals, tau=final_tau)
+        jax.debug.print(
+            "Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
+            iters=final_iters,
+            it_exp=final_it_exp,
+            it_con=final_it_con,
+            evals=final_evals,
+            tau=final_tau,
+        )
 
         return final_tau
 
@@ -172,6 +178,7 @@ def make_armijo_ls(energy_only: Callable, solve_U: Callable):
 
 def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
     """Create a JAX-native Armijo line search on the curvilinear path.
+
     This version uses energy_and_grad to return (tau, E_new, g_raw_new, U_new, m_new).
     """
 
@@ -213,7 +220,18 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
             stop = (jnp.abs(1.0 - d_next) >= eta2) | (d_next < 0)  # Stop if energy increases or sufficiently far
             s_next = jnp.where(stop, s, C * s)
             s_min_next = jnp.where(stop, s_min, s)
-            return (s_next, s_min_next, it + 1, stop, E_next, g_raw_next, U_next, m_next, d_next, demag_accum + demag_it)
+            return (
+                s_next,
+                s_min_next,
+                it + 1,
+                stop,
+                E_next,
+                g_raw_next,
+                U_next,
+                m_next,
+                d_next,
+                demag_accum + demag_it,
+            )
 
         s_start = jnp.asarray(s0, dtype=m.dtype)
         # Dummy initialization values
@@ -293,7 +311,9 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
 
     def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0, sparse_ops: dict = None) -> Array:
         """Action of the extensive Hessian P on vector v.
-        NOTE: No inv_M_rel scaling here to preserve symmetry!"""
+
+        NOTE: No inv_M_rel scaling here to preserve symmetry!
+        """
         Cv = local_grad_only(v, sparse_ops=sparse_ops)
 
         m_dot_Cv = jnp.sum(m * Cv, axis=1, keepdims=True)
@@ -318,7 +338,9 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         sparse_ops: dict = None,
     ):
         """Solve Py = g_tan for y using Preconditioned Conjugate Gradient (PCG) with Steihaug-style exit.
-        The preconditioner is inv_M_prec, restoring the L2 metric for irregular meshes."""
+
+        The preconditioner is inv_M_prec, restoring the L2 metric for irregular meshes.
+        """
 
         def inner_op(v):
             return apply_P(m, g_ext, v, reg, sparse_ops=sparse_ops)
@@ -405,10 +427,27 @@ class CohenState:
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32 = 0
+    preco_iters: jnp.int32 = 0
+    demag_iters: jnp.int32 = 0
 
     def tree_flatten(self):
         """Flatten the CohenState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g, self.g_raw, self.p, self.E, self.gnorm, self.it, self.converged), None
+        return (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.g_raw,
+            self.p,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+        ), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -431,7 +470,7 @@ def make_cohen_minimizer(
 
         num = jnp.vdot(g_tan, g_tan - g_prev)
         den = jnp.vdot(g_prev, g_prev) + 1e-30
-        beta = jnp.where(state.it % params["L"] == 0, 0.0, jnp.maximum(0.0, num / den))
+        beta = jnp.where(state.it % params.get("restart_iters", m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         p_prev_proj = tangent_grad(m, p_prev)
         p = g_tan + beta * p_prev_proj
@@ -440,7 +479,7 @@ def make_cohen_minimizer(
         pg = -jnp.vdot(g_raw, p)
 
         tau_init = jnp.where(state.it == 0, params["tau0"], 1.0)
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -455,12 +494,27 @@ def make_cohen_minimizer(
             params["ls_c"],
             tau_init,
             15,
+            return_info=True,
             sparse_ops=sparse_ops,
         )
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
 
-        return CohenState(m_new, U_new, U, g_tan, g_raw_new, p, E_new, gnorm_inf, state.it + 1, conv)
+        return CohenState(
+            m_new,
+            U_new,
+            U,
+            g_tan,
+            g_raw_new,
+            p,
+            E_new,
+            gnorm_inf,
+            state.it + 1,
+            conv,
+            state.evals + ls_evals,
+            state.preco_iters,
+            state.demag_iters + ls_demag,
+        )
 
     return step
 
@@ -478,10 +532,10 @@ class PCGState:
     m: Array
     U: Array
     U_prev: Array
-    g: Array      # Stores previous g_tan_ext
+    g: Array  # Stores previous g_tan_ext
     g_raw: Array  # Stores current g_raw
-    y: Array      # Stores previous y
-    d: Array      # Stores previous d
+    y: Array  # Stores previous y
+    d: Array  # Stores previous d
     E: Array
     gnorm: Array
     it: jnp.int32
@@ -493,8 +547,20 @@ class PCGState:
     def tree_flatten(self):
         """Flatten the PCGState for JAX tree operations."""
         return (
-            self.m, self.U, self.U_prev, self.g, self.g_raw, self.y, self.d, self.E, self.gnorm, self.it, self.converged,
-            self.evals, self.preco_iters, self.demag_iters
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.g_raw,
+            self.y,
+            self.d,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
         ), None
 
     @classmethod
@@ -521,6 +587,9 @@ class PCGExactState:
     H_prev: Array
     tau_prev: Array
     converged: Array
+    evals: jnp.int32
+    preco_iters: jnp.int32
+    demag_iters: jnp.int32
 
     def tree_flatten(self):
         """Flatten the PCGExactState for JAX tree operations."""
@@ -538,6 +607,9 @@ class PCGExactState:
             self.H_prev,
             self.tau_prev,
             self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
         )
         return children, None
 
@@ -561,8 +633,14 @@ def make_pcg_minimizer(
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         sparse_ops = params.get("sparse_ops")
-        m, U, g_prev, g_raw, y_prev, d_prev, E_prev = (
-            state.m, state.U, state.g, state.g_raw, state.y, state.d, state.E
+        m, U, g_prev, g_raw, _y_prev, d_prev, E_prev = (
+            state.m,
+            state.U,
+            state.g,
+            state.g_raw,
+            state.y,
+            state.d,
+            state.E,
         )
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
@@ -572,9 +650,7 @@ def make_pcg_minimizer(
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
         y, preco_it = solve_P(
             m,
@@ -682,7 +758,13 @@ def make_pcohen_minimizer(
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         sparse_ops = params.get("sparse_ops")
         m, U, g_prev, g_raw, y_prev, d_prev, E_prev = (
-            state.m, state.U, state.g, state.g_raw, state.y, state.d, state.E
+            state.m,
+            state.U,
+            state.g,
+            state.g_raw,
+            state.y,
+            state.d,
+            state.E,
         )
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
@@ -692,9 +774,7 @@ def make_pcohen_minimizer(
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
         y, preco_it = solve_P(
             m,
@@ -826,11 +906,9 @@ def make_pcohen_exact_minimizer(
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
-        z = solve_P(
+        z, preco_it = solve_P(
             m,
             g_raw,
             g_tan_ext,
@@ -838,6 +916,8 @@ def make_pcohen_exact_minimizer(
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+            return_info=True,
+            sparse_ops=sparse_ops,
         )
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
@@ -881,7 +961,7 @@ def make_pcohen_exact_minimizer(
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
 
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -896,12 +976,30 @@ def make_pcohen_exact_minimizer(
             params["ls_c"],
             1.0,
             15,
+            return_info=True,
             sparse_ops=sparse_ops,
         )
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        return PCGExactState(m_new, U_new, U, g_tan_ext, g_raw_new, z, d, E_new, gnorm_inf_smooth, state.it + 1, H, tau, conv)
+        return PCGExactState(
+            m_new,
+            U_new,
+            U,
+            g_tan_ext,
+            g_raw_new,
+            z,
+            d,
+            E_new,
+            gnorm_inf_smooth,
+            state.it + 1,
+            H,
+            tau,
+            conv,
+            state.evals + ls_evals,
+            state.preco_iters + preco_it,
+            state.demag_iters + ls_demag,
+        )
 
     return step
 
@@ -1037,7 +1135,9 @@ def make_lbfgs_minimizer(
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf, state.it + 1, conv)
+        return LBFGSState(
+            m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf, state.it + 1, conv
+        )
 
     return step
 
@@ -1065,7 +1165,18 @@ class TNState:
 
     def tree_flatten(self):
         """Flatten the TNState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g, self.g_raw, self.d, self.E, self.gnorm, self.it, self.converged), None
+        return (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g,
+            self.g_raw,
+            self.d,
+            self.E,
+            self.gnorm,
+            self.it,
+            self.converged,
+        ), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -1216,9 +1327,7 @@ def make_tn_split_minimizer(
             # Eisenstat-Walker forcing
             eta_base = params.get("pc_force_eta", 0.5)
             alpha = params.get("pc_force_alpha", 0.5)
-            pc_tol = jnp.where(
-                params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-            )
+            pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
             d_inner = jnp.zeros_like(g_tan)
             r_inner = -g_tan
@@ -1396,7 +1505,9 @@ def make_plbfgs_minimizer(
         S_next = jnp.where(update_ok, state.S.at[idx].set(s_new), state.S)
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_new), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
-        return LBFGSState(m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(
+            m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv
+        )
 
     return step
 
@@ -1477,9 +1588,7 @@ def make_wen_goldfarb_minimizer(
         # Automated tuning of preconditioner accuracy (Forcing sequence)
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
         z = solve_P(
             m,
@@ -1700,8 +1809,8 @@ def make_pbb_minimizer(
                 params["ls_c"],
                 jnp.clip(state.tau, 1e-3, 1.0),
                 15,
-            sparse_ops=sparse_ops,
-        )
+                sparse_ops=sparse_ops,
+            )
 
         tau, E_new, g_raw_new, U_new, m_new = lax.cond(
             use_bb,
@@ -1835,7 +1944,9 @@ def make_dplbfgs_minimizer(
         Y_next = jnp.where(update_ok, state.Y.at[idx].set(y_damped), state.Y)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(
+            m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv
+        )
 
     return step
 
@@ -2106,7 +2217,9 @@ def make_rplbfgs_minimizer(
         Y_next = jnp.where(update_ok, Y_trans.at[idx].set(y_damped), Y_trans)
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
-        return LBFGSState(m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv)
+        return LBFGSState(
+            m_new, U_new, U, g_tan, g_raw_new, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv
+        )
 
     return step
 
@@ -2134,7 +2247,18 @@ class AAState:
 
     def tree_flatten(self):
         """Flatten the AAState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g_raw, self.E, self.gnorm, self.X, self.F, self.it, self.converged), None
+        return (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g_raw,
+            self.E,
+            self.gnorm,
+            self.X,
+            self.F,
+            self.it,
+            self.converged,
+        ), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
@@ -2208,9 +2332,7 @@ def make_aapg_exact_minimizer(
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
         z = solve_P(
             m,
             g_raw,
@@ -2275,7 +2397,18 @@ def make_aapg_exact_minimizer(
         tau_next = state.tau_hist.at[0].set(tau)
 
         return AAExactState(
-            m_new, U_new, U, g_raw_new, E_new, jnp.max(jnp.abs(z_next)), X_next, F_next, H_next, tau_next, state.it + 1, conv
+            m_new,
+            U_new,
+            U,
+            g_raw_new,
+            E_new,
+            jnp.max(jnp.abs(z_next)),
+            X_next,
+            F_next,
+            H_next,
+            tau_next,
+            state.it + 1,
+            conv,
         )
 
     return step
@@ -2305,9 +2438,7 @@ def make_aapg_minimizer(
         gnorm_inf = jnp.max(jnp.abs(g_tan))
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
-        pc_tol = jnp.where(
-            params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0
-        )
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
         # Preconditioned gradient z is our "residual" f(m)
         z = solve_P(
@@ -2471,7 +2602,7 @@ def make_pnag_minimizer(
         U_guess_look = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
         U_look = solve_U(m_look, U_guess_look, params["phi_tol"], sparse_ops=sparse_ops)
         E_look, g_raw_look = energy_and_grad(m_look, U_look, B_ext, sparse_ops=sparse_ops)
-        g_tan_look = tangent_grad(m_look, g_raw_look * inv_M_rel)
+        tangent_grad(m_look, g_raw_look * inv_M_rel)
         g_tan_look_ext = tangent_grad(m_look, g_raw_look)
 
         # Preconditioned gradient at look-ahead
@@ -2520,7 +2651,7 @@ def make_pbbs_minimizer(
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g
 
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
 
         # Preconditioned gradient with Steihaug exit in solve_P
@@ -2575,8 +2706,8 @@ def make_pbbs_minimizer(
                 params["ls_c"],
                 jnp.clip(state.tau, 1e-3, 1.0),
                 15,
-            sparse_ops=sparse_ops,
-        )
+                sparse_ops=sparse_ops,
+            )
 
         tau, E_new, g_raw_new, U_new, m_new = lax.cond(
             use_bb,
@@ -2686,7 +2817,20 @@ def make_pcohen_lbfgs_minimizer(
         rho_next = jnp.where(update_ok, state.rho.at[idx].set(1.0 / (curv + 1e-30)), state.rho)
 
         return PCohenLBFGSState(
-            m_new, U_new, U, g_tan_ext, g_raw_new, z, p, S_next, Y_next, rho_next, E_new, gnorm_inf_smooth, state.it + 1, conv
+            m_new,
+            U_new,
+            U,
+            g_tan_ext,
+            g_raw_new,
+            z,
+            p,
+            S_next,
+            Y_next,
+            rho_next,
+            E_new,
+            gnorm_inf_smooth,
+            state.it + 1,
+            conv,
         )
 
     return step
@@ -2750,6 +2894,7 @@ def make_minimizer(
         d_diag = Kex_diag
     else:
         from energy_kernels import compute_exchange_diagonal
+
         d_diag = compute_exchange_diagonal(
             geom,
             A_lookup,
@@ -2766,7 +2911,24 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
-            return CohenState(m, U, U, g, g_raw, jnp.zeros_like(g), E, gnorm, 0, jnp.array(False))
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
+            return CohenState(
+                m,
+                U,
+                U,
+                g,
+                g_raw,
+                jnp.zeros_like(g),
+                E,
+                gnorm,
+                0,
+                jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
+            )
 
     elif method == "pcg":
         step_fn = make_pcg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
@@ -2778,8 +2940,20 @@ def make_minimizer(
             init_preco = kwargs.get("preco_iters", 0)
             init_demag = kwargs.get("demag_iters", 0)
             return PCGState(
-                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
-                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+                m,
+                U,
+                U,
+                g_tan_ext,
+                g_raw,
+                g_tan_ext,
+                -g_tan_ext,
+                E,
+                gnorm,
+                0,
+                jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
             )
 
     elif method == "pcohen":
@@ -2794,8 +2968,20 @@ def make_minimizer(
             init_preco = kwargs.get("preco_iters", 0)
             init_demag = kwargs.get("demag_iters", 0)
             return PCGState(
-                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
-                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+                m,
+                U,
+                U,
+                g_tan_ext,
+                g_raw,
+                g_tan_ext,
+                -g_tan_ext,
+                E,
+                gnorm,
+                0,
+                jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
             )
 
     elif method == "pcohen_hs":
@@ -2810,8 +2996,20 @@ def make_minimizer(
             init_preco = kwargs.get("preco_iters", 0)
             init_demag = kwargs.get("demag_iters", 0)
             return PCGState(
-                m, U, U, g_tan_ext, g_raw, g_tan_ext, -g_tan_ext, E, gnorm, 0, jnp.array(False),
-                jnp.int32(init_evals), jnp.int32(init_preco), jnp.int32(init_demag)
+                m,
+                U,
+                U,
+                g_tan_ext,
+                g_raw,
+                g_tan_ext,
+                -g_tan_ext,
+                E,
+                gnorm,
+                0,
+                jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
             )
 
     elif method == "lbfgs":
@@ -3047,6 +3245,9 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
             return PCGExactState(
                 m,
                 U,
@@ -3061,6 +3262,9 @@ def make_minimizer(
                 jnp.zeros_like(g),
                 jnp.array(1.0, dtype=m.dtype),
                 jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
             )
 
     elif method == "pcohen_hs_exact":
@@ -3070,6 +3274,9 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
             return PCGExactState(
                 m,
                 U,
@@ -3084,6 +3291,9 @@ def make_minimizer(
                 jnp.zeros_like(g),
                 jnp.array(1.0, dtype=m.dtype),
                 jnp.array(False),
+                jnp.int32(init_evals),
+                jnp.int32(init_preco),
+                jnp.int32(init_demag),
             )
 
     else:
@@ -3104,11 +3314,19 @@ def make_minimizer(
         E, g_raw = energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_init = jnp.max(jnp.abs(g_tan))
-        
+
         g_tan_ext = tangent_grad(m, g_raw)
         state = init_state_fn(
-            m, U, E, g_tan, gnorm_init, g_raw=g_raw, g_tan_ext=g_tan_ext,
-            evals=jnp.int32(1), preco_iters=jnp.int32(0), demag_iters=init_demag
+            m,
+            U,
+            E,
+            g_tan,
+            gnorm_init,
+            g_raw=g_raw,
+            g_tan_ext=g_tan_ext,
+            evals=jnp.int32(1),
+            preco_iters=jnp.int32(0),
+            demag_iters=init_demag,
         )
         return kernel(state, B_ext, params_dict)
 
@@ -3121,7 +3339,7 @@ def make_minimizer(
             params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
 
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
-        U_init = params.get("U0", None)
+        U_init = params.get("U0")
         if U_init is None:
             U_init = jnp.zeros(m0.shape[0], dtype=m0.dtype)
 

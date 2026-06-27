@@ -237,6 +237,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["max_iter"] = int(m_min["max_iter"])
         if "tau_min" in m_min:
             overrides["tau_min"] = float(m_min["tau_min"])
+        if "tau0" in m_min:
+            overrides["tau0"] = float(m_min["tau0"])
         if "tau_max" in m_min:
             overrides["tau_max"] = float(m_min["tau_max"])
         if "method" in m_min:
@@ -503,6 +505,12 @@ def main() -> None:
         type=float,
         default=1e-12,
         help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+    )
+    ap.add_argument(
+        "--tau0",
+        type=float,
+        default=1e-2,
+        help="Initial step size guess for minimizers.",
     )
     ap.add_argument(
         "--tau-min",
@@ -849,6 +857,7 @@ def main() -> None:
         "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
+        "tau0": float(args.tau0),
         "tau_min": float(args.tau_min),
         "tau_max": float(args.tau_max),
         "cg_maxiter": int(args.cg_maxiter),
@@ -938,12 +947,16 @@ def main() -> None:
     # Save parameter log
     out_dir_path = Path(args.out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    log_dict = vars(args).copy()
+    log_dict.update(params_dict)
+
     with open(out_dir_path / "params.log", "w") as f:
         f.write("| Parameter | Value | Source |\n")
         f.write("| :--- | :--- | :--- |\n")
-        for k in sorted(params_dict.keys()):
-            if k in loop_param_names:
-                f.write(f"| {k} | {params_dict[k]} | {param_sources.get(k, 'unknown')} |\n")
+        for k in sorted(log_dict.keys()):
+            source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
+            f.write(f"| {k} | {log_dict[k]} | {source} |\n")
 
     params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
 
@@ -976,15 +989,13 @@ def main() -> None:
     if mode == "assembled":
         print("Assembling global sparse operators on CPU...")
         from amg_utils import (
-            assemble_poisson_matrix_cpu,
-            assemble_exchange_matrix_cpu,
             assemble_divergence_matrices_cpu,
-            assemble_anisotropy_matrix_cpu,
+            assemble_poisson_matrix_cpu,
             csr_to_jax_bCOO,
         )
 
         # Ensure grad_phi is computed
-        l_grad_phi = grad_phi if 'grad_phi' in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
+        l_grad_phi = grad_phi if "grad_phi" in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
 
         A_scipy = assemble_poisson_matrix_cpu(
             conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
@@ -993,9 +1004,7 @@ def main() -> None:
         A_diag = jnp.asarray(A_diag_cpu)
         A_sparse = csr_to_jax_bCOO(A_scipy)
 
-        Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(
-            conn32, volume, l_grad_phi, Js_red, mat_id
-        )
+        Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
         Dx_sparse = csr_to_jax_bCOO(Dx_scipy)
         Dy_sparse = csr_to_jax_bCOO(Dy_scipy)
         Dz_sparse = csr_to_jax_bCOO(Dz_scipy)
@@ -1009,6 +1018,7 @@ def main() -> None:
         Gz_sparse = csr_to_jax_bCOO(Gz_scipy.tocsr())
 
         from amg_utils import assemble_exchange_anisotropy_matrix_cpu
+
         K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
             conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
         )
