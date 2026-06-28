@@ -685,6 +685,11 @@ def main() -> None:
         action="store_true",
         help="Print detailed minimizer iterations at each step.",
     )
+    ap.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Run a dummy warmup step before the hysteresis loop to compile JIT functions.",
+    )
 
     args = ap.parse_args()
 
@@ -888,9 +893,9 @@ def main() -> None:
         "lr": float(args.lr),
         "mu": float(args.mu),
         "pc_reg": float(args.pc_reg),
-        "wg_gamma": int(args.wg_gamma),
         "wg_threshold": float(args.wg_threshold),
         "phi_extrapolate": bool(args.phi_extrapolate),
+        "benchmark": bool(args.benchmark),
     }
     for k in params_dict:
         param_sources[k] = "default"

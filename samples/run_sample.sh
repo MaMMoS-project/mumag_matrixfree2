@@ -28,6 +28,7 @@ pixi run python ../src/loop.py cube_${L}nm \
     --method tr \
     --tau0 1.0 \
     --operator-mode assembled \
+    --benchmark \
     --verbose 2>&1 | tee ${OUT_DIR}/simulation.log
 
 echo "=== Benchmark Complete ==="

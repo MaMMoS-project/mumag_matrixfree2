@@ -120,6 +120,7 @@ class LoopParams:
     phi_extrapolate: bool = True
     wg_gamma: int = 5
     wg_threshold: float = 1e-6
+    benchmark: bool = False
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -345,12 +346,65 @@ def run_hysteresis_loop(  # noqa: D417
     J_par_last_saved = None
     history = []
 
+    U = jnp.zeros(m.shape[0], dtype=m.dtype)
+
+    if params.benchmark:
+        print("Warming up JIT compiler...")
+        B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
+        _m, _U, _ = minimize(
+            m,
+            B_ext_warmup,
+            U0=U,
+            gamma=params.gamma,
+            max_iter=params.max_iter,
+            tau_f=params.tau_f,
+            eps_a=params.eps_a,
+            tau0=params.tau0,
+            tau_min=params.tau_min,
+            tau_max=params.tau_max,
+            ls_eta1=params.ls_eta1,
+            ls_eta2=params.ls_eta2,
+            ls_C=params.ls_C,
+            ls_c=params.ls_c,
+            ls_s0=params.ls_s0,
+            ls_max_evals=params.ls_max_evals,
+            h=h,
+            mfinal=params.mfinal,
+            Js_ref=params.Js_ref,
+            verbose=params.verbose,
+            pc_iters=params.pc_iters,
+            pc_auto=params.pc_auto,
+            pc_force_eta=params.pc_force_eta,
+            pc_force_alpha=params.pc_force_alpha,
+            pc_stagnation_nu=params.pc_stagnation_nu,
+            memory=params.memory,
+            tn_iters=params.tn_iters,
+            lr=params.lr,
+            mu=params.mu,
+            pc_reg=params.pc_reg,
+            phi_extrapolate=params.phi_extrapolate,
+            sparse_ops={
+                "A_sparse": A_sparse,
+                "Dx_sparse": Dx_sparse,
+                "Dy_sparse": Dy_sparse,
+                "Dz_sparse": Dz_sparse,
+                "A_diag": A_diag,
+                "K_eff_sparse": K_eff_sparse,
+                "Gx_sparse": Gx_sparse,
+                "Gy_sparse": Gy_sparse,
+                "Gz_sparse": Gz_sparse,
+            },
+        )
+        _m.block_until_ready()
+        _U.block_until_ready()
+        print("Warmup complete. Starting main loop...")
+
     total_time = 0.0
     total_iters = 0
     total_preco_iters = 0
     total_evals = 0
     total_demag_iters = 0
-    U = jnp.zeros(m.shape[0], dtype=m.dtype)
+
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
