@@ -1268,7 +1268,7 @@ def make_tn_minimizer(
 ):
     """Create a Truncated Newton minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    apply_P_local, _ = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         sparse_ops = params.get("sparse_ops")
@@ -1290,35 +1290,29 @@ def make_tn_minimizer(
             return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + shift
 
         def solve_newton_system(max_iter=10):
-            def solve_P_local(rhs, iters):
-                y_inner = jnp.zeros_like(rhs)
-                r_p = rhs
-                p_p = r_p
-                rho_p = jnp.vdot(r_p, r_p)
-
-                def p_body(state_inner):
-                    y, r, p, rho, i = state_inner
-                    Ap_ext = apply_P_local(m, g_raw, p * inv_inv_M)
-                    Ap = Ap_ext * inv_M_rel
-                    alpha = rho / (jnp.vdot(p, Ap) + 1e-30)
-                    y_n = y + alpha * p
-                    r_n = r - alpha * Ap
-                    rho_n = jnp.vdot(r_n, r_n)
-                    p_n = r_n + (rho_n / (rho + 1e-30)) * p
-                    return y_n, r_n, p_n, rho_n, i + 1
-
-                res = lax.while_loop(lambda s: s[4] < iters, p_body, (y_inner, r_p, p_p, rho_p, 0))
-                return res[0]
+            # Eisenstat-Walker forcing
+            eta_base = params.get("pc_force_eta", 0.5)
+            alpha_ew = params.get("pc_force_alpha", 0.5)
+            pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_ew)), 0.0)
 
             d_inner = jnp.zeros_like(g_tan)
             r_inner = -g_tan
-            z_inner = solve_P_local(r_inner, 5)
+            z_inner = solve_P(
+                m,
+                g_raw,
+                r_inner * inv_inv_M,
+                max_iter=params.get("pc_iters", 15),
+                tol=pc_tol,
+                reg=params.get("pc_reg", 0.0),
+                stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+                sparse_ops=sparse_ops,
+            )
             p_inner = z_inner
-            rho_inner = jnp.vdot(r_inner, z_inner)
+            rho_inner = jnp.vdot(r_inner * inv_inv_M, z_inner)
 
             def inner_cond(state_inner):
                 d, r, p, rho, it = state_inner
-                return (it < max_iter) & (jnp.vdot(r, r) > 1e-12)
+                return (it < max_iter) & (jnp.max(jnp.abs(r)) > jnp.maximum(pc_tol, 1e-7))
 
             def inner_body(state_inner):
                 d, r, p, rho, it = state_inner
@@ -1326,8 +1320,17 @@ def make_tn_minimizer(
                 alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
                 d_new = d + alpha * p
                 r_new = r - alpha * Hp
-                z_new = solve_P_local(r_new, 5)
-                rho_new = jnp.vdot(r_new, z_new)
+                z_new = solve_P(
+                    m,
+                    g_raw,
+                    r_new * inv_inv_M,
+                    max_iter=params.get("pc_iters", 15),
+                    tol=pc_tol,
+                    reg=params.get("pc_reg", 0.0),
+                    stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+                    sparse_ops=sparse_ops,
+                )
+                rho_new = jnp.vdot(r_new * inv_inv_M, z_new)
                 beta = rho_new / (rho + 1e-30)
                 p_new = z_new + beta * p
                 return d_new, r_new, p_new, rho_new, it + 1
@@ -1414,13 +1417,14 @@ def make_tn_split_minimizer(
                 tol=pc_tol,
                 reg=params.get("pc_reg", 0.0),
                 stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+                sparse_ops=sparse_ops,
             )
             p_inner = z_inner
-            rho_inner = jnp.vdot(r_inner, z_inner)
+            rho_inner = jnp.vdot(r_inner * inv_inv_M, z_inner)
 
             def inner_cond(state_inner):
                 d, r, p, rho, it = state_inner
-                return (it < max_iter) & (jnp.vdot(r, r) > 1e-12)
+                return (it < max_iter) & (jnp.max(jnp.abs(r)) > jnp.maximum(pc_tol, 1e-7))
 
             def inner_body(state_inner):
                 d, r, p, rho, it = state_inner
@@ -1436,8 +1440,9 @@ def make_tn_split_minimizer(
                     tol=pc_tol,
                     reg=params.get("pc_reg", 0.0),
                     stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+                    sparse_ops=sparse_ops,
                 )
-                rho_new = jnp.vdot(r_new, z_new)
+                rho_new = jnp.vdot(r_new * inv_inv_M, z_new)
                 beta = rho_new / (rho + 1e-30)
                 p_new = z_new + beta * p
                 return d_new, r_new, p_new, rho_new, it + 1
@@ -2147,7 +2152,12 @@ def make_tr_minimizer(
             return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + 1e-6 * v
 
         def steihaug_toint(delta, max_iter=10):
-            # Solve H d = -g s.t. ||d|| <= delta
+            inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
+
+            def vdot_M(a, b):
+                return jnp.vdot(a * inv_inv_M, b)
+
+            # Solve H d = -g s.t. ||d||_M <= delta
             d = jnp.zeros_like(g_tan)
             r = g_tan
             p = -r
@@ -2155,31 +2165,32 @@ def make_tr_minimizer(
             def body_fun(val):
                 d, r, p, i, done = val
                 Hp = full_hessian_op(p)
-                pHp = jnp.vdot(p, Hp)
+                pHp = vdot_M(p, Hp)
 
                 # alpha for Newton step
-                alpha = jnp.vdot(r, r) / (pHp + 1e-30)
+                rho = vdot_M(r, r)
+                alpha = rho / (pHp + 1e-30)
 
-                # Check boundary intersection: ||d + alpha*p|| = delta
+                # Check boundary intersection: ||d + alpha*p||_M = delta
                 # Solve quadratic for alpha_tr: ||d||^2 + 2*alpha_tr*d.p + alpha_tr^2*||p||^2 = delta^2
-                a_q = jnp.vdot(p, p) + 1e-30
-                b_q = 2.0 * jnp.vdot(d, p)
-                c_q = jnp.vdot(d, d) - delta**2
+                a_q = vdot_M(p, p) + 1e-30
+                b_q = 2.0 * vdot_M(d, p)
+                c_q = vdot_M(d, d) - delta**2
                 alpha_tr = (-b_q + jnp.sqrt(jnp.maximum(0.0, b_q**2 - 4.0 * a_q * c_q))) / (2.0 * a_q)
 
                 # If negative curvature or boundary reached
                 is_neg = pHp <= 0
-                is_bound = jnp.vdot(d + alpha * p, d + alpha * p) >= delta**2
+                is_bound = vdot_M(d + alpha * p, d + alpha * p) >= delta**2
 
                 alpha_final = jnp.where(is_neg | is_bound, alpha_tr, alpha)
                 d_next = d + alpha_final * p
 
                 r_next = r + alpha * Hp  # Residual update for linear part
-                rho_next = jnp.vdot(r_next, r_next)
-                beta = rho_next / (jnp.vdot(r, r) + 1e-30)
+                rho_next = vdot_M(r_next, r_next)
+                beta = rho_next / (rho + 1e-30)
                 p_next = -r_next + beta * p
 
-                stop = is_neg | is_bound | (rho_next < 1e-12)
+                stop = is_neg | is_bound | (rho_next < 1e-8)
                 return d_next, r_next, p_next, i + 1, done | stop
 
             res = lax.while_loop(lambda v: (v[3] < max_iter) & (~v[4]), body_fun, (d, r, p, 0, False))
