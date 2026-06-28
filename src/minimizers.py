@@ -364,7 +364,8 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
 
             # Steihaug Strategy: If negative curvature is detected, exit immediately.
             # This handles indefinite cases during magnetization switching.
-            neg_curv = pAp <= 1e-20
+            # Use strict <= 0.0 because near a local minimum, pAp can be extremely small but still positive!
+            neg_curv = pAp <= 0.0
 
             alpha = rho_loop / (pAp + 1e-30)
 
@@ -405,6 +406,100 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         return y_ret
 
     return apply_P, solve_Py_g
+
+
+def make_preconditioner_op_tr(local_grad_only: Callable, inv_M_rel: Array, inv_M_prec: Array = None):
+    """Create the Hessian-based preconditioner operation Py = g with Steihaug-Toint Trust Region."""
+    if inv_M_prec is None:
+        inv_M_prec = _PRECOND_MAP.get(id(inv_M_rel), inv_M_rel)
+
+    M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
+
+    def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0, sparse_ops: dict = None) -> Array:
+        Cv = local_grad_only(v, sparse_ops=sparse_ops)
+        m_dot_Cv = jnp.sum(m * Cv, axis=1, keepdims=True)
+        comp2 = m_dot_Cv * m
+        m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
+        comp3 = m_dot_g * v
+        return Cv - comp2 - comp3 + reg * v
+
+    def solve_Py_g_tr(
+        m: Array,
+        g_ext: Array,
+        g_tan_ext: Array,
+        delta: Array,
+        max_iter: int = 20,
+        tol: float = 0.0,
+        reg: float = 0.0,
+        return_info: bool = False,
+        sparse_ops: dict = None,
+    ):
+        def inner_op(v):
+            return apply_P(m, g_ext, v, reg, sparse_ops=sparse_ops)
+
+        def vdot_M(a, b):
+            return jnp.vdot(a * M_rel, b)
+
+        y = jnp.zeros_like(g_tan_ext)
+        r = g_tan_ext
+        z = r * inv_M_prec
+        p = z
+        rho = jnp.vdot(r, z)
+        target_rho = (tol**2) * rho
+
+        def cond_fun(state):
+            y_loop, r_loop, z_loop, p_loop, rho_loop, it_loop, done = state
+            return (it_loop < max_iter) & (rho_loop > target_rho) & (rho_loop > 1e-25) & (rho_loop < 1e20) & (~done)
+
+        def body_fun(state):
+            y_loop, r_loop, z_loop, p_loop, rho_loop, it_loop, _ = state
+            Ap = inner_op(p_loop)
+            pAp = jnp.vdot(p_loop, Ap)
+
+            # alpha for Newton step
+            alpha = rho_loop / (pAp + 1e-30)
+
+            # Check boundary intersection: ||y + alpha*p||_M = delta
+            a_q = vdot_M(p_loop, p_loop) + 1e-30
+            b_q = 2.0 * vdot_M(y_loop, p_loop)
+            c_q = vdot_M(y_loop, y_loop) - delta**2
+            alpha_tr = (-b_q + jnp.sqrt(jnp.maximum(0.0, b_q**2 - 4.0 * a_q * c_q))) / (2.0 * a_q)
+
+            neg_curv = pAp <= 0.0
+            bound_reached = vdot_M(y_loop + alpha * p_loop, y_loop + alpha * p_loop) >= delta**2
+
+            done_now = neg_curv | bound_reached
+            alpha_final = jnp.where(done_now, alpha_tr, alpha)
+
+            y_next = y_loop + alpha_final * p_loop
+            r_next = r_loop - alpha * Ap
+            z_next = r_next * inv_M_prec
+
+            rho_next = jnp.vdot(r_next, z_next)
+            beta = rho_next / (rho_loop + 1e-30)
+            p_next = jnp.where(done_now, p_loop, z_next + beta * p_loop)
+
+            return y_next, r_next, z_next, p_next, rho_next, it_loop + 1, done_now
+
+        state_init = (y, r, z, p, rho, 0, False)
+        final_state = lax.while_loop(cond_fun, body_fun, state_init)
+        y_final = final_state[0]
+
+        # Safety Clipping: prevent preconditioned direction from exploding
+        z_fallback = g_tan_ext * inv_M_prec
+        y_norm = jnp.linalg.norm(y_final)
+        z_norm = jnp.linalg.norm(z_fallback)
+        y_final = jnp.where(y_norm > 10.0 * z_norm, y_final * (10.0 * z_norm / (y_norm + 1e-30)), y_final)
+
+        # Ensure we don't exceed delta due to numerical errors
+        y_final_norm = jnp.sqrt(vdot_M(y_final, y_final) + 1e-30)
+        y_final = jnp.where(y_final_norm > delta, y_final * (delta / y_final_norm), y_final)
+
+        if return_info:
+            return y_final, final_state[5]
+        return y_final
+
+    return apply_P, solve_Py_g_tr
 
 
 # -----------------------------------------------------------------------------
@@ -1235,6 +1330,9 @@ class TNState:
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32 = 0
+    preco_iters: jnp.int32 = 0
+    demag_iters: jnp.int32 = 0
 
     def tree_flatten(self):
         """Flatten the TNState for JAX tree operations."""
@@ -1249,10 +1347,13 @@ class TNState:
             self.gnorm,
             self.it,
             self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
         ), None
 
     @classmethod
-    def tree_unflatten(cls, aux, children):
+    def tree_unflatten(cls, aux_data, children):
         """Unflatten the TNState for JAX tree operations."""
         return cls(*children)
 
@@ -1281,13 +1382,13 @@ def make_tn_minimizer(
 
         def full_hessian_op(v):
             U_v = solve_U(v, jnp.zeros_like(U), params["phi_tol"], sparse_ops=sparse_ops)
-            Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext)) * inv_M_rel
-            g = g_raw * inv_M_rel
-            m_dot_g = jnp.sum(m * g, axis=1, keepdims=True)
-            v_dot_g = jnp.sum(v * g, axis=1, keepdims=True)
+            Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext), sparse_ops=sparse_ops)
+            g_ext = g_raw
+            m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
             m_dot_Cv = jnp.sum(m * Cv_full, axis=1, keepdims=True)
-            shift = 1e-4 * v
-            return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + shift
+            shift = 1e-4 * v * inv_inv_M
+            # Correct tangent-projected Hessian: H_tan * v = Cv - (m.g)v - (m.Cv)m
+            return Cv_full - (m_dot_g * v + m_dot_Cv * m) + shift
 
         def solve_newton_system(max_iter=10):
             # Eisenstat-Walker forcing
@@ -1296,11 +1397,11 @@ def make_tn_minimizer(
             pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_ew)), 0.0)
 
             d_inner = jnp.zeros_like(g_tan)
-            r_inner = -g_tan
+            r_inner = -g_tan_ext
             z_inner = solve_P(
                 m,
                 g_raw,
-                r_inner * inv_inv_M,
+                r_inner,
                 max_iter=params.get("pc_iters", 15),
                 tol=pc_tol,
                 reg=params.get("pc_reg", 0.0),
@@ -1308,34 +1409,48 @@ def make_tn_minimizer(
                 sparse_ops=sparse_ops,
             )
             p_inner = z_inner
-            rho_inner = jnp.vdot(r_inner * inv_inv_M, z_inner)
+            rho_inner = jnp.vdot(r_inner, z_inner)
+            active = jnp.array(True)
 
             def inner_cond(state_inner):
-                d, r, p, rho, it = state_inner
-                return (it < max_iter) & (jnp.max(jnp.abs(r)) > jnp.maximum(pc_tol, 1e-7))
+                d, r, p, rho, it, active = state_inner
+                return active & (it < max_iter) & (jnp.max(jnp.abs(r * inv_M_rel)) > jnp.maximum(pc_tol, 1e-7))
 
             def inner_body(state_inner):
-                d, r, p, rho, it = state_inner
+                d, r, p, rho, it, active = state_inner
                 Hp = full_hessian_op(p)
-                alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
-                d_new = d + alpha * p
-                r_new = r - alpha * Hp
+                p_Hp = jnp.vdot(p, Hp)
+
+                # If negative curvature is detected, we must abort to prevent taking an uphill step.
+                neg_curv = p_Hp <= 0.0
+
+                # If neg_curv on the very first iteration, we take the steepest descent direction (z_inner).
+                # Otherwise, we keep the accumulated d.
+                d_ret = jnp.where(neg_curv & (it == 0), p, d)
+
+                # If negative curvature, freeze the state and set active=False to break the loop
+                alpha = jnp.where(neg_curv, 0.0, rho / (p_Hp + 1e-30))
+                d_new = jnp.where(neg_curv, d_ret, d + alpha * p)
+                r_new = jnp.where(neg_curv, r, r - alpha * Hp)
+
                 z_new = solve_P(
                     m,
                     g_raw,
-                    r_new * inv_inv_M,
+                    r_new,
                     max_iter=params.get("pc_iters", 15),
                     tol=pc_tol,
                     reg=params.get("pc_reg", 0.0),
                     stagnation_nu=params.get("pc_stagnation_nu", 0.01),
                     sparse_ops=sparse_ops,
                 )
-                rho_new = jnp.vdot(r_new * inv_inv_M, z_new)
-                beta = rho_new / (rho + 1e-30)
-                p_new = z_new + beta * p
-                return d_new, r_new, p_new, rho_new, it + 1
+                rho_new = jnp.vdot(r_new, z_new)
+                beta = jnp.where(neg_curv, 0.0, rho_new / (rho + 1e-30))
+                p_new = jnp.where(neg_curv, p, z_new + beta * p)
 
-            final = lax.while_loop(inner_cond, inner_body, (d_inner, r_inner, p_inner, rho_inner, 0))
+                return (d_new, r_new, p_new, rho_new, it + 1, active & (~neg_curv))
+
+            state_init = (d_inner, r_inner, p_inner, rho_inner, 0, active)
+            final = lax.while_loop(inner_cond, inner_body, state_init)
             return final[0]
 
         d = solve_newton_system(params.get("tn_iters", 5))
@@ -1385,77 +1500,35 @@ def make_tn_split_minimizer(
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         sparse_ops = params.get("sparse_ops")
-        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
-        def local_hessian_op(v):
-            Cv_local = local_grad_only(v) * inv_M_rel
-            g = g_raw * inv_M_rel
-            m_dot_g = jnp.sum(m * g, axis=1, keepdims=True)
-            v_dot_g = jnp.sum(v * g, axis=1, keepdims=True)
-            m_dot_Cv = jnp.sum(m * Cv_local, axis=1, keepdims=True)
-            shift = 1e-4 * v
-            return Cv_local - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + shift
+        # Eisenstat-Walker forcing for the local Newton system
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
-        def solve_newton_system(max_iter=10):
-            # Eisenstat-Walker forcing
-            eta_base = params.get("pc_force_eta", 0.5)
-            alpha = params.get("pc_force_alpha", 0.5)
-            pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
-
-            d_inner = jnp.zeros_like(g_tan)
-            r_inner = -g_tan
-            z_inner = solve_P(
-                m,
-                g_raw,
-                r_inner * inv_inv_M,
-                max_iter=params.get("pc_iters", 15),
-                tol=pc_tol,
-                reg=params.get("pc_reg", 0.0),
-                stagnation_nu=params.get("pc_stagnation_nu", 0.01),
-                sparse_ops=sparse_ops,
-            )
-            p_inner = z_inner
-            rho_inner = jnp.vdot(r_inner * inv_inv_M, z_inner)
-
-            def inner_cond(state_inner):
-                d, r, p, rho, it = state_inner
-                return (it < max_iter) & (jnp.max(jnp.abs(r)) > jnp.maximum(pc_tol, 1e-7))
-
-            def inner_body(state_inner):
-                d, r, p, rho, it = state_inner
-                Hp = local_hessian_op(p)
-                alpha = rho / (jnp.vdot(p, Hp) + 1e-30)
-                d_new = d + alpha * p
-                r_new = r - alpha * Hp
-                z_new = solve_P(
-                    m,
-                    g_raw,
-                    r_new * inv_inv_M,
-                    max_iter=params.get("pc_iters", 15),
-                    tol=pc_tol,
-                    reg=params.get("pc_reg", 0.0),
-                    stagnation_nu=params.get("pc_stagnation_nu", 0.01),
-                    sparse_ops=sparse_ops,
-                )
-                rho_new = jnp.vdot(r_new * inv_inv_M, z_new)
-                beta = rho_new / (rho + 1e-30)
-                p_new = z_new + beta * p
-                return d_new, r_new, p_new, rho_new, it + 1
-
-            final = lax.while_loop(inner_cond, inner_body, (d_inner, r_inner, p_inner, rho_inner, 0))
-            return final[0]
-
-        d = solve_newton_system(params.get("tn_iters", 5))
-        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -g_tan, d)
+        # The preconditioner solve_P is exactly the Local Hessian operator!
+        # We can directly solve the local Newton system P * d = -g_tan_ext
+        # solve_P includes Steihaug-style negative curvature detection and fallback to steepest descent.
+        d, pc_iters = solve_P(
+            m,
+            g_raw,
+            -g_tan_ext,
+            max_iter=params.get("pc_iters", 15),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+            return_info=True,
+            sparse_ops=sparse_ops,
+        )
         H = -jnp.cross(m, -d)
         pg = jnp.vdot(g_raw, d)
         tau_init = jnp.where(state.it == 0, params["tau0"], 1.0)
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -1470,10 +1543,25 @@ def make_tn_split_minimizer(
             params["ls_c"],
             tau_init,
             15,
+            return_info=True,
             sparse_ops=sparse_ops,
         )
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
-        return TNState(m_new, U_new, U, g_tan, g_raw_new, d, E_new, gnorm_inf, state.it + 1, conv)
+        return TNState(
+            m_new,
+            U_new,
+            U,
+            g_tan,
+            g_raw_new,
+            d,
+            E_new,
+            gnorm_inf,
+            state.it + 1,
+            conv,
+            state.evals + ls_evals,
+            state.preco_iters + pc_iters,
+            state.demag_iters + ls_demag,
+        )
 
     return step
 
@@ -2113,13 +2201,29 @@ class TRState:
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32 = 0
+    preco_iters: jnp.int32 = 0
+    demag_iters: jnp.int32 = 0
 
     def tree_flatten(self):
         """Flatten the TRState for JAX tree operations."""
-        return (self.m, self.U, self.U_prev, self.g_raw, self.E, self.delta, self.gnorm, self.it, self.converged), None
+        return (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g_raw,
+            self.E,
+            self.delta,
+            self.gnorm,
+            self.it,
+            self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+        ), None
 
     @classmethod
-    def tree_unflatten(cls, aux, children):
+    def tree_unflatten(cls, aux_data, children):
         """Unflatten the TRState for JAX tree operations."""
         return cls(*children)
 
@@ -2134,91 +2238,52 @@ def make_tr_minimizer(
     cg_tol: float,
 ):
     """Create a Trust-Region Newton-CG minimizer step function."""
-    apply_P_local, _ = make_preconditioner_op(local_grad_only, inv_M_rel)
+    apply_P_local, solve_P_tr = make_preconditioner_op_tr(local_grad_only, inv_M_rel)
 
     def step(state: TRState, B_ext: Array, params: dict) -> TRState:
         sparse_ops = params.get("sparse_ops")
         m, U, g_raw, E = state.m, state.U, state.g_raw, state.E
         g_s = g_raw * inv_M_rel
         g_tan = tangent_grad(m, g_s)
+        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
-        def full_hessian_op(v):
-            U_v = solve_U(v, jnp.zeros_like(U), params["phi_tol"], sparse_ops=sparse_ops)
-            Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext)) * inv_M_rel
-            m_dot_g = jnp.sum(m * g_s, axis=1, keepdims=True)
-            v_dot_g = jnp.sum(v * g_s, axis=1, keepdims=True)
-            m_dot_Cv = jnp.sum(m * Cv_full, axis=1, keepdims=True)
-            return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m) + 1e-6 * v
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha_f = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_f)), 0.0)
 
-        def steihaug_toint(delta, max_iter=10):
-            inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
+        # 1. Compute Step (Local Steihaug-Toint)
+        d, pc_iters = solve_P_tr(
+            m,
+            g_raw,
+            -g_tan_ext,
+            state.delta,
+            max_iter=params.get("tn_iters", 5),
+            tol=pc_tol,
+            reg=params.get("pc_reg", 0.0),
+            return_info=True,
+            sparse_ops=sparse_ops,
+        )
 
-            def vdot_M(a, b):
-                return jnp.vdot(a * inv_inv_M, b)
+        # Predicted reduction (quadratic model using local Hessian)
+        Pd = apply_P_local(m, g_raw, d, params.get("pc_reg", 0.0), sparse_ops=sparse_ops)
+        pred_reduction = -(jnp.vdot(g_raw, d) + 0.5 * jnp.vdot(d, Pd))
 
-            # Solve H d = -g s.t. ||d||_M <= delta
-            d = jnp.zeros_like(g_tan)
-            r = g_tan
-            p = -r
-
-            def body_fun(val):
-                d, r, p, i, done = val
-                Hp = full_hessian_op(p)
-                pHp = vdot_M(p, Hp)
-
-                # alpha for Newton step
-                rho = vdot_M(r, r)
-                alpha = rho / (pHp + 1e-30)
-
-                # Check boundary intersection: ||d + alpha*p||_M = delta
-                # Solve quadratic for alpha_tr: ||d||^2 + 2*alpha_tr*d.p + alpha_tr^2*||p||^2 = delta^2
-                a_q = vdot_M(p, p) + 1e-30
-                b_q = 2.0 * vdot_M(d, p)
-                c_q = vdot_M(d, d) - delta**2
-                alpha_tr = (-b_q + jnp.sqrt(jnp.maximum(0.0, b_q**2 - 4.0 * a_q * c_q))) / (2.0 * a_q)
-
-                # If negative curvature or boundary reached
-                is_neg = pHp <= 0
-                is_bound = vdot_M(d + alpha * p, d + alpha * p) >= delta**2
-
-                alpha_final = jnp.where(is_neg | is_bound, alpha_tr, alpha)
-                d_next = d + alpha_final * p
-
-                r_next = r + alpha * Hp  # Residual update for linear part
-                rho_next = vdot_M(r_next, r_next)
-                beta = rho_next / (rho + 1e-30)
-                p_next = -r_next + beta * p
-
-                stop = is_neg | is_bound | (rho_next < 1e-8)
-                return d_next, r_next, p_next, i + 1, done | stop
-
-            res = lax.while_loop(lambda v: (v[3] < max_iter) & (~v[4]), body_fun, (d, r, p, 0, False))
-            return res[0]
-
-        d = steihaug_toint(state.delta, params.get("tn_iters", 5))
-
-        # Predicted reduction (quadratic model)
-        Hd = full_hessian_op(d)
-        pred_red = -(jnp.vdot(g_tan, d) + 0.5 * jnp.vdot(d, Hd))
-
-        # Trial step using Cayley to stay on manifold
-        # Search direction in torque space
-        H_torque = -jnp.cross(m, d)
-        m_trial = cayley_update(m, H_torque, 1.0)
-        U_guess_trial = jnp.where(params.get("phi_extrapolate", False) & (state.it > 0), 2.0 * U - state.U_prev, U)
-        U_trial = solve_U(m_trial, U_guess_trial, params["phi_tol"], sparse_ops=sparse_ops)
+        # 2. Evaluate step (True Energy)
+        m_trial = cayley_update(m, -jnp.cross(m, -d), 1.0)
+        U_trial, it_demag, _ = solve_U(m_trial, U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
         E_trial, g_raw_trial = energy_and_grad(m_trial, U_trial, B_ext, sparse_ops=sparse_ops)
+        E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
 
-        actual_red = E - E_trial
-        rho = actual_red / (jnp.maximum(1e-30, pred_red))
+        actual_reduction = E - E_trial
+        rho_tr = actual_reduction / (pred_reduction + 1e-30)
 
         # Update TR radius (Standard Nocedal-Wright)
         delta_next = lax.cond(
-            rho < 0.25,
+            rho_tr < 0.25,
             lambda _: 0.25 * state.delta,
             lambda _: lax.cond(
-                (rho > 0.75) & (jnp.linalg.norm(d) >= 0.9 * state.delta),
+                (rho_tr > 0.75) & (jnp.linalg.norm(d) >= 0.9 * state.delta),
                 lambda _: jnp.minimum(2.0 * state.delta, 100.0),
                 lambda _: state.delta,
                 None,
@@ -2227,7 +2292,7 @@ def make_tr_minimizer(
         )
 
         # Accept step if reduction is sufficient
-        accept = rho > 0.01
+        accept = rho_tr > 0.01
         m_next = jnp.where(accept, m_trial, m)
         U_next = jnp.where(accept, U_trial, U)
         U_prev_next = jnp.where(accept, U, state.U_prev)
@@ -2235,8 +2300,20 @@ def make_tr_minimizer(
         g_raw_next = jnp.where(accept, g_raw_trial, g_raw)
 
         conv = check_convergence(state.it, E_next, E, m, m_next, gnorm_inf, params["tau_f"], params["eps_a"])
-
-        return TRState(m_next, U_next, U_prev_next, g_raw_next, E_next, delta_next, gnorm_inf, state.it + 1, conv)
+        return TRState(
+            m_next,
+            U_next,
+            U_prev_next,
+            g_raw_next,
+            E_next,
+            delta_next,
+            gnorm_inf,
+            state.it + 1,
+            conv,
+            state.evals + 1,
+            state.preco_iters + pc_iters,
+            state.demag_iters + it_demag,
+        )
 
     return step
 

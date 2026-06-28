@@ -115,6 +115,9 @@ To further regularize the highly non-linear secant equations, the Damped Precond
 \subsection{L-BFGS Preconditioned Cohen Method (\texttt{pcohen\_lbfgs})}
 The \texttt{pcohen\_lbfgs} method is a powerful hybrid approach that completely replaces the computationally expensive AMG-PCG spatial smoother with the L-BFGS inverse Hessian approximation. Instead of solving a linear Poisson system for the preconditioner, this method computes the preconditioned descent direction $\mathbf{z} = H_k \mathbf{g}_{\text{tan}}$ by passing the tangent gradient through the rigorously manifold-transported L-BFGS history arrays. This direction $\mathbf{z}$ is then injected into the Cohen Polak-Ribière Conjugate Gradient update to formulate the final line-search direction. By entirely eliminating the CPU-bound AMG smoother ($N_{\text{preco}} = 0$) and retaining the computation strictly on the GPU, this method dramatically reduces the wall-clock overhead per step while maintaining a highly accurate, history-aware estimation of the non-linear energy landscape curvature.
 
+\subsection{Split Truncated Newton (\texttt{tn\_split})}
+The Split Truncated Newton method (\texttt{tn\_split}) is a mathematically precise realization of Preconditioned Steepest Descent, where the preconditioner is exactly defined as the local geometric Hessian (exchange and anisotropy interactions, dropping the non-local demagnetization integral). Rather than using an outer Conjugate Gradient loop (which would be redundant and mathematically violate tangent space orthogonality due to normal Hessian components), \texttt{tn\_split} directly solves the local Newton system $P \mathbf{d} = -\mathbf{g}_{\text{tan}}$ at every step using the AMG-PCG solver. Crucially, the inner solver integrates a Steihaug-Toint negative curvature detection mechanism with a strict zero-crossing threshold ($\mathbf{p}^T H \mathbf{p} \le 0.0$), ensuring that it seamlessly falls back to the steepest descent direction upon encountering non-convex regions of the energy landscape without suffering from false-positive aborts due to scaling issues near local minima.
+
 \section{Benchmarking Results}
 
 Table \ref{tab:results} summarizes the cumulative metrics gathered over the entire hysteresis loop. The metrics include:
@@ -132,6 +135,7 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \toprule
         \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
         \midrule
+        \texttt{tn\_split}        & 13.477 & 159 & 246 & 568 & 3522 \\
         \texttt{pcg}              & 19.441 & 103 & 556 & 394 & 5552 \\
         \texttt{pcohen}           & \textbf{12.047} & 142 & 214 & 582 & 2738 \\
         \texttt{pcohen\_exact}    & 14.202 & 144 & 204 & 586 & 2549 \\
