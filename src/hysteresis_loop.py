@@ -346,6 +346,10 @@ def run_hysteresis_loop(  # noqa: D417
     history = []
 
     total_time = 0.0
+    total_iters = 0
+    total_preco_iters = 0
+    total_evals = 0
+    total_demag_iters = 0
     U = jnp.zeros(m.shape[0], dtype=m.dtype)
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
@@ -400,6 +404,10 @@ def run_hysteresis_loop(  # noqa: D417
         U.block_until_ready()
         step_duration = time.time() - start_step
         total_time += step_duration
+        total_iters += info.get("iters", 0)
+        total_preco_iters += info.get("preco_iters", 0)
+        total_evals += info.get("evals", info.get("nf", 0))
+        total_demag_iters += info.get("demag_iters", info.get("icg", 0))
 
         # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
@@ -474,7 +482,13 @@ def run_hysteresis_loop(  # noqa: D417
             )
             break
 
-    print(f"\nHysteresis loop finished in {total_time:.3f} s.")
+    print(
+        f"\nHysteresis loop finished in {total_time:.3f} s.\n"
+        f"Total minimizer iterations: {total_iters}\n"
+        f"Total preconditioner iterations: {total_preco_iters}\n"
+        f"Total function evaluations: {total_evals}\n"
+        f"Total Poisson (demag) iterations: {total_demag_iters}"
+    )
     return {
         "out_dir": str(out_dir),
         "csv_path": str(csv_path),

@@ -25,7 +25,7 @@ mkdir -p ${OUT_DIR}
 pixi run python ../src/loop.py cube_${L}nm \
     --out-dir ${OUT_DIR} \
     --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
-    --method cohen \
+    --method tr \
     --tau0 1.0 \
     --operator-mode assembled \
     --verbose 2>&1 | tee ${OUT_DIR}/simulation.log
