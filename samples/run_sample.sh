@@ -27,7 +27,7 @@ pixi run python ../src/loop.py cube_${L}nm \
     --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
     --method tr \
     --tau0 1.0 \
-    --operator-mode assembled \
+    --operator-mode matrix_free \
     --benchmark \
     --verbose 2>&1 | tee ${OUT_DIR}/simulation.log
 
