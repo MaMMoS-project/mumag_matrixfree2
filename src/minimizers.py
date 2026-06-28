@@ -2389,14 +2389,14 @@ def make_ptr_minimizer(
         alpha_f = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_f)), 0.0)
 
-        def full_hessian_op(v):
-            U_v, it_demag, _ = solve_U(v, jnp.zeros_like(U), params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+        def full_hessian_op(v, U_v_guess):
+            U_v, it_demag, _ = solve_U(v, U_v_guess, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
             Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext), sparse_ops=sparse_ops)
             g_ext = g_raw
             m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
             v_dot_g = jnp.sum(v * g_ext, axis=1, keepdims=True)
             m_dot_Cv = jnp.sum(m * Cv_full, axis=1, keepdims=True)
-            return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m), it_demag
+            return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m), it_demag, U_v
 
         def vdot_M(a, b):
             return jnp.vdot(a * M_rel, b)
@@ -2422,9 +2422,9 @@ def make_ptr_minimizer(
             q = 0.0
 
             def body_fun(val):
-                d, r, z, p, rho, q, pc_iters_accum, i, demag_accum, done = val
+                d, r, z, p, U_p_guess, rho, q, pc_iters_accum, i, demag_accum, done = val
 
-                Hp, it_demag = full_hessian_op(p)
+                Hp, it_demag, U_p = full_hessian_op(p, U_p_guess)
                 kappa = jnp.vdot(p, Hp)
 
                 is_neg = kappa <= 0.0
@@ -2461,6 +2461,7 @@ def make_ptr_minimizer(
                 rho_next = jnp.vdot(r_next, z_next)
                 beta = rho_next / (rho + 1e-30)
                 p_next = -z_next + beta * p
+                U_p_next = beta * U_p
 
                 stop = done_now | (rho_next < 1e-8) | (rho <= 0.0)
 
@@ -2469,6 +2470,7 @@ def make_ptr_minimizer(
                     r_next,
                     z_next,
                     p_next,
+                    U_p_next,
                     rho_next,
                     q_next,
                     pc_iters_accum + pc_it,
@@ -2478,11 +2480,11 @@ def make_ptr_minimizer(
                 )
 
             res = lax.while_loop(
-                lambda v: (v[7] < max_iter) & (~v[9]) & (v[4] > 0.0),
+                lambda v: (v[8] < max_iter) & (~v[10]) & (v[5] > 0.0),
                 body_fun,
-                (d, r, z, p, rho, q, pc_iters_init, 0, 0, False),
+                (d, r, z, p, jnp.zeros_like(U), rho, q, pc_iters_init, 0, 0, False),
             )
-            return res[0], res[5], res[6], res[8]
+            return res[0], res[6], res[7], res[9]
 
         d, q_pred, pc_iters, demag_inner = preconditioned_steihaug(state.delta, params.get("tn_iters", 5))
         pred_reduction = -q_pred
