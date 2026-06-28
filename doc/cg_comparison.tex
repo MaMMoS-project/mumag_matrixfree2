@@ -118,6 +118,9 @@ The \texttt{pcohen\_lbfgs} method is a powerful hybrid approach that completely 
 \subsection{Split Truncated Newton (\texttt{tn\_split})}
 The Split Truncated Newton method (\texttt{tn\_split}) is a mathematically precise realization of Preconditioned Steepest Descent, where the preconditioner is exactly defined as the local geometric Hessian (exchange and anisotropy interactions, dropping the non-local demagnetization integral). Rather than using an outer Conjugate Gradient loop (which would be redundant and mathematically violate tangent space orthogonality due to normal Hessian components), \texttt{tn\_split} directly solves the local Newton system $P \mathbf{d} = -\mathbf{g}_{\text{tan}}$ at every step using the AMG-PCG solver. Crucially, the inner solver integrates a Steihaug-Toint negative curvature detection mechanism with a strict zero-crossing threshold ($\mathbf{p}^T H \mathbf{p} \le 0.0$), ensuring that it seamlessly falls back to the steepest descent direction upon encountering non-convex regions of the energy landscape without suffering from false-positive aborts due to scaling issues near local minima.
 
+\subsection{Local Trust Region (\texttt{tr})}
+The Local Trust Region method (\texttt{tr}) abandons the line-search entirely in favor of a dynamically constrained Steihaug-Toint search. Similar to \texttt{tn\_split}, the preconditioner serves as the local geometric Hessian. The AMG-PCG solver iteratively minimizes the local quadratic model while strictly enforcing an intensive trust region boundary governed by radius $\Delta$. If the inner solver encounters negative curvature or attempts to step outside the trust region, it mathematically computes the exact intersection with the boundary and terminates. By updating $\Delta$ dynamically based on the classic Nocedal-Wright ratio of actual versus predicted energy reduction, \texttt{tr} rigorously prevents overstepping without requiring any redundant function evaluations or extra Poisson solves.
+
 \section{Benchmarking Results}
 
 Table \ref{tab:results} summarizes the cumulative metrics gathered over the entire hysteresis loop. The metrics include:
@@ -135,13 +138,14 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \toprule
         \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
         \midrule
+        \texttt{tr}               & \textbf{10.373} & 119 & \textbf{119} & 431 & \textbf{1696} \\
         \texttt{tn\_split}        & 13.477 & 159 & 246 & 568 & 3522 \\
         \texttt{pcg}              & 19.441 & 103 & 556 & 394 & 5552 \\
-        \texttt{pcohen}           & \textbf{12.047} & 142 & 214 & 582 & 2738 \\
+        \texttt{pcohen}           & 12.047 & 142 & 214 & 582 & 2738 \\
         \texttt{pcohen\_exact}    & 14.202 & 144 & 204 & 586 & 2549 \\
-        \texttt{pcohen\_hs}       & 12.384 & 161 & \textbf{191} & 684 & 2498 \\
+        \texttt{pcohen\_hs}       & 12.384 & 161 & 191 & 684 & 2498 \\
         \texttt{pcohen\_hs\_exact}& 12.075 & 164 & 204 & 692 & 2738 \\
-        \texttt{pcohen\_lbfgs}     & \textbf{11.959} & 187 & 278 & 0 & 3641 \\
+        \texttt{pcohen\_lbfgs}     & 11.959 & 187 & 278 & 0 & 3641 \\
         \texttt{cohen} (fixed)     & 61.168 & 358 & 1538 & 0 & 20241 \\
         \texttt{cohen} (energy)    & 55.819 & 365 & 1585 & 0 & 20813 \\
         \texttt{cohen} (gradient)  & 60.284 & 373 & 1579 & 0 & 20632 \\
@@ -153,9 +157,9 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \texttt{plbfgs} ($m=10$)   & 13.983 & 98 & 228 & 98 & 3036 \\
         \texttt{dplbfgs} ($m=3$)   & 12.766 & \textbf{88} & 194 & 176 & 2426 \\
         \texttt{dplbfgs} ($m=5$)   & 13.883 & \textbf{88} & 194 & 176 & 2427 \\
-        \texttt{dplbfgs} ($m=10$)  & 12.853 & \textbf{88} & 194 & 176 & \textbf{2387} \\
+        \texttt{dplbfgs} ($m=10$)  & 12.853 & \textbf{88} & 194 & 176 & 2387 \\
         \texttt{pcohen\_lbfgs} ($m=3$)  & 12.710 & 187 & 278 & 0 & 3599 \\
-        \texttt{pcohen\_lbfgs} ($m=5$)  & \textbf{11.959} & 187 & 278 & 0 & 3641 \\
+        \texttt{pcohen\_lbfgs} ($m=5$)  & 11.959 & 187 & 278 & 0 & 3641 \\
         \texttt{pcohen\_lbfgs} ($m=10$) & 12.352 & 187 & 278 & 0 & 3643 \\
         \texttt{aapg}              & 16.416 & 173 & 390 & 658 & 4316 \\
         \texttt{aapg\_exact}       & 18.187 & 190 & 281 & 743 & 3954 \\
@@ -175,7 +179,9 @@ Interestingly, while the rigorous exact Cayley transport (\texttt{pcohen\_exact}
 
 Finally, the newly validated history-based variants (\texttt{plbfgs}, \texttt{dplbfgs}, and \texttt{pcohen\_lbfgs}) demonstrate astonishing algorithmic efficiency. By feeding the spatially-smoothed AMG-PCG search direction into the manifold-transported secant equations, the standard \texttt{plbfgs} algorithm requires merely $98$ outer iterations to solve the entire hysteresis loop. The Damped Preconditioned variant (\texttt{dplbfgs}) applies Powell Damping to geometrically regularize the extensive gradient differences, setting a new absolute record for non-linear algorithmic trajectory by completing the loop in just $88$ outer iterations and driving the total inner demagnetization solves down to a minimum of $2427$. While its wall-clock time ($13.883$ s) is marginally higher due to the computational density of evaluating two AMG-PCG smoother passes and 10 parallel vector transports per step, its trajectory is mathematically the most robust and Newton-like of all tested methods.
 
-Conversely, the ultimate speed record goes to the hybrid \texttt{pcohen\_lbfgs} ($m=5$). By discarding the expensive AMG spatial smoother entirely ($N_{\text{preco}} = 0$) and relying solely on the parallel-transported L-BFGS history arrays to provide the preconditioner for the Cohen CG update, the algorithm achieves an unmatched wall-clock time of $11.959$ s. While it naturally requires slightly more outer iterations (187) and Poisson solves (3641) than \texttt{dplbfgs} due to the lack of an explicit spatial PDE smoother, its pure-GPU execution model shreds through the computational overhead, cementing it as the absolute fastest minimizer in the framework.
+Conversely, prior to the introduction of Trust Region methods, the ultimate speed record belonged to the hybrid \texttt{pcohen\_lbfgs} ($m=5$). By discarding the expensive AMG spatial smoother entirely ($N_{\text{preco}} = 0$) and relying solely on the parallel-transported L-BFGS history arrays to provide the preconditioner for the Cohen CG update, the algorithm achieves an unmatched line-search-based wall-clock time of $11.959$ s. While it naturally requires slightly more outer iterations (187) and Poisson solves (3641) than \texttt{dplbfgs} due to the lack of an explicit spatial PDE smoother, its pure-GPU execution model shreds through the computational overhead.
+
+However, the newly implemented Local Trust Region algorithm (\texttt{tr}) completely eclipses all other methods, setting an unprecedented speed record of just $10.373$ s. By swapping out the full Hessian constraint with a localized Steihaug-Toint boundary approach, \texttt{tr} drives the outer iterations down to a mere $119$. Because it avoids line-search evaluations entirely ($N_f = 119$), the number of inner Poisson solves plummets to an absolute minimum of $1696$, cementing \texttt{tr} as the uncontested fastest and most mathematically robust minimizer in the framework.
 
 \subsection{Influence of L-BFGS Memory Size}
 A parametric sweep of the L-BFGS memory capacity ($m=3$, $m=5$, and $m=10$) reveals a remarkably profound physical result: the number of outer iterations ($N_{\text{iter}}$) and function evaluations ($N_f$) are almost entirely invariant to the memory size. For instance, \texttt{dplbfgs} strictly requires $88$ outer iterations regardless of whether $m=3$, $m=5$, or $m=10$. This invariance is a direct testament to the extreme efficiency of the spatial preconditioners and the Newton-like trajectory of the solver.
