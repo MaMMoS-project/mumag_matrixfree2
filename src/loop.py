@@ -525,6 +525,13 @@ def main() -> None:
         help="Maximum step size allowed for the BB minimizer.",
     )
     ap.add_argument(
+        "--ls-adaptive-mode",
+        type=str,
+        default="none",
+        choices=["none", "energy", "gradient"],
+        help="Heuristic strategy for adaptive step size: 'none' (fixed tau0), 'energy', or 'gradient'.",
+    )
+    ap.add_argument(
         "--bias-type",
         type=str,
         default=None,
@@ -553,12 +560,12 @@ def main() -> None:
             "lbfgs",
             "plbfgs",
             "dplbfgs",
-            "rplbfgs",
             "tn",
             "tn_split",
             "pbb",
             "tr",
             "aapg",
+            "aapg_exact",
             "pnag",
             "wg",
         ],

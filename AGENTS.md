@@ -1,47 +1,18 @@
-# MaMMoS-MuMag Project Context
+## Coding & Workflow Rules
+- **Rule 1: Approval Before Code Changes**: Only make changes to the code after receiving explicit approval from the user. Always describe in detail what you plan to do before writing/modifying any code.
+- **Rule 2: Relevant Code Changes and Improvements**: Only consider code changes that are directly relevant to the current task given by the user. If you have suggestions for additional improvements, suggest them to the user first. Do not make these improvements until you receive the user's OK. When starting an improvement, formulate a plan and follow Rule 1.
+- **Rule 3: Interaction Sequence for Fixes**: When an error occurs or a fix is needed, follow this exact sequence:
+  1. Tell the user what went wrong and make a suggestion for the fix.
+  2. Ask the user whether they agree with the proposed fix and start the run.
+  Do not proactively apply fixes or start scripts without completing this sequence.
+- **Rule 4: Side Effect Rigor**: Before making any code change, rigorously analyze the proposed update strategy to ensure it does not introduce unintended side effects. Explicitly verify whether the change breaks existing functionality elsewhere or requires corresponding updates in other parts of the codebase.
 
-This file provides persistent context for the Gemini CLI to ensure engineering consistency and technical accuracy within this repository.
+## LaTeX Paper Writing Rules
+- **The Preservation Rule**: Whenever I update, modify, or expand an existing LaTeX file, I must never remove existing content in the file. I must never shorten the LaTeX file by dropping previous essential content. I am only allowed to expand and refine.
+- **The Precision Rule**: I must be very precise, as is strictly required for a scientific paper. This explicitly means I must ensure that every single mathematical symbol and variable is defined properly upon its very first use in the text.
 
-## 1. Project Mission
-A high-performance, matrix-free micromagnetics library built on **JAX**. It solves the demagnetization field using an element-wise FEM Poisson solver and minimizes energy using a curvilinear Barzilai-Borwein (BB) method.
-
-## 2. Engineering Standards
-
-### Environment & Tooling
-- **Dependency Management**: Use **Pixi**. Never use `pip` or `conda` directly; always work through `pixi.toml` and defined tasks.
-- **Hardware Targets**: Support both `cpu` and `cuda` environments. Prioritize GPU execution for large-scale simulations.
-
-### Coding Style & Types
+## Coding Style & Types
 - **Documentation**: All functions must use **Google-style docstrings** without type hints in the docstrings. Each parameter must be documented separately.
 - **Type Safety**: Use explicit **Python type hints** for all parameters and return types. Use `jnp.ndarray` (or `Array` alias) for JAX arrays and `np.ndarray` for CPU/IO data.
 - **Floating Point**: Micromagnetic physical verification REQUIRES double precision. Always ensure `jax.config.update("jax_enable_x64", True)` is set in scripts and tests.
 - **Static analysis**: All code must comply with ruff and pre-commit hooks. Adjusting ruff/pre-commit settings is not permitted.
-
-### JAX Implementation Patterns
-- **Matrix-Free**: NEVER assemble a global stiffness matrix. Operations must be computed element-wise.
-- **XLA Fusion**: Avoid high-level abstractions like `jnp.einsum` for small-tensor contractions (e.g., $4 \times 3$ element gradients). Manually unroll these into explicit scalar-vector arithmetic to enable XLA kernel fusion and register utilization.
-- **Pre-scaling**: Pre-calculate all loop-invariant weighted geometry terms (e.g., $A_{red} \cdot V_e$, $K_1 \cdot V_e$) outside the inner JAX loops to reduce FLOP counts.
-- **Batching (Chunking)**: Large meshes must be processed in chunks to manage GPU memory. While `chunk_elems = 100,000` is a documented baseline for mid-range hardware (RTX 4060), this parameter must be **tuned to fit the GPU's L2 cache**. The goal is to maximize cache hit rates and minimize VRAM round-trips during atomic `scatter-add` assembly operations.
-- **JIT & Pytrees**: Use `jax.jit` extensively. Complex states should be managed as registered `jax.tree_util` classes (see `MinimState` in `src/curvilinear_bb_minimizer.py`).
-
-## 3. Physical & Numerical Methodology
-
-### Minimization (Algorithm 2)
-- **Algorithm**: Curvilinear Search for p-Harmonic flows (DOI: 10.1137/080726926).
-- **Unit Length**: Maintain $|m|=1$ via the **Cayley Transform**, avoiding simple normalization.
-- **Stopping Criteria**: Use the **Gill-Murray (1981)** U1-U4 criteria for convergence.
-
-### Poisson Solver
-- **Implementation**: Preconditioned Conjugate Gradient (PCG).
-- **Stability**: Project RHS and initial guess to **zero-mean** for pure Neumann (open boundary) problems to ensure solvability.
-- **Preconditioning**: Default to `amgcl`.
-
-### Validation & Reference
-- **C++ Alignment**: The JAX implementation is the performance benchmark for the native C++ (OpenCL/VexCL) port. Maintain strict mathematical alignment in iteration counts and physical scaling between JAX kernels and the C++ CSR-based reference.
-
-## 4. Repository Structure
-- `src/`: Core library modules (documented and typed).
-- `samples/`: User-facing simulation examples and `.p2` config samples.
-- `benchmarking/`: Native C++ (OpenCL) vs JAX performance comparisons.
-- `tests/`: Physics and gradient verification suite.
-- `develop/`: Magnetoelasticity and ongoing feature development.
