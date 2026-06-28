@@ -1756,6 +1756,104 @@ def make_wen_goldfarb_minimizer(
     return step
 
 
+def make_wg_np_minimizer(
+    energy_and_grad: Callable,
+    energy_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+):
+    """Create an unpreconditioned Wen and Goldfarb (2009) curvilinear search minimizer (Algorithm 2)."""
+    ls = make_armijo_ls_v2(energy_and_grad, solve_U)
+
+    def step(state: WGState, B_ext: Array, params: dict) -> WGState:
+        sparse_ops = params.get("sparse_ops")
+        m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
+
+        g_tan = tangent_grad(m, g_raw * inv_M_rel)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        # Unpreconditioned: z is simply g_tan
+        z = g_tan
+
+        s_diff = (m - state.m_prev).reshape(-1)
+        y_diff = (g_tan - state.g_tan_prev).reshape(-1)
+
+        sty = jnp.vdot(s_diff, y_diff)
+        sts = jnp.vdot(s_diff, s_diff)
+        yty = jnp.vdot(y_diff, y_diff)
+
+        tau1 = sts / (sty + 1e-30)
+        tau2 = sty / (yty + 1e-30)
+
+        tau_bb = jnp.where((state.it % 2) != 0, tau1, tau2)
+
+        # Bound tau_bb to prevent explosion if curvature is bad
+        tau_bb = jnp.abs(tau_bb)
+        tau_bb = jnp.clip(tau_bb, 1e-6, 1e3)
+
+        gamma = params.get("wg_gamma", 2)
+        is_initial = state.it < gamma
+
+        H = -jnp.cross(m, z)
+        pg = -jnp.vdot(g_raw, z)
+
+        def run_bb(_):
+            m_new_bb = cayley_update(m, H, tau_bb)
+            U_new_bb, it_demag, _ = solve_U(m_new_bb, U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+            E_new_bb, g_raw_new_bb = energy_and_grad(m_new_bb, U_new_bb, B_ext, sparse_ops=sparse_ops)
+            return tau_bb, E_new_bb, g_raw_new_bb, U_new_bb, m_new_bb, jnp.int32(1), it_demag
+
+        def run_ls(_):
+            tau_ls, E_new_ls, g_raw_new_ls, U_new_ls, m_new_ls, ls_evals, ls_demag = ls(
+                m,
+                pg,
+                H,
+                E_prev,
+                U,
+                g_raw,
+                B_ext,
+                params["phi_tol"],
+                params["ls_eta1"],
+                params["ls_eta2"],
+                params["ls_C"],
+                params["ls_c"],
+                1.0,
+                15,
+                return_info=True,
+                sparse_ops=sparse_ops,
+            )
+            return tau_ls, E_new_ls, g_raw_new_ls, U_new_ls, m_new_ls, ls_evals, ls_demag
+
+        tau, E_new, g_raw_new, U_new, m_new, evals, demag_it = lax.cond(
+            is_initial,
+            run_ls,
+            run_bb,
+            operand=None,
+        )
+
+        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
+
+        return WGState(
+            m=m_new,
+            U=U_new,
+            U_prev=U,
+            g_tan=g_tan,
+            g_raw=g_raw_new,
+            m_prev=m,
+            g_tan_prev=g_tan,
+            E=E_new,
+            gnorm=gnorm_inf,
+            it=state.it + 1,
+            converged=conv,
+            evals=state.evals + evals,
+            preco_iters=state.preco_iters,
+            demag_iters=state.demag_iters + demag_it,
+        )
+
+    return step
+
+
 # -----------------------------------------------------------------------------
 # 9. Preconditioned Barzilai-Borwein (PBB)
 # -----------------------------------------------------------------------------
@@ -3389,6 +3487,31 @@ def make_minimizer(
 
     elif method == "wg":
         step_fn = make_wen_goldfarb_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
+
+        def init_state_fn(m, U, E, g, gnorm, **kwargs):
+            g_raw = kwargs.get("g_raw")
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
+            return WGState(
+                m=m,
+                U=U,
+                U_prev=U,
+                g_tan=g,
+                g_raw=g_raw,
+                m_prev=m,
+                g_tan_prev=g,
+                E=E,
+                gnorm=gnorm,
+                it=jnp.int32(0),
+                converged=jnp.array(False),
+                evals=jnp.int32(init_evals),
+                preco_iters=jnp.int32(init_preco),
+                demag_iters=jnp.int32(init_demag),
+            )
+
+    elif method == "wg_np":
+        step_fn = make_wg_np_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")

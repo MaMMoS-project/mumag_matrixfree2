@@ -562,6 +562,8 @@ def main() -> None:
             "dplbfgs",
             "tn_split",
             "pbb",
+            "wg",
+            "wg_np",
             "tr",
             "aapg",
             "aapg_exact",
