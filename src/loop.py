@@ -569,6 +569,7 @@ def main() -> None:
             "pnag",
             "pcohen_lbfgs",
             "wg",
+            "ptr",
         ],
         help="Energy minimizer algorithm (default: pcohen).",
     )

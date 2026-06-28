@@ -2319,6 +2319,222 @@ def make_tr_minimizer(
 
 
 # -----------------------------------------------------------------------------
+# Preconditioned Trust Region Newton-CG (Full Hessian + Local Preconditioner)
+# -----------------------------------------------------------------------------
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class PTRState:
+    """State for the Preconditioned Trust-Region minimizer."""
+
+    m: Array
+    U: Array
+    U_prev: Array
+    g_raw: Array
+    E: Array
+    delta: Array  # Trust region radius
+    gnorm: Array
+    it: jnp.int32
+    converged: Array
+    evals: jnp.int32 = 0
+    preco_iters: jnp.int32 = 0
+    demag_iters: jnp.int32 = 0
+
+    def tree_flatten(self):
+        """Flatten the PTRState for JAX tree operations."""
+        return (
+            self.m,
+            self.U,
+            self.U_prev,
+            self.g_raw,
+            self.E,
+            self.delta,
+            self.gnorm,
+            self.it,
+            self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+        ), None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        """Unflatten the PTRState for JAX tree operations."""
+        return cls(*children)
+
+
+def make_ptr_minimizer(
+    energy_and_grad: Callable,
+    grad_only: Callable,
+    energy_only: Callable,
+    local_grad_only: Callable,
+    solve_U: Callable,
+    inv_M_rel: Array,
+    cg_tol: float,
+):
+    """Create a Preconditioned Trust-Region minimizer using the local Hessian as preconditioner."""
+    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
+
+    def step(state: PTRState, B_ext: Array, params: dict) -> PTRState:
+        sparse_ops = params.get("sparse_ops")
+        m, U, g_raw, E = state.m, state.U, state.g_raw, state.E
+        g_s = g_raw * inv_M_rel
+        g_tan = tangent_grad(m, g_s)
+        g_tan_ext = tangent_grad(m, g_raw)
+        gnorm_inf = jnp.max(jnp.abs(g_tan))
+
+        eta_base = params.get("pc_force_eta", 0.5)
+        alpha_f = params.get("pc_force_alpha", 0.5)
+        pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_f)), 0.0)
+
+        def full_hessian_op(v):
+            U_v, it_demag, _ = solve_U(v, jnp.zeros_like(U), params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+            Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext), sparse_ops=sparse_ops)
+            g_ext = g_raw
+            m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
+            v_dot_g = jnp.sum(v * g_ext, axis=1, keepdims=True)
+            m_dot_Cv = jnp.sum(m * Cv_full, axis=1, keepdims=True)
+            return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m), it_demag
+
+        def vdot_M(a, b):
+            return jnp.vdot(a * M_rel, b)
+
+        def preconditioned_steihaug(delta, max_iter=5):
+            d = jnp.zeros_like(g_tan)
+            r = g_tan_ext
+
+            # Initial preconditioner solve
+            z, pc_iters_init = solve_P(
+                m,
+                g_raw,
+                r,
+                max_iter=params.get("pc_iters", 15),
+                tol=pc_tol,
+                reg=params.get("pc_reg", 0.0),
+                return_info=True,
+                sparse_ops=sparse_ops,
+            )
+            p = -z
+            rho = jnp.vdot(r, z)
+
+            q = 0.0
+
+            def body_fun(val):
+                d, r, z, p, rho, q, pc_iters_accum, i, demag_accum, done = val
+
+                Hp, it_demag = full_hessian_op(p)
+                kappa = jnp.vdot(p, Hp)
+
+                is_neg = kappa <= 0.0
+                alpha = rho / (kappa + 1e-30)
+
+                a_q = vdot_M(p, p) + 1e-30
+                b_q = 2.0 * vdot_M(d, p)
+                c_q = vdot_M(d, d) - delta**2
+                alpha_tr = (-b_q + jnp.sqrt(jnp.maximum(0.0, b_q**2 - 4.0 * a_q * c_q))) / (2.0 * a_q)
+
+                is_bound = vdot_M(d + alpha * p, d + alpha * p) >= delta**2
+                done_now = is_neg | is_bound
+                alpha_final = jnp.where(done_now, alpha_tr, alpha)
+
+                d_next = d + alpha_final * p
+
+                # Update predicted reduction
+                q_next = q + alpha_final * jnp.vdot(r, p) + 0.5 * alpha_final**2 * kappa
+
+                r_next = r + alpha * Hp
+
+                # Next preconditioner solve
+                z_next, pc_it = solve_P(
+                    m,
+                    g_raw,
+                    r_next,
+                    max_iter=params.get("pc_iters", 15),
+                    tol=pc_tol,
+                    reg=params.get("pc_reg", 0.0),
+                    return_info=True,
+                    sparse_ops=sparse_ops,
+                )
+
+                rho_next = jnp.vdot(r_next, z_next)
+                beta = rho_next / (rho + 1e-30)
+                p_next = -z_next + beta * p
+
+                stop = done_now | (rho_next < 1e-8) | (rho <= 0.0)
+
+                return (
+                    d_next,
+                    r_next,
+                    z_next,
+                    p_next,
+                    rho_next,
+                    q_next,
+                    pc_iters_accum + pc_it,
+                    i + 1,
+                    demag_accum + it_demag,
+                    done | stop,
+                )
+
+            res = lax.while_loop(
+                lambda v: (v[7] < max_iter) & (~v[9]) & (v[4] > 0.0),
+                body_fun,
+                (d, r, z, p, rho, q, pc_iters_init, 0, 0, False),
+            )
+            return res[0], res[5], res[6], res[8]
+
+        d, q_pred, pc_iters, demag_inner = preconditioned_steihaug(state.delta, params.get("tn_iters", 5))
+        pred_reduction = -q_pred
+
+        # Evaluate step (True Energy)
+        m_trial = cayley_update(m, -jnp.cross(m, -d), 1.0)
+        U_trial, it_demag_eval, _ = solve_U(m_trial, U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+        E_trial, g_raw_trial = energy_and_grad(m_trial, U_trial, B_ext, sparse_ops=sparse_ops)
+        E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
+
+        actual_reduction = E - E_trial
+        rho_tr = actual_reduction / (pred_reduction + 1e-30)
+
+        delta_next = lax.cond(
+            rho_tr < 0.25,
+            lambda _: 0.25 * state.delta,
+            lambda _: lax.cond(
+                (rho_tr > 0.75) & (jnp.linalg.norm(d) >= 0.9 * state.delta),
+                lambda _: jnp.minimum(2.0 * state.delta, 100.0),
+                lambda _: state.delta,
+                None,
+            ),
+            operand=None,
+        )
+
+        accept = rho_tr > 0.01
+        m_next = jnp.where(accept, m_trial, m)
+        U_next = jnp.where(accept, U_trial, U)
+        U_prev_next = jnp.where(accept, U, state.U_prev)
+        E_next = jnp.where(accept, E_trial, E)
+        g_raw_next = jnp.where(accept, g_raw_trial, g_raw)
+
+        conv = check_convergence(state.it, E_next, E, m, m_next, gnorm_inf, params["tau_f"], params["eps_a"])
+        return PTRState(
+            m_next,
+            U_next,
+            U_prev_next,
+            g_raw_next,
+            E_next,
+            delta_next,
+            gnorm_inf,
+            state.it + 1,
+            conv,
+            state.evals + 1,
+            state.preco_iters + pc_iters,
+            state.demag_iters + demag_inner + it_demag_eval,
+        )
+
+    return step
+
+
+# -----------------------------------------------------------------------------
 # 13. Anderson Accelerated Preconditioned Gradient (AA-PG)
 # -----------------------------------------------------------------------------
 
@@ -3076,6 +3292,7 @@ def make_minimizer(
         "pnag",
         "pbbs",
         "pcohen_lbfgs",
+        "ptr",
     ] = "pcg",
     **kwargs,
 ):
@@ -3355,6 +3572,15 @@ def make_minimizer(
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
             return TRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
+
+    elif method == "ptr":
+        step_fn = make_ptr_minimizer(
+            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol
+        )
+
+        def init_state_fn(m, U, E, g, gnorm, **kwargs):
+            g_raw = kwargs.get("g_raw")
+            return PTRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
 
     elif method == "aapg":
         memory = kwargs.get("memory", 5)
