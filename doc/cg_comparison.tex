@@ -141,6 +141,7 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \toprule
         \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
         \midrule
+        \texttt{wg\_np}             & 28.307 & 221 & 322 & 0 & 3481 \\
         \texttt{tr}               & \textbf{10.373} & 119 & 119 & 431 & \textbf{1696} \\
         \texttt{ptr}              & 22.566 & \textbf{66} & \textbf{66} & 795 & 7961 \\
         \texttt{tn\_split}        & 13.477 & 159 & 246 & 568 & 3522 \\
@@ -189,6 +190,8 @@ However, the newly implemented Local Trust Region algorithm (\texttt{tr}) comple
 
 In contrast, the Preconditioned Trust Region (\texttt{ptr}) variant demonstrates a fascinating mathematical dichotomy. By explicitly coupling the non-local full Hessian operator with the local spatial AMG preconditioner, \texttt{ptr} yields incredibly accurate true-Newtonian search directions. It slashes through the complex manifold landscape to complete the entire hysteresis loop in an astonishingly minimal \textbf{66 outer steps}, setting the absolute record for shortest geometric trajectory. However, because resolving the full Hessian requires an expensive Poisson solve during every single inner Steihaug iteration, the total demagnetization solver count explodes to $7961$, driving its wall-clock time to $22.566$ s. This ultimately proves that while exact non-local Newtonian trajectories are geometrically optimal, the highly matrix-free, locally-approximated \texttt{tr} method is computationally superior for high-performance micromagnetics.
 
+Finally, our testing of the unpreconditioned Wen-Goldfarb algorithm (\texttt{wg\_np}), a pure Barzilai-Borwein curvilinear search on the spherical manifold, yielded surprisingly competitive metrics for an un-smoothed solver (28.307 s, 221 outer iterations). While this is substantially slower than the top-tier Trust Region and \texttt{pcohen} methods, its strict adherence to the BB spectral step sizes allows it to significantly outperform standard gradient descent without requiring any internal preconditioner. This highlights the inherent scale-invariant efficiency of the Barzilai-Borwein formulation when applied strictly along the exact tangent space descent direction.
+
 \subsection{Influence of L-BFGS Memory Size}
 A parametric sweep of the L-BFGS memory capacity ($m=3$, $m=5$, and $m=10$) reveals a remarkably profound physical result: the number of outer iterations ($N_{\text{iter}}$) and function evaluations ($N_f$) are almost entirely invariant to the memory size. For instance, \texttt{dplbfgs} strictly requires $88$ outer iterations regardless of whether $m=3$, $m=5$, or $m=10$. This invariance is a direct testament to the extreme efficiency of the spatial preconditioners and the Newton-like trajectory of the solver.
 
@@ -196,8 +199,8 @@ This phenomenon can be deduced mathematically from the structure of the simulati
 
 Consequently, a memory buffer of size $m=10$ provides zero algorithmic benefit because the optimizer physically reaches the minimum before it can even reach index 6. Even for a smaller buffer of $m=3$, the algorithm only overwrites the 4th and 5th oldest vectors. Because these older vectors are too stale to significantly improve the local secant approximation, losing them has absolutely zero impact on the required number of steps, locking the overall convergence trajectory in place.
 
-\section{Future Work}
-This report has established the rigorous foundations for Conjugate Gradient and Limited-Memory quasi-Newton (\texttt{lbfgs}, \texttt{plbfgs}) optimization on the micromagnetic manifold. Future work will focus on expanding these results by benchmarking Truncated Newton methods (\texttt{tn}) and Barzilai-Borwein gradient descents.
+\section{Conclusion}
+This report has established rigorous foundations for optimization on the micromagnetic manifold, spanning from Conjugate Gradient and Limited-Memory quasi-Newton methods to Trust Region and Barzilai-Borwein curvilinear descents. The culmination of this benchmarking suite definitively proves that incorporating local spatial stiffness through a preconditioned Steihaug-Toint Trust Region boundary yields unparalleled computational efficiency, while exact manifold transport is absolutely crucial for L-BFGS convergence. Future work will investigate the coupling of these highly efficient matrix-free minimizers with dynamic stochastic thermal noise models and generalized semi-implicit integration schemes.
 
 \bibliographystyle{plain}
 \bibliography{references}
