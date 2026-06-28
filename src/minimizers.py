@@ -1596,23 +1596,22 @@ def make_plbfgs_minimizer(
 @jax.tree_util.register_pytree_node_class
 @dataclass
 class WGState:
-    """State for the Wen and Goldfarb (2009) minimizer."""
+    """State for the Wen and Goldfarb (2009) minimizer (Algorithm 2)."""
 
     m: Array
     U: Array
     U_prev: Array
-    g: Array
+    g_tan: Array
     g_raw: Array
     m_prev: Array
-    g_prev: Array
+    g_tan_prev: Array
     E: Array
-    C: Array  # Reference value for non-monotone line search
-    Q: Array  # Weight for C update
-    phase: jnp.int32  # 0: Gradient Descent, 1: BB
-    convex_count: jnp.int32
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32 = 0
+    preco_iters: jnp.int32 = 0
+    demag_iters: jnp.int32 = 0
 
     def tree_flatten(self):
         """Flatten the WGState for JAX tree operations."""
@@ -1620,22 +1619,17 @@ class WGState:
             self.m,
             self.U,
             self.U_prev,
-            self.g,
+            self.g_tan,
             self.g_raw,
             self.m_prev,
-            self.g_prev,
+            self.g_tan_prev,
             self.E,
-            self.C,
-            self.Q,
-            self.phase,
-            self.convex_count,
             self.gnorm,
             self.it,
             self.converged,
             self.evals,
             self.preco_iters,
             self.demag_iters,
-            self.hist_it,
         )
         return children, None
 
@@ -1653,25 +1647,24 @@ def make_wen_goldfarb_minimizer(
     inv_M_rel: Array,
     cg_tol: float,
 ):
-    """Create a Wen and Goldfarb (2009) curvilinear search minimizer."""
+    """Create a Wen and Goldfarb (2009) curvilinear search minimizer (Algorithm 2)."""
+    ls = make_armijo_ls_v2(energy_and_grad, solve_U)
     _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
 
     def step(state: WGState, B_ext: Array, params: dict) -> WGState:
         sparse_ops = params.get("sparse_ops")
-        m, U, E_prev, C_k, Q_k, g_raw = state.m, state.U, state.E, state.C, state.Q, state.g_raw
-        phase, convex_count = state.phase, state.convex_count
+        m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
-        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
-        # Automated tuning of preconditioner accuracy (Forcing sequence)
+        # Preconditioner
         eta_base = params.get("pc_force_eta", 0.5)
         alpha = params.get("pc_force_alpha", 0.5)
         pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha)), 0.0)
 
-        z = solve_P(
+        z, pc_it = solve_P(
             m,
             g_raw,
             g_tan_ext,
@@ -1679,93 +1672,85 @@ def make_wen_goldfarb_minimizer(
             tol=pc_tol,
             reg=params.get("pc_reg", 0.0),
             stagnation_nu=params.get("pc_stagnation_nu", 0.01),
+            return_info=True,
+            sparse_ops=sparse_ops,
         )
 
-        # Check convexity (curvature condition)
-        s_k = (m - state.m_prev).reshape(-1)
-        y_k = (z - state.g_prev).reshape(-1)
-        sty = jnp.vdot(s_k, y_k)
-        is_convex = sty > params.get("wg_threshold", 1e-6)
+        s_diff = (m - state.m_prev).reshape(-1)
+        y_diff = (g_tan - state.g_tan_prev).reshape(-1)
 
-        # Update phase and convex count
-        restarting = (phase == 1) & (~is_convex)
-        new_phase = jnp.where(restarting, 0, phase)
-        new_convex_count = jnp.where(restarting, 0, convex_count)
+        sty = jnp.vdot(s_diff, y_diff)
+        sts = jnp.vdot(s_diff, s_diff)
+        yty = jnp.vdot(y_diff, y_diff)
 
-        new_convex_count = jnp.where((new_phase == 0) & (is_convex), new_convex_count + 1, new_convex_count)
-        new_convex_count = jnp.where((new_phase == 0) & (~is_convex), 0, new_convex_count)
-
-        new_phase = jnp.where((new_phase == 0) & (new_convex_count >= params.get("wg_gamma", 5)), 1, new_phase)
-
-        sts = jnp.vdot(s_k, s_k)
-        yty = jnp.vdot(y_k, y_k)
         tau1 = sts / (sty + 1e-30)
         tau2 = sty / (yty + 1e-30)
-        tau_bb = jnp.where((state.it % 2) == 0, tau1, tau2)
 
-        # Select step
-        tau_bb_clipped = jnp.clip(tau_bb, 1e-6, 1e3)
-        tau = jnp.where(new_phase == 1, tau_bb_clipped, 1.0)
+        # If n is odd, compute tau by rule (3.2); otherwise rule (3.3).
+        # We assume `it` starts at 0. If state.it is odd, tau = tau1; else tau = tau2.
+        tau_bb = jnp.where((state.it % 2) != 0, tau1, tau2)
 
-        # f'(0) = -||z||^2
-        f_prime_0 = -jnp.vdot(z, z)
+        # Bound tau_bb to prevent explosion if curvature is bad
+        tau_bb = jnp.abs(tau_bb)
+        tau_bb = jnp.clip(tau_bb, 1e-6, 1e3)
 
-        delta = 1e-4
-        rho = 0.5
-        eta = 0.85
+        gamma = params.get("wg_gamma", 2)
+        is_initial = state.it < gamma
 
-        def ls_cond(ls_state):
-            tau, _, _, _, _, it, done = ls_state
-            return (it < 10) & (~done)
+        H = -jnp.cross(m, z)
+        pg = -jnp.vdot(g_raw, z)
 
-        def ls_body(ls_state):
-            tau, _, _, _, _, it, done = ls_state
-            H = -jnp.cross(m, z)
-            m_next = cayley_update(m, H, tau)
+        def run_bb(_):
+            m_new_bb = cayley_update(m, H, tau_bb)
+            U_new_bb, it_demag, _ = solve_U(m_new_bb, U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+            E_new_bb, g_raw_new_bb = energy_and_grad(m_new_bb, U_new_bb, B_ext, sparse_ops=sparse_ops)
+            return tau_bb, E_new_bb, g_raw_new_bb, U_new_bb, m_new_bb, jnp.int32(1), it_demag
 
-            U_next = solve_U(m_next, U, params["phi_tol"], sparse_ops=sparse_ops)
-            E_next, g_raw_next = energy_and_grad(m_next, U_next, B_ext, sparse_ops=sparse_ops)
-            E_next = jnp.where(jnp.isfinite(E_next), E_next, 1e20)
-
-            success = E_next <= C_k + delta * tau * f_prime_0
-
-            return lax.cond(
-                success,
-                lambda _: (tau, m_next, U_next, E_next, g_raw_next, it + 1, jnp.array(True)),
-                lambda _: (tau * rho, m, U, E_prev, g_raw, it + 1, jnp.array(False)),
-                operand=None,
+        def run_ls(_):
+            tau_ls, E_new_ls, g_raw_new_ls, U_new_ls, m_new_ls, ls_evals, ls_demag = ls(
+                m,
+                pg,
+                H,
+                E_prev,
+                U,
+                g_raw,
+                B_ext,
+                params["phi_tol"],
+                params["ls_eta1"],
+                params["ls_eta2"],
+                params["ls_C"],
+                params["ls_c"],
+                1.0,
+                15,
+                return_info=True,
+                sparse_ops=sparse_ops,
             )
+            return tau_ls, E_new_ls, g_raw_new_ls, U_new_ls, m_new_ls, ls_evals, ls_demag
 
-        init_ls = (tau, m, U, E_prev, g_raw, jnp.int32(0), jnp.array(False))
-        tau_final, m_new, U_f, E_new, g_raw_new, _, success_final = lax.while_loop(ls_cond, ls_body, init_ls)
+        tau, E_new, g_raw_new, U_new, m_new, evals, demag_it = lax.cond(
+            is_initial,
+            run_ls,
+            run_bb,
+            operand=None,
+        )
 
-        is_safe = success_final
-        m_safe = jnp.where(is_safe, m_new, m)
-        U_safe = jnp.where(is_safe, U_f, U)
-        E_safe = jnp.where(is_safe, E_new, E_prev)
-        g_raw_safe = jnp.where(is_safe, g_raw_new, g_raw)
-
-        Q_new = eta * Q_k + 1.0
-        C_new = (eta * Q_k * C_k + E_safe) / Q_new
-
-        conv = check_convergence(state.it, E_safe, E_prev, m, m_safe, gnorm_inf, params["tau_f"], params["eps_a"])
+        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
 
         return WGState(
-            m_safe,
-            U_safe,
-            U,
-            g_tan,
-            g_raw_safe,
-            m,
-            g_tan,
-            E_safe,
-            C_new,
-            Q_new,
-            new_phase,
-            new_convex_count,
-            gnorm_inf,
-            state.it + 1,
-            conv,
+            m=m_new,
+            U=U_new,
+            U_prev=U,
+            g_tan=g_tan,
+            g_raw=g_raw_new,
+            m_prev=m,
+            g_tan_prev=g_tan,
+            E=E_new,
+            gnorm=gnorm_inf,
+            it=state.it + 1,
+            converged=conv,
+            evals=state.evals + evals,
+            preco_iters=state.preco_iters + pc_it,
+            demag_iters=state.demag_iters + demag_it,
         )
 
     return step
@@ -3407,22 +3392,24 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
+            init_evals = kwargs.get("evals", 0)
+            init_preco = kwargs.get("preco_iters", 0)
+            init_demag = kwargs.get("demag_iters", 0)
             return WGState(
-                m,
-                U,
-                U,
-                g,
-                g_raw,
-                m,
-                g,
-                E,
-                E,
-                jnp.array(1.0, dtype=m.dtype),
-                jnp.int32(0),
-                jnp.int32(0),
-                gnorm,
-                0,
-                jnp.array(False),
+                m=m,
+                U=U,
+                U_prev=U,
+                g_tan=g,
+                g_raw=g_raw,
+                m_prev=m,
+                g_tan_prev=g,
+                E=E,
+                gnorm=gnorm,
+                it=jnp.int32(0),
+                converged=jnp.array(False),
+                evals=jnp.int32(init_evals),
+                preco_iters=jnp.int32(init_preco),
+                demag_iters=jnp.int32(init_demag),
             )
 
     elif method == "tn_split":
