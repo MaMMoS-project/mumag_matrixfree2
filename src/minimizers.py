@@ -1657,6 +1657,10 @@ class WGState:
             self.gnorm,
             self.it,
             self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+            self.hist_it,
         )
         return children, None
 
@@ -1830,6 +1834,10 @@ class PBBState:
             self.gnorm,
             self.it,
             self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+            self.hist_it,
         )
         return children, None
 
@@ -2606,6 +2614,10 @@ class PCohenLBFGSState:
     gnorm: Array
     it: jnp.int32
     converged: Array
+    evals: jnp.int32
+    preco_iters: jnp.int32
+    demag_iters: jnp.int32
+    hist_it: jnp.int32
 
     def tree_flatten(self):
         """Flatten the PCohenLBFGSState for JAX tree operations."""
@@ -2624,6 +2636,10 @@ class PCohenLBFGSState:
             self.gnorm,
             self.it,
             self.converged,
+            self.evals,
+            self.preco_iters,
+            self.demag_iters,
+            self.hist_it,
         )
         return children, None
 
@@ -2866,7 +2882,7 @@ def make_pcohen_lbfgs_minimizer(
 
             return lax.fori_loop(0, n_history, second_loop, r)
 
-        z = get_lbfgs_z(g_tan_ext, state.S, state.Y, state.rho, state.it)
+        z = get_lbfgs_z(g_tan_ext, state.S, state.Y, state.rho, state.hist_it)
         gnorm_inf_smooth = jnp.max(jnp.abs(z))
 
         # Cohen CG Beta (Polak-Ribiere)
@@ -2880,7 +2896,7 @@ def make_pcohen_lbfgs_minimizer(
         H = -jnp.cross(m, -p)
         pg = jnp.vdot(g_raw, p)
 
-        tau, E_new, g_raw_new, U_new, m_new = ls(
+        tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
             pg,
             H,
@@ -2896,6 +2912,7 @@ def make_pcohen_lbfgs_minimizer(
             1.0,
             15,
             sparse_ops=sparse_ops,
+            return_info=True,
         )
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
@@ -2903,7 +2920,7 @@ def make_pcohen_lbfgs_minimizer(
         s_new = tangent_grad(m_new, p * tau)
         y_new = tangent_grad(m_new, g_raw_new) - tangent_grad(m_new, g_tan_ext)
         curv = jnp.vdot(y_new, s_new)
-        update_ok = (state.it > 0) & (curv > 1e-12 * jnp.vdot(s_new, s_new))
+        update_ok = curv > 1e-12 * jnp.vdot(s_new, s_new)
         idx = state.hist_it % memory
 
         import jax
@@ -2930,6 +2947,10 @@ def make_pcohen_lbfgs_minimizer(
             gnorm_inf_smooth,
             state.it + 1,
             conv,
+            state.evals + ls_evals,
+            state.preco_iters,
+            state.demag_iters + ls_demag,
+            jnp.where(update_ok, state.hist_it + 1, state.hist_it),
         )
 
     return step
@@ -3349,6 +3370,10 @@ def make_minimizer(
                 gnorm,
                 0,
                 jnp.array(False),
+                kwargs.get("evals", jnp.int32(0)),
+                kwargs.get("preco_iters", jnp.int32(0)),
+                kwargs.get("demag_iters", jnp.int32(0)),
+                jnp.int32(0),
             )
 
     elif method == "pcohen_exact":

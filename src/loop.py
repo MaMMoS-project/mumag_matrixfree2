@@ -567,6 +567,7 @@ def main() -> None:
             "aapg",
             "aapg_exact",
             "pnag",
+            "pcohen_lbfgs",
             "wg",
         ],
         help="Energy minimizer algorithm (default: pcohen).",
