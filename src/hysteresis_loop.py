@@ -90,6 +90,7 @@ class LoopParams:
     ls_c: float = 0.5
     ls_s0: float = 1.0
     ls_max_evals: int = 15
+    ls_adaptive_mode: str = "none"
 
     out_dir: str = "hyst_out"
     csv_name: str = "hysteresis.csv"
@@ -219,7 +220,7 @@ def jax_compute_volume_averaged_m(
     return m_vol_avg
 
 
-def run_hysteresis_loop(
+def run_hysteresis_loop(  # noqa: D417
     points: np.ndarray,
     geom: TetGeom,
     A_lookup: np.ndarray,
@@ -392,7 +393,7 @@ def run_hysteresis_loop(
                 "Gx_sparse": Gx_sparse,
                 "Gy_sparse": Gy_sparse,
                 "Gz_sparse": Gz_sparse,
-            }
+            },
         )
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
