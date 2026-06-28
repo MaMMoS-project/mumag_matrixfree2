@@ -1358,129 +1358,6 @@ class TNState:
         return cls(*children)
 
 
-def make_tn_minimizer(
-    energy_and_grad: Callable,
-    grad_only: Callable,
-    energy_only: Callable,
-    local_grad_only: Callable,
-    solve_U: Callable,
-    inv_M_rel: Array,
-    cg_tol: float,
-):
-    """Create a Truncated Newton minimizer step function."""
-    ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
-
-    def step(state: TNState, B_ext: Array, params: dict) -> TNState:
-        sparse_ops = params.get("sparse_ops")
-        inv_inv_M = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
-        m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
-
-        g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        g_tan_ext = tangent_grad(m, g_raw)
-        gnorm_inf = jnp.max(jnp.abs(g_tan))
-
-        def full_hessian_op(v):
-            U_v = solve_U(v, jnp.zeros_like(U), params["phi_tol"], sparse_ops=sparse_ops)
-            Cv_full = grad_only(v, U_v, jnp.zeros_like(B_ext), sparse_ops=sparse_ops)
-            g_ext = g_raw
-            m_dot_g = jnp.sum(m * g_ext, axis=1, keepdims=True)
-            m_dot_Cv = jnp.sum(m * Cv_full, axis=1, keepdims=True)
-            shift = 1e-4 * v * inv_inv_M
-            # Correct tangent-projected Hessian: H_tan * v = Cv - (m.g)v - (m.Cv)m
-            return Cv_full - (m_dot_g * v + m_dot_Cv * m) + shift
-
-        def solve_newton_system(max_iter=10):
-            # Eisenstat-Walker forcing
-            eta_base = params.get("pc_force_eta", 0.5)
-            alpha_ew = params.get("pc_force_alpha", 0.5)
-            pc_tol = jnp.where(params.get("pc_auto", False), jnp.minimum(eta_base, jnp.power(gnorm_inf, alpha_ew)), 0.0)
-
-            d_inner = jnp.zeros_like(g_tan)
-            r_inner = -g_tan_ext
-            z_inner = solve_P(
-                m,
-                g_raw,
-                r_inner,
-                max_iter=params.get("pc_iters", 15),
-                tol=pc_tol,
-                reg=params.get("pc_reg", 0.0),
-                stagnation_nu=params.get("pc_stagnation_nu", 0.01),
-                sparse_ops=sparse_ops,
-            )
-            p_inner = z_inner
-            rho_inner = jnp.vdot(r_inner, z_inner)
-            active = jnp.array(True)
-
-            def inner_cond(state_inner):
-                d, r, p, rho, it, active = state_inner
-                return active & (it < max_iter) & (jnp.max(jnp.abs(r * inv_M_rel)) > jnp.maximum(pc_tol, 1e-7))
-
-            def inner_body(state_inner):
-                d, r, p, rho, it, active = state_inner
-                Hp = full_hessian_op(p)
-                p_Hp = jnp.vdot(p, Hp)
-
-                # If negative curvature is detected, we must abort to prevent taking an uphill step.
-                neg_curv = p_Hp <= 0.0
-
-                # If neg_curv on the very first iteration, we take the steepest descent direction (z_inner).
-                # Otherwise, we keep the accumulated d.
-                d_ret = jnp.where(neg_curv & (it == 0), p, d)
-
-                # If negative curvature, freeze the state and set active=False to break the loop
-                alpha = jnp.where(neg_curv, 0.0, rho / (p_Hp + 1e-30))
-                d_new = jnp.where(neg_curv, d_ret, d + alpha * p)
-                r_new = jnp.where(neg_curv, r, r - alpha * Hp)
-
-                z_new = solve_P(
-                    m,
-                    g_raw,
-                    r_new,
-                    max_iter=params.get("pc_iters", 15),
-                    tol=pc_tol,
-                    reg=params.get("pc_reg", 0.0),
-                    stagnation_nu=params.get("pc_stagnation_nu", 0.01),
-                    sparse_ops=sparse_ops,
-                )
-                rho_new = jnp.vdot(r_new, z_new)
-                beta = jnp.where(neg_curv, 0.0, rho_new / (rho + 1e-30))
-                p_new = jnp.where(neg_curv, p, z_new + beta * p)
-
-                return (d_new, r_new, p_new, rho_new, it + 1, active & (~neg_curv))
-
-            state_init = (d_inner, r_inner, p_inner, rho_inner, 0, active)
-            final = lax.while_loop(inner_cond, inner_body, state_init)
-            return final[0]
-
-        d = solve_newton_system(params.get("tn_iters", 5))
-        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -g_tan, d)
-        H = -jnp.cross(m, -d)
-        pg = jnp.vdot(g_raw, d)
-        tau_init = jnp.where(state.it == 0, params["tau0"], 1.0)
-        tau, E_new, g_raw_new, U_new, m_new = ls(
-            m,
-            pg,
-            H,
-            E_prev,
-            U,
-            g_raw,
-            B_ext,
-            params["phi_tol"],
-            params["ls_eta1"],
-            params["ls_eta2"],
-            params["ls_C"],
-            params["ls_c"],
-            tau_init,
-            15,
-            sparse_ops=sparse_ops,
-        )
-        conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
-        return TNState(m_new, U_new, U, g_tan, g_raw_new, d, E_new, gnorm_inf, state.it + 1, conv)
-
-    return step
-
-
 # -----------------------------------------------------------------------------
 # 6. Split Truncated Newton
 # -----------------------------------------------------------------------------
@@ -1564,6 +1441,11 @@ def make_tn_split_minimizer(
         )
 
     return step
+
+
+# -----------------------------------------------------------------------------
+# 8. PCG (Conjugate Gradient)
+# -----------------------------------------------------------------------------
 
 
 # -----------------------------------------------------------------------------
@@ -3542,15 +3424,6 @@ def make_minimizer(
                 0,
                 jnp.array(False),
             )
-
-    elif method == "tn":
-        step_fn = make_tn_minimizer(
-            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol
-        )
-
-        def init_state_fn(m, U, E, g, gnorm, **kwargs):
-            g_raw = kwargs.get("g_raw")
-            return TNState(m, U, U, g, g_raw, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "tn_split":
         step_fn = make_tn_split_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)

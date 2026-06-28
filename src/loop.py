@@ -560,7 +560,6 @@ def main() -> None:
             "lbfgs",
             "plbfgs",
             "dplbfgs",
-            "tn",
             "tn_split",
             "pbb",
             "tr",
