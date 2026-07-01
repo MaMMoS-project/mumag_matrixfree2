@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
 import numpy as np
 
 
@@ -74,7 +75,7 @@ def reorder_mesh(in_path: str, out_path: str) -> None:
     # 5. Measure node footprint reduction
     chunk_size = 200_000
     num_chunks = int(np.ceil(E / chunk_size))
-    
+
     unique_orig = []
     unique_sorted = []
     for i in range(num_chunks):

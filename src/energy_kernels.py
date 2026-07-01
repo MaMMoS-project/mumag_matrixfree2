@@ -54,12 +54,12 @@ from jax import lax  # noqa: E402
 
 from fem_utils import (  # noqa: E402
     TetGeom,
+    _B_split_from_JinvT,
+    _compute_JinvT_from_coords,
     assemble_scatter,
     assemble_segment_sum,
     chunk_mask,
     pad_geom_for_chunking,
-    _B_split_from_JinvT,
-    _compute_JinvT_from_coords,
 )
 
 MU0 = 4e-7 * jnp.pi
@@ -143,11 +143,12 @@ def make_energy_kernels(
     inv_Vmag = 1.0 / V_mag
 
     if mode == "assembled":
+
         def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
             N = m.shape[0]
             dtype = m.dtype
             B_ext = jnp.asarray(B_ext, dtype=dtype)
-            
+
             # Using K_eff which combines Exchange and Anisotropy
             m_flat = m.reshape(-1)
             g_ex_an_flat = sparse_ops["K_eff_sparse"] @ m_flat
@@ -283,23 +284,23 @@ def make_energy_kernels(
 
             # 1. Exchange
             vx_e, vy_e, vz_e = v_e[:, :, 0], v_e[:, :, 1], v_e[:, :, 2]
-            
+
             grad_vx_x = Bx[:, 0] * vx_e[:, 0] + Bx[:, 1] * vx_e[:, 1] + Bx[:, 2] * vx_e[:, 2] + Bx[:, 3] * vx_e[:, 3]
             grad_vx_y = By[:, 0] * vx_e[:, 0] + By[:, 1] * vx_e[:, 1] + By[:, 2] * vx_e[:, 2] + By[:, 3] * vx_e[:, 3]
             grad_vx_z = Bz[:, 0] * vx_e[:, 0] + Bz[:, 1] * vx_e[:, 1] + Bz[:, 2] * vx_e[:, 2] + Bz[:, 3] * vx_e[:, 3]
-            
+
             grad_vy_x = Bx[:, 0] * vy_e[:, 0] + Bx[:, 1] * vy_e[:, 1] + Bx[:, 2] * vy_e[:, 2] + Bx[:, 3] * vy_e[:, 3]
             grad_vy_y = By[:, 0] * vy_e[:, 0] + By[:, 1] * vy_e[:, 1] + By[:, 2] * vy_e[:, 2] + By[:, 3] * vy_e[:, 3]
             grad_vy_z = Bz[:, 0] * vy_e[:, 0] + Bz[:, 1] * vy_e[:, 1] + Bz[:, 2] * vy_e[:, 2] + Bz[:, 3] * vy_e[:, 3]
-            
+
             grad_vz_x = Bx[:, 0] * vz_e[:, 0] + Bx[:, 1] * vz_e[:, 1] + Bx[:, 2] * vz_e[:, 2] + Bx[:, 3] * vz_e[:, 3]
             grad_vz_y = By[:, 0] * vz_e[:, 0] + By[:, 1] * vz_e[:, 1] + By[:, 2] * vz_e[:, 2] + By[:, 3] * vz_e[:, 3]
             grad_vz_z = Bz[:, 0] * vz_e[:, 0] + Bz[:, 1] * vz_e[:, 1] + Bz[:, 2] * vz_e[:, 2] + Bz[:, 3] * vz_e[:, 3]
-            
+
             Km_x = Bx * grad_vx_x[:, None] + By * grad_vx_y[:, None] + Bz * grad_vx_z[:, None]
             Km_y = Bx * grad_vy_x[:, None] + By * grad_vy_y[:, None] + Bz * grad_vy_z[:, None]
             Km_z = Bx * grad_vz_x[:, None] + By * grad_vz_y[:, None] + Bz * grad_vz_z[:, None]
-            
+
             contrib = a_ve_c[:, None, None] * jnp.stack([Km_x, Km_y, Km_z], axis=2)
 
             # 2. Anisotropy
@@ -365,23 +366,23 @@ def make_energy_kernels(
 
             # 1. Exchange Gradient (Quadratic)
             mx_e, my_e, mz_e = m_e[:, :, 0], m_e[:, :, 1], m_e[:, :, 2]
-            
+
             grad_mx_x = Bx[:, 0] * mx_e[:, 0] + Bx[:, 1] * mx_e[:, 1] + Bx[:, 2] * mx_e[:, 2] + Bx[:, 3] * mx_e[:, 3]
             grad_mx_y = By[:, 0] * mx_e[:, 0] + By[:, 1] * mx_e[:, 1] + By[:, 2] * mx_e[:, 2] + By[:, 3] * mx_e[:, 3]
             grad_mx_z = Bz[:, 0] * mx_e[:, 0] + Bz[:, 1] * mx_e[:, 1] + Bz[:, 2] * mx_e[:, 2] + Bz[:, 3] * mx_e[:, 3]
-            
+
             grad_my_x = Bx[:, 0] * my_e[:, 0] + Bx[:, 1] * my_e[:, 1] + Bx[:, 2] * my_e[:, 2] + Bx[:, 3] * my_e[:, 3]
             grad_my_y = By[:, 0] * my_e[:, 0] + By[:, 1] * my_e[:, 1] + By[:, 2] * my_e[:, 2] + By[:, 3] * my_e[:, 3]
             grad_my_z = Bz[:, 0] * my_e[:, 0] + Bz[:, 1] * my_e[:, 1] + Bz[:, 2] * my_e[:, 2] + Bz[:, 3] * my_e[:, 3]
-            
+
             grad_mz_x = Bx[:, 0] * mz_e[:, 0] + Bx[:, 1] * mz_e[:, 1] + Bx[:, 2] * mz_e[:, 2] + Bx[:, 3] * mz_e[:, 3]
             grad_mz_y = By[:, 0] * mz_e[:, 0] + By[:, 1] * mz_e[:, 1] + By[:, 2] * mz_e[:, 2] + By[:, 3] * mz_e[:, 3]
             grad_mz_z = Bz[:, 0] * mz_e[:, 0] + Bz[:, 1] * mz_e[:, 1] + Bz[:, 2] * mz_e[:, 2] + Bz[:, 3] * mz_e[:, 3]
-            
+
             Km_x = Bx * grad_mx_x[:, None] + By * grad_mx_y[:, None] + Bz * grad_mx_z[:, None]
             Km_y = Bx * grad_my_x[:, None] + By * grad_my_y[:, None] + Bz * grad_my_z[:, None]
             Km_z = Bx * grad_mz_x[:, None] + By * grad_mz_y[:, None] + Bz * grad_mz_z[:, None]
-            
+
             contrib = a_ve_c[:, None, None] * jnp.stack([Km_x, Km_y, Km_z], axis=2)
 
             # 2. Uniaxial Anisotropy Gradient (Quadratic)
@@ -395,7 +396,7 @@ def make_energy_kernels(
             grad_ux = Bx[:, 0] * U_e[:, 0] + Bx[:, 1] * U_e[:, 1] + Bx[:, 2] * U_e[:, 2] + Bx[:, 3] * U_e[:, 3]
             grad_uy = By[:, 0] * U_e[:, 0] + By[:, 1] * U_e[:, 1] + By[:, 2] * U_e[:, 2] + By[:, 3] * U_e[:, 3]
             grad_uz = Bz[:, 0] * U_e[:, 0] + Bz[:, 1] * U_e[:, 1] + Bz[:, 2] * U_e[:, 2] + Bz[:, 3] * U_e[:, 3]
-            
+
             grad_u = jnp.stack([grad_ux, grad_uy, grad_uz], axis=1)
 
             contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
@@ -489,23 +490,23 @@ def compute_exchange_diagonal(
     grad_backend: GradBackend = "stored_grad_phi",
 ) -> Array:
     """Compute the diagonal of the exchange (stiffness) matrix.
-    
+
     This is used for Jacobi preconditioning.
     """
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
-    
+
     if geom_p.x_nodes is not None:
         N = geom_p.x_nodes.shape[0]
     else:
         N = int(jnp.max(geom.conn)) + 1
-        
+
     dtype = jnp.float64
     inv_Vmag = 1.0 / V_mag
-    
+
     g_ids = mat_id - 1
     A_Ve = 2.0 * A_lookup[g_ids] * Ve
-    
+
     # We need grad_phi or other variables for _get_B
     grad_phi = geom_p.grad_phi
     grad_phi_x = grad_phi[:, :, 0] if grad_phi is not None else None
@@ -513,7 +514,7 @@ def compute_exchange_diagonal(
     grad_phi_z = grad_phi[:, :, 2] if grad_phi is not None else None
     JinvT = geom_p.JinvT
     x_nodes = geom_p.x_nodes
-    
+
     def _get_B(conn_c: Array, s: int) -> tuple[Array, Array, Array]:
         if grad_backend == "stored_grad_phi":
             bx = lax.dynamic_slice(grad_phi_x, (s, 0), (chunk_elems, 4)).astype(dtype)
@@ -527,33 +528,32 @@ def compute_exchange_diagonal(
             x_e = x_nodes[conn_c].astype(dtype)
             JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
             return _B_split_from_JinvT(JinvT_c, dtype)
-            
+
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
-    
+
     def body(i: int, d_acc: Array) -> Array:
         s = i * chunk_elems
         conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
         Bx, By, Bz = _get_B(conn_c, s)
         mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-        
+
         a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
-        
+
         # B_c has shape (chunk_elems, 4, 3)
         # We compute sum_{k=0}^2 (B_c[:, a, k]**2) for each a in {0, 1, 2, 3}
-        grad_phi_sq = Bx ** 2 + By ** 2 + Bz ** 2  # (chunk_elems, 4)
+        grad_phi_sq = Bx**2 + By**2 + Bz**2  # (chunk_elems, 4)
         contrib = a_ve_c[:, None] * grad_phi_sq  # (chunk_elems, 4)
-        
+
         if assembly == "scatter":
             d_acc = assemble_scatter(d_acc, conn_c, contrib)
         else:
             d_acc = d_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
         return d_acc
-        
+
     d0 = jnp.zeros((N,), dtype=dtype)
     d_diag = jax.lax.fori_loop(0, n_chunks, body, d0)
-    
+
     # Scale by inv_Vmag to match the scaling of local_grad_only
     d_diag = d_diag * inv_Vmag
     return jax.jit(lambda: d_diag)()
-
