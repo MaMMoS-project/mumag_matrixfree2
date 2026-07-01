@@ -12,6 +12,7 @@ import mesh
 from curvilinear_bb_minimizer import make_minimizer
 from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
+from poisson_solve import make_solve_U
 
 
 def test_minimizer_relaxation():
@@ -64,6 +65,15 @@ def test_minimizer_relaxation():
     V_mag_nm = np.sum(volume[mat_id == 1])
     node_vols = compute_node_volumes(geom, chunk_elems=100000)
 
+    solve_U = make_solve_U(
+        geom,
+        Js_lookup,
+        cg_maxiter=1000,
+        cg_tol=1e-9,
+        grad_backend="stored_grad_phi",
+        boundary_mask=boundary_mask,
+    )
+
     minimize = make_minimizer(
         geom,
         A_lookup=A_lookup,
@@ -73,10 +83,9 @@ def test_minimizer_relaxation():
         V_mag=float(V_mag_nm),
         node_volumes=node_vols,
         M_nodal=node_vols,  # Simplified for test
-        grad_backend="stored_grad_phi",
-        boundary_mask=boundary_mask,
-        cg_maxiter=1000,
+        solve_U=solve_U,
         cg_tol=1e-9,
+        grad_backend="stored_grad_phi",
     )
 
     # 4. Initial State: 45 degrees in XZ plane

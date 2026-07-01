@@ -111,14 +111,14 @@ def make_minimizer_no_demag(
 
         tau = lax.cond(state.it > 0, compute_tau, lambda _: jnp.clip(state.tau, tau_min, tau_max), operand=None)
         m_new = cayley_update(m, -jnp.cross(m, g_prec), tau)
-        return MinimState(m=m_new, U_prev=U, g_prev=g_tan, m_prev=m, tau=tau, it=state.it + jnp.int32(1)), g_tan
+        return MinimState(m=m_new, U_prev=U, g_prev=g_tan, m_prev=m, tau=tau, it=state.it + jnp.int32(1), E_prev=jnp.array(0.0), converged=jnp.array(False)), g_tan
 
     bb_step = jax.jit(_bb_step)
 
     def minimize(m0, B_ext, max_iter=500, eps_a=1e-8, verbose=True):
         m = jnp.asarray(m0, dtype=jnp.float64)
         g_prev = jnp.zeros_like(m)
-        state = MinimState(m=m, U_prev=jnp.zeros(m.shape[0]), g_prev=g_prev, m_prev=m, tau=jnp.asarray(1e-2, jnp.float64), it=jnp.int32(0))
+        state = MinimState(m=m, U_prev=jnp.zeros(m.shape[0]), g_prev=g_prev, m_prev=m, tau=jnp.asarray(1e-2, jnp.float64), it=jnp.int32(0), E_prev=jnp.array(1e6), converged=jnp.array(False))
         
         for k in range(max_iter):
             state, g_tan = bb_step(state, B_ext, 1e-6, 1.0)

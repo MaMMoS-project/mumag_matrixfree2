@@ -21,6 +21,8 @@ from jax import lax  # noqa: E402
 
 from fem_utils import (  # noqa: E402
     TetGeom,
+    _B_split_from_JinvT,
+    _compute_JinvT_from_coords,
     assemble_scatter,
     assemble_segment_sum,
     pad_geom_for_chunking,
@@ -42,38 +44,9 @@ _GRAD_HAT = jnp.array(
 )
 
 
-def _B_from_JinvT(JinvT_c: Array, dtype) -> Array:
-    """Compute shape function gradients B from inverse Jacobian transpose.
-
-    Args:
-        JinvT_c (Array): Inverse Jacobian transpose (chunk_elems, 3, 3).
-        dtype (jnp.dtype): Target data type.
-
-    Returns:
-        Array: Shape function gradients (chunk_elems, 4, 3).
-    """
-    return jnp.einsum("eij,aj->eai", JinvT_c.astype(dtype), _GRAD_HAT.astype(dtype))
-
-
-def _compute_JinvT_from_coords(x_e: Array, dtype) -> Array:
-    """Compute inverse Jacobian transpose from tetrahedron node coordinates.
-
-    Args:
-        x_e (Array): Node coordinates for the chunk (chunk_elems, 4, 3).
-        dtype (jnp.dtype): Target data type.
-
-    Returns:
-        Array: Inverse Jacobian transpose (chunk_elems, 3, 3).
-    """
-    x0 = x_e[:, 0, :]
-    J = jnp.stack([x_e[:, 1, :] - x0, x_e[:, 2, :] - x0, x_e[:, 3, :] - x0], axis=2)
-    invJ = jnp.linalg.inv(J.astype(dtype))
-    return jnp.swapaxes(invJ, 1, 2)
-
-
 def _make_B_getter(
     geom_p: TetGeom, chunk_elems: int, grad_backend: GradBackend
-) -> Callable[[Array, int, jnp.dtype], Array]:
+) -> Callable[[Array, int, jnp.dtype], tuple[Array, Array, Array]]:
     """Create a helper function to retrieve shape function gradients for a chunk.
 
     Args:
@@ -82,15 +55,21 @@ def _make_B_getter(
         grad_backend (GradBackend): Strategy for gradients.
 
     Returns:
-        Callable: A function _get_B(connectivity, chunk_start_index, dtype).
+        Callable: A function _get_B(connectivity, chunk_start_index, dtype) -> (Bx, By, Bz).
     """
     if grad_backend == "stored_grad_phi":
         if geom_p.grad_phi is None:
             raise ValueError("stored_grad_phi requires geom.grad_phi")
         grad_phi = geom_p.grad_phi
+        grad_phi_x = grad_phi[:, :, 0]
+        grad_phi_y = grad_phi[:, :, 1]
+        grad_phi_z = grad_phi[:, :, 2]
 
-        def _get_B(conn_c: Array, s: int, dtype) -> Array:
-            return lax.dynamic_slice(grad_phi, (s, 0, 0), (chunk_elems, 4, 3)).astype(dtype)
+        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
+            bx = lax.dynamic_slice(grad_phi_x, (s, 0), (chunk_elems, 4)).astype(dtype)
+            by = lax.dynamic_slice(grad_phi_y, (s, 0), (chunk_elems, 4)).astype(dtype)
+            bz = lax.dynamic_slice(grad_phi_z, (s, 0), (chunk_elems, 4)).astype(dtype)
+            return bx, by, bz
 
         return _get_B
 
@@ -99,9 +78,9 @@ def _make_B_getter(
             raise ValueError("stored_JinvT requires geom.JinvT")
         JinvT = geom_p.JinvT
 
-        def _get_B(conn_c: Array, s: int, dtype) -> Array:
+        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
             JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
-            return _B_from_JinvT(JinvT_c, dtype)
+            return _B_split_from_JinvT(JinvT_c, dtype)
 
         return _get_B
 
@@ -109,10 +88,10 @@ def _make_B_getter(
         raise ValueError("on_the_fly requires geom.x_nodes")
     x_nodes = geom_p.x_nodes
 
-    def _get_B(conn_c: Array, s: int, dtype) -> Array:
+    def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
         x_e = x_nodes[conn_c].astype(dtype)
         JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
-        return _B_from_JinvT(JinvT_c, dtype)
+        return _B_split_from_JinvT(JinvT_c, dtype)
 
     return _get_B
 
@@ -124,10 +103,16 @@ def make_poisson_ops(
     chunk_elems: int = 200_000,
     reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
-    assembly: Assembly = "scatter",
+    assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
+    mode: str = "matrix_free",
+    A_sparse: Any | None = None,
+    Dx_sparse: Any | None = None,
+    Dy_sparse: Any | None = None,
+    Dz_sparse: Any | None = None,
+    A_diag: Array | None = None,
 ) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
-    """Create JIT-compiled matrix-free Poisson operators.
+    """Create JIT-compiled matrix-free or matrix-assembled Poisson operators.
 
     Args:
         geom (TetGeom): Geometry container.
@@ -140,6 +125,10 @@ def make_poisson_ops(
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
         boundary_mask (Array | None, optional): Dirichlet boundary mask
             (0.0 at boundary). Defaults to None.
+        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
+        A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
+        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
+        A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
         tuple[Callable, Callable, Callable]: (apply_A, rhs_from_m, assemble_diag).
@@ -147,6 +136,29 @@ def make_poisson_ops(
             rhs_from_m: Computes demag RHS from magnetization m.
             assemble_diag: Computes the diagonal of A.
     """
+    if mode == "assembled":
+
+        def apply_A(sparse_ops: dict, U: Array) -> Array:
+            y = sparse_ops["A_sparse"] @ U
+            if boundary_mask is not None:
+                y = y * boundary_mask
+            return y
+
+        def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
+            y = (
+                sparse_ops["Dx_sparse"] @ m[:, 0]
+                + sparse_ops["Dy_sparse"] @ m[:, 1]
+                + sparse_ops["Dz_sparse"] @ m[:, 2]
+            )
+            if boundary_mask is not None:
+                y = y * boundary_mask
+            return y
+
+        def assemble_diag(sparse_ops: dict, N: int) -> Array:
+            return sparse_ops["A_diag"]
+
+        return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(1,))
+
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
     Js_lookup = jnp.asarray(Js_lookup)
@@ -163,7 +175,7 @@ def make_poisson_ops(
 
     _get_B = _make_B_getter(geom_p, chunk_elems, grad_backend)
 
-    def apply_A(U: Array) -> Array:
+    def apply_A(sparse_ops, U: Array) -> Array:
         """Compute the matrix-vector product A @ U.
 
         Optimization Choice: Matrix-free implementation.
@@ -178,23 +190,18 @@ def make_poisson_ops(
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             U_e = U[conn_c]
 
             # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
             # Manual unrolling here minimizes temporary array creation and
             # improves register allocation in the XLA-compiled kernel.
-            grad_U = (
-                B_c[:, 0, :] * U_e[:, 0, None]
-                + B_c[:, 1, :] * U_e[:, 1, None]
-                + B_c[:, 2, :] * U_e[:, 2, None]
-                + B_c[:, 3, :] * U_e[:, 3, None]
-            )
+            grad_Ux = Bx[:, 0] * U_e[:, 0] + Bx[:, 1] * U_e[:, 1] + Bx[:, 2] * U_e[:, 2] + Bx[:, 3] * U_e[:, 3]
+            grad_Uy = By[:, 0] * U_e[:, 0] + By[:, 1] * U_e[:, 1] + By[:, 2] * U_e[:, 2] + By[:, 3] * U_e[:, 3]
+            grad_Uz = Bz[:, 0] * U_e[:, 0] + Bz[:, 1] * U_e[:, 1] + Bz[:, 2] * U_e[:, 2] + Bz[:, 3] * U_e[:, 3]
 
             # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
-            contrib = Ve_c[:, None] * (
-                B_c[..., 0] * grad_U[:, 0, None] + B_c[..., 1] * grad_U[:, 1, None] + B_c[..., 2] * grad_U[:, 2, None]
-            )
+            contrib = Ve_c[:, None] * (Bx * grad_Ux[:, None] + By * grad_Uy[:, None] + Bz * grad_Uz[:, None])
 
             if assembly == "scatter":
                 return assemble_scatter(y_acc, conn_c, contrib)
@@ -211,7 +218,7 @@ def make_poisson_ops(
             y = y * boundary_mask
         return y
 
-    def rhs_from_m(m: Array) -> Array:
+    def rhs_from_m(sparse_ops, m: Array) -> Array:
         dtype = m.dtype
 
         def body(i: int, b_acc: Array) -> Array:
@@ -219,15 +226,16 @@ def make_poisson_ops(
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             Js_c = Js_lookup[mat_c - 1].astype(dtype)
             m_e = m[conn_c]
 
             # Unrolled RHS: contrib_a = (Js * Ve / 4) * (sum_b m_b . grad_phi_a)
-            m_sum = m_e[:, 0, :] + m_e[:, 1, :] + m_e[:, 2, :] + m_e[:, 3, :]
-            dot_term = 0.25 * (
-                B_c[..., 0] * m_sum[:, 0, None] + B_c[..., 1] * m_sum[:, 1, None] + B_c[..., 2] * m_sum[:, 2, None]
-            )
+            mx_sum = m_e[:, 0, 0] + m_e[:, 1, 0] + m_e[:, 2, 0] + m_e[:, 3, 0]
+            my_sum = m_e[:, 0, 1] + m_e[:, 1, 1] + m_e[:, 2, 1] + m_e[:, 3, 1]
+            mz_sum = m_e[:, 0, 2] + m_e[:, 1, 2] + m_e[:, 2, 2] + m_e[:, 3, 2]
+
+            dot_term = 0.25 * (Bx * mx_sum[:, None] + By * my_sum[:, None] + Bz * mz_sum[:, None])
 
             contrib = (Ve_c * Js_c)[:, None] * dot_term
             if assembly == "scatter":
@@ -238,16 +246,16 @@ def make_poisson_ops(
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
         return lax.fori_loop(0, n_chunks, body, b0)
 
-    def assemble_diag(N: int) -> Array:
+    def assemble_diag(sparse_ops, N: int) -> Array:
         dtype = jnp.float64
 
         def body(i: int, d_acc: Array) -> Array:
             s = i * chunk_elems
             conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            B_c = _get_B(conn_c, s, dtype)
+            Bx, By, Bz = _get_B(conn_c, s, dtype)
             # Unrolled norm squared: |grad_phi_a|^2
-            local = Ve_c[:, None] * (B_c[..., 0] ** 2 + B_c[..., 1] ** 2 + B_c[..., 2] ** 2)
+            local = Ve_c[:, None] * (Bx**2 + By**2 + Bz**2)
             if assembly == "scatter":
                 return assemble_scatter(d_acc, conn_c, local)
             else:
@@ -260,7 +268,7 @@ def make_poisson_ops(
     return (
         jax.jit(apply_A),
         jax.jit(rhs_from_m),
-        jax.jit(assemble_diag, static_argnums=(0,)),
+        jax.jit(assemble_diag, static_argnums=(1,)),
     )
 
 
@@ -289,13 +297,13 @@ def estimate_spectral_radius(
         v = v * boundary_mask
 
     def body(i: int, v_curr: Array) -> Array:
-        v_next = apply_A(v_curr) / (Mdiag + 1e-30)
+        v_next = apply_A(None, v_curr) / (Mdiag + 1e-30)
         if boundary_mask is not None:
             v_next = v_next * boundary_mask
         return v_next / (jnp.linalg.norm(v_next) + 1e-30)
 
     v_final = lax.fori_loop(0, n_iters, body, v)
-    lam_max = jnp.vdot(v_final, (apply_A(v_final) / (Mdiag + 1e-30)))
+    lam_max = jnp.vdot(v_final, (apply_A(None, v_final) / (Mdiag + 1e-30)))
     return float(lam_max)
 
 
@@ -334,14 +342,14 @@ def make_pcg_solve(
     """
     default_tol = float(tol)
 
-    def apply_Minv(r: Array, hierarchy: list | None = None) -> Array:
+    def apply_Minv(sparse_ops: dict, r: Array, hierarchy: list | None = None) -> Array:
         if precond_type == "none":
             if boundary_mask is not None:
                 return r * boundary_mask
             return r
 
         if precond_type in ["amg", "amgcl"] and apply_Minv_amg is not None:
-            return apply_Minv_amg(r, hierarchy)
+            return apply_Minv_amg(sparse_ops, r, hierarchy)
 
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
@@ -359,7 +367,7 @@ def make_pcg_solve(
             y_prev = jnp.zeros_like(y)
             curr_alpha = alpha
             for _k in range(1, order):
-                res = r - apply_A(y)
+                res = r - apply_A(sparse_ops, y)
                 if boundary_mask is not None:
                     res = res * boundary_mask
                 z = res / (Mdiag.astype(dtype) + eps)
@@ -377,6 +385,7 @@ def make_pcg_solve(
         return z
 
     def solve(
+        sparse_ops: dict,
         b: Array,
         x0: Array,
         tol: float | None = None,
@@ -392,11 +401,11 @@ def make_pcg_solve(
         else:
             x = x0
 
-        r = b - apply_A(x)
+        r = b - apply_A(sparse_ops, x)
         if boundary_mask is not None:
             r = r * boundary_mask
 
-        z = apply_Minv(r, hierarchy)
+        z = apply_Minv(sparse_ops, r, hierarchy)
         p = z
         rz = jnp.dot(r, z)
         r2 = jnp.dot(r, r)
@@ -413,13 +422,13 @@ def make_pcg_solve(
             state: tuple[jnp.int32, Array, Array, Array, Array, Array, Array],
         ) -> tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
             it, x, r, z, p, rz, r2 = state
-            Ap = apply_A(p)
+            Ap = apply_A(sparse_ops, p)
             if boundary_mask is not None:
                 Ap = Ap * boundary_mask
             alpha = rz / (jnp.dot(p, Ap) + eps)
             x_new = x + alpha * p
             r_new = r - alpha * Ap
-            z_new = apply_Minv(r_new, hierarchy)
+            z_new = apply_Minv(sparse_ops, r_new, hierarchy)
             rz_new = jnp.dot(r_new, z_new)
             beta = rz_new / (rz + eps)
             p_new = z_new + beta * p
@@ -431,7 +440,7 @@ def make_pcg_solve(
         it_final, x_final, _, _, _, _, r2_final = final_state
         return x_final, it_final, r2_final
 
-    return jax.jit(solve, static_argnums=(3,))
+    return jax.jit(solve)
 
 
 def make_solve_U(
@@ -441,15 +450,21 @@ def make_solve_U(
     precond_type: PrecondType = "jacobi",
     order: int = 3,
     chunk_elems: int = 200_000,
-    cg_maxiter: int = 400,
+    cg_maxiter: int = 2000,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
     grad_backend: GradBackend = "stored_grad_phi",
     enforce_zero_mean: bool | None = None,
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
+    mode: str = "matrix_free",
+    A_sparse: Any = None,
+    Dx_sparse: Any = None,
+    Dy_sparse: Any = None,
+    Dz_sparse: Any = None,
+    A_diag: Any = None,
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
-    """Create a high-level function to solve the Poisson potential U.
+    """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
     Orchestrates operator creation, preconditioning setup (including AMG on CPU),
     and PCG execution.
@@ -470,6 +485,10 @@ def make_solve_U(
         boundary_mask (Array | None, optional): Dirichlet boundary mask.
             Defaults to None.
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
+        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
+        A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
+        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
+        A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
         Callable: solve_U(m, x0, tol, return_info) -> U or (U, iterations, residual).
@@ -485,6 +504,12 @@ def make_solve_U(
         grad_backend=grad_backend,
         assembly=assembly,
         boundary_mask=boundary_mask,
+        mode=mode,
+        A_sparse=A_sparse,
+        Dx_sparse=Dx_sparse,
+        Dy_sparse=Dy_sparse,
+        Dz_sparse=Dz_sparse,
+        A_diag=A_diag,
     )
 
     if geom.x_nodes is not None:
@@ -494,12 +519,13 @@ def make_solve_U(
 
         N = int(np.max(geom.conn)) + 1
 
-    Mdiag = assemble_diag(N)
+    Mdiag = None
     l_max = 2.0
     apply_Minv_amg = None
     hierarchy_jax = None
 
     if precond_type == "chebyshev":
+        Mdiag = assemble_diag(None, N)
         l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
 
     elif precond_type in ["amg", "amgcl"]:
@@ -556,8 +582,8 @@ def make_solve_U(
 
         hierarchy_jax = AMGHierarchy(levels_jax)
 
-        def apply_A_masked(v: Array) -> Array:
-            res = apply_A(v)
+        def apply_A_masked(sparse_ops, v: Array) -> Array:
+            res = apply_A(sparse_ops, v)
             if boundary_mask is not None:
                 res = res * boundary_mask
             return res
@@ -579,40 +605,52 @@ def make_solve_U(
         l_max=l_max,
     )
 
-    @partial(jax.jit, static_argnums=(3,))
-    def solve_U(
-        m: Array, x0: Array, tol: float | None = None, return_info: bool = False
-    ) -> Array | tuple[Array, int, float]:
-        """Perform the Poisson solve for a given magnetization state m.
+    if hierarchy_jax is None:
 
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            x0 (Array): Initial guess for the potential U (N,).
+        @partial(jax.jit, static_argnums=(3,))
+        def solve_U(
+            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
+        ) -> Array | tuple[Array, int, float]:
+            b = rhs_from_m(sparse_ops, m)
+            bnorm2 = jnp.vdot(b, b)
+
+            if enforce_zero_mean:
+                b = b - jnp.mean(b)
+                x0 = x0 - jnp.mean(x0)
+
+            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=None)
+
+            if enforce_zero_mean:
+                U = U - jnp.mean(U)
+            if return_info:
+                rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                return U, it, rel_res
+            return U
+    else:
+
+        @partial(jax.jit, static_argnums=(3,))
+        def solve_U(
+            m: Array,
+            x0: Array,
             tol: float | None = None,
-            return_info (bool, optional): If True, return (U, iterations, residual).
-                Defaults to False.
+            return_info: bool = False,
+            sparse_ops: dict = None,
+            hierarchy_dyn=hierarchy_jax,
+        ) -> Array | tuple[Array, int, float]:
+            b = rhs_from_m(sparse_ops, m)
+            bnorm2 = jnp.vdot(b, b)
 
-        Returns:
-            Array | tuple[Array, int, float]: Potential U (N,) or solver info.
-        """
-        b = rhs_from_m(m)
-        bnorm2 = jnp.vdot(b, b)
+            if enforce_zero_mean:
+                b = b - jnp.mean(b)
+                x0 = x0 - jnp.mean(x0)
 
-        # Choice: For open boundary problems (no Dirichlet mask), the Poisson
-        # equation is only solvable up to an additive constant (pure Neumann).
-        # Projecting both b and x0 to zero mean removes the null-space component
-        # and stabilizes the CG solver.
-        if enforce_zero_mean:
-            b = b - jnp.mean(b)
-            x0 = x0 - jnp.mean(x0)
+            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
 
-        U, it, r2 = solve_linear(b, x0, tol=tol, hierarchy=hierarchy_jax)
-
-        if enforce_zero_mean:
-            U = U - jnp.mean(U)
-        if return_info:
-            rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
-            return U, it, rel_res
-        return U
+            if enforce_zero_mean:
+                U = U - jnp.mean(U)
+            if return_info:
+                rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                return U, it, rel_res
+            return U
 
     return solve_U

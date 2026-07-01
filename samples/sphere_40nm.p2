@@ -1,0 +1,25 @@
+[mesh]
+size = 1e-9
+
+[initial state]
+mx = 0.0
+my = 0.0
+mz = 1.0
+
+[field]
+hx = 0.0174524
+hy = 0.0
+hz = 0.9998477
+hstart = 0.6
+hfinal = 0.3
+hstep = 0.01
+mstep = 0.05
+mfinal = 1.80
+loop = false
+bias_type = circular
+bias_strength = 1.0e-5
+
+[minimizer]
+method = aapg_exact
+tol_fun = 1e-8
+eps_a = 1e-12

@@ -1370,7 +1370,7 @@ def mesh_backend_grid_ellipsoid(
 
 def run_single_solid_mesher(
     *,
-    geom: str = "box",  # "box" | "ellipsoid" | "eye"
+    geom: str = "box",  # "box" | "ellipsoid" | "eye" | "elliptic_cylinder" | "poly" | "poly_gb"
     extent: str | tuple[float, float, float] = "60.0,60.0,60.0",
     h: float = 2.0,
     minratio: float = 1.4,  # meshpy backend only
@@ -1384,13 +1384,15 @@ def run_single_solid_mesher(
     out_vis_name: str | None = None,  # overrides .vtu base name
     number_of_grains=1,
     seed=123,
+    gb_thickness: float = 1.0,
+    gb_h: float = 1.0,
     no_vis: bool = False,
     verbose: bool = False,
     return_arrays: bool = True,  # NEW: set False to minimize memory
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, str | None]:
     """Build a single-solid tetrahedral mesh.
 
-    Supports box, ellipsoid, eye, cylinder, or poly.
+    Supports box, ellipsoid, eye, cylinder, poly, or poly_gb.
 
     Dispatches to the appropriate geometry and backend implementation,
     writes outputs (.npz and optional .vtu), and returns paths and optionally arrays.
@@ -1410,6 +1412,8 @@ def run_single_solid_mesher(
         out_vis_name (str | None): optional override for VTU path.
         number_of_grains (int): grains for 'poly' geom.
         seed (int): random seed for 'poly' geom.
+        gb_thickness (float): thickness of the grain boundary phase for 'poly_gb'.
+        gb_h (float): target element size for the grain boundary phase in 'poly_gb'.
         no_vis (bool): If True, skip VTU export.
         verbose (bool): logging.
         return_arrays (bool): If False, return None for knt/ijk to save memory.
@@ -1436,12 +1440,9 @@ def run_single_solid_mesher(
     # Build orthonormal frame from user directions (used for both shapes)
     ex, ey, ez = orthonormal_frame(dx, dy, dz)
 
-    # TODO: include the geometry for a elliptic_cylinder shape as option
-    # next to box, eye and ellipsoid. adopt it to the current structure.
-
     # Dispatch geometry + backend
-    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly"):
-        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly'"
+    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"):
+        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly' or 'poly_gb'"
         raise ValueError(msg)
     if backend not in ("meshpy", "grid"):
         raise ValueError("backend must be 'meshpy' or 'grid'")
@@ -1541,10 +1542,6 @@ def run_single_solid_mesher(
             )
 
     elif geom == "poly":
-        if isinstance(extent, str):
-            Lx, Ly, Lz = parse_csv3(extent)
-        else:
-            Lx, Ly, Lz = float(extent[0]), float(extent[1]), float(extent[2])
         knt, ijk = mesh_backend_neper_poly(
             n=int(number_of_grains),
             seed=int(seed),
@@ -1552,6 +1549,20 @@ def run_single_solid_mesher(
             size_y=Ly,
             size_z=Lz,
             h=float(h),
+        )
+
+    elif geom == "poly_gb":
+        knt, ijk = mesh_backend_meshpy_poly_gb(
+            n=int(number_of_grains),
+            seed=int(seed),
+            size_x=Lx,
+            size_y=Ly,
+            size_z=Lz,
+            h=float(h),
+            t=float(gb_thickness),
+            gb_h=float(gb_h),
+            minratio=float(minratio),
+            verbose=bool(verbose),
         )
 
     # Resolve output filenames
@@ -1585,6 +1596,202 @@ def run_single_solid_mesher(
         return None, None, out_npz, out_vtu
     else:
         return knt, ijk, out_npz, out_vtu
+
+
+def mesh_backend_meshpy_poly_gb(
+    n: int,
+    seed: int,
+    size_x: float,
+    size_y: float,
+    size_z: float,
+    h: float,
+    t: float,
+    gb_h: float,
+    minratio: float,
+    verbose: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh a polyhedral volume with a grain boundary phase using Neper and MeshPy.
+
+    Requires 'neper' to be available in the PATH.
+
+    Args:
+        n (int): number of grains.
+        seed (int): random seed.
+        size_x (float): physical dimension x.
+        size_y (float): physical dimension y.
+        size_z (float): physical dimension z.
+        h (float): target element size for grains.
+        t (float): thickness of the grain boundary phase.
+        gb_h (float): target element size for the grain boundary phase.
+        minratio (float): quality parameter.
+        verbose (bool): logging.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
+    """
+    import os
+    import subprocess
+
+    from scipy.spatial import ConvexHull, HalfspaceIntersection
+
+    if not HAVE_meshpy:
+        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
+
+    cmd_tess = [
+        "neper",
+        "-T",
+        "-n",
+        str(n),
+        "-id",
+        str(seed),
+        "-morpho",
+        "gg",
+        "-morphooptistop",
+        "val=1e-1",
+        "-domain",
+        f"cube({size_x},{size_y},{size_z}):translate(0,0,0)",
+        "-format",
+        "tess,obj",
+        "-reg",
+        "1",
+    ]
+    subprocess.run(cmd_tess, check=True)
+
+    obj_file = f"n{n}-id{seed}.obj"
+
+    vertices = []
+    groups = {}
+    current_group = None
+    with open(obj_file) as f:
+        for line in f:
+            if line.startswith("v "):
+                parts = line.split()
+                vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            elif line.startswith("g "):
+                current_group = line.split()[1]
+                groups[current_group] = []
+            elif line.startswith("f "):
+                parts = line.split()
+                face = [int(p.split("//")[0]) - 1 for p in parts[1:]]
+                groups[current_group].append(face)
+    vertices = np.array(vertices)
+
+    shrunken_grains = {}
+    for g_name, faces in groups.items():
+        grain_verts = []
+        for f_ in faces:
+            grain_verts.extend(f_)
+        grain_verts = list(set(grain_verts))
+        C_grain = np.mean(vertices[grain_verts], axis=0)
+
+        halfspaces = []
+        for f_ in faces:
+            V_f = vertices[f_]
+            v1 = V_f[1] - V_f[0]
+            v2 = V_f[2] - V_f[0]
+            n_vec = np.cross(v1, v2)
+            n_norm = np.linalg.norm(n_vec)
+            if n_norm < 1e-12:
+                continue
+            n_vec = n_vec / n_norm
+
+            if np.dot(n_vec, V_f[0] - C_grain) < 0:
+                n_vec = -n_vec
+
+            d = np.dot(n_vec, V_f[0])
+            new_d = d - t / 2.0
+            halfspaces.append([n_vec[0], n_vec[1], n_vec[2], -new_d])
+
+        halfspaces = np.array(halfspaces)
+        try:
+            hs = HalfspaceIntersection(halfspaces, C_grain)
+            hull = ConvexHull(hs.intersections)
+            shrunken_grains[g_name] = {"vertices": hs.intersections, "faces": hull.simplices, "centroid": C_grain}
+        except Exception as e:
+            if verbose:
+                print(f"[warn] Error shrinking grain {g_name}, it might be too small: {e}")
+
+    points = []
+    facets = []
+    regions = []
+
+    bb_points = [
+        [0, 0, 0],
+        [size_x, 0, 0],
+        [size_x, size_y, 0],
+        [0, size_y, 0],
+        [0, 0, size_z],
+        [size_x, 0, size_z],
+        [size_x, size_y, size_z],
+        [0, size_y, size_z],
+    ]
+    points.extend(bb_points)
+    bb_faces = [[0, 3, 2, 1], [4, 5, 6, 7], [1, 2, 6, 5], [0, 4, 7, 3], [2, 3, 7, 6], [0, 1, 5, 4]]
+    for f_ in bb_faces:
+        facets.append(f_)
+
+    grain_id = 1
+    for _g_name, data in shrunken_grains.items():
+        base_idx = len(points)
+        V = data["vertices"]
+        F = data["faces"]
+        points.extend(V.tolist())
+
+        for f_ in F:
+            facets.append([base_idx + v for v in f_])
+
+        regions.append(
+            [
+                data["centroid"][0],
+                data["centroid"][1],
+                data["centroid"][2],
+                grain_id,
+                approx_max_volume_from_edge(float(h)),
+            ]
+        )
+        grain_id += 1
+
+    g1_data = list(shrunken_grains.values())[0]
+    C1 = g1_data["centroid"]
+    V1 = g1_data["vertices"][0]
+    vec = V1 - C1
+    vec = vec / np.linalg.norm(vec)
+    gb_point = V1 + vec * (t / 4.0)
+
+    gb_id = grain_id
+    regions.append([gb_point[0], gb_point[1], gb_point[2], gb_id, approx_max_volume_from_edge(float(gb_h))])
+
+    mi = MeshInfo()
+    mi.set_points(points)
+    mi.set_facets(facets)
+    mi.regions.resize(len(regions))
+    for i, r in enumerate(regions):
+        mi.regions[i] = (r[0], r[1], r[2], r[3], r[4])
+
+    opts = Options("pqAa")
+    opts.minratio = float(minratio)
+    opts.regionattrib = True
+    opts.verbose = bool(verbose)
+
+    mesh = tet_build(mi, options=opts, attributes=True, volume_constraints=True, verbose=bool(verbose))
+
+    knt = np.asarray(mesh.points, dtype=np.float64)
+    knt -= np.array([size_x / 2.0, size_y / 2.0, size_z / 2.0])
+
+    tets = np.asarray(mesh.elements, dtype=np.int32)
+    mat_ids = np.asarray(mesh.element_attributes, dtype=np.int32)
+    ijk = np.column_stack([tets, mat_ids])
+
+    if os.path.exists(obj_file):
+        os.remove(obj_file)
+    tess_file = f"n{n}-id{seed}.tess"
+    if os.path.exists(tess_file):
+        os.remove(tess_file)
+
+    if verbose:
+        print(f"[info:poly_gb] Generated {knt.shape[0]} nodes and {ijk.shape[0]} tets.", flush=True)
+
+    return knt, ijk
 
 
 def mesh_backend_neper_poly(
@@ -1720,7 +1927,7 @@ def mesh_backend_neper_poly(
     # 1) Generate tessellation
     cmd_tess = ["neper", "-T", "-n", str(n), "-id", str(seed), 
                 "-morpho", "gg",
-                "-morphooptistop", "val=1e-2",
+                "-morphooptistop", "val=1e-1",
                 "-domain",
                 f"cube({size_x},{size_y},{size_z}):translate({-size_x/2},"
                 f"{-size_y/2},{-size_z/2})",
@@ -1760,10 +1967,10 @@ def main() -> None:
         "--geom",
         type=str,
         default="box",
-        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly"],
+        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"],
         help="Select geometry type: box (parallelepiped), ellipsoid "
         "(symmetric about local z), eye (Bézier arc based), "
-        "elliptic_cylinder, or poly (Voronoi grains).",
+        "elliptic_cylinder, poly (Voronoi grains), or poly_gb (grains with GB phase).",
     )
     ap.add_argument(
         "--extent",
@@ -1831,6 +2038,18 @@ def main() -> None:
         default=1,
         help="(POLY only) Random seed for tessellation generation.",
     )
+    ap.add_argument(
+        "--gb-thickness",
+        type=float,
+        default=1.0,
+        help="(POLY_GB only) Thickness of the grain boundary phase.",
+    )
+    ap.add_argument(
+        "--gb-h",
+        type=float,
+        default=1.0,
+        help="(POLY_GB only) Target element size for the grain boundary phase.",
+    )
 
     # Output naming
     ap.add_argument(
@@ -1882,6 +2101,8 @@ def main() -> None:
             out_vis_name=args.out_vis_name,
             number_of_grains=args.n,
             seed=args.id,
+            gb_thickness=float(args.gb_thickness),
+            gb_h=float(args.gb_h),
             no_vis=bool(args.no_vis),
             verbose=bool(args.verbose),
             # CLI uses default (return_arrays=True).

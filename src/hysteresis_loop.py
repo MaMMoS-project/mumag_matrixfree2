@@ -17,7 +17,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from curvilinear_bb_minimizer import make_minimizer, tangent_grad
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom
 from io_utils import (
@@ -26,6 +25,7 @@ from io_utils import (
     write_hysteresis_header,
     write_vtu_tetra,
 )
+from minimizers import make_minimizer
 from poisson_solve import make_solve_U
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
@@ -53,8 +53,21 @@ class LoopParams:
         verbose (bool): If True, print iteration details.
         Js_ref (float): Reference saturation polarization for SI conversion.
         cg_maxiter (int): Maximum iterations for the Poisson solver.
+        cg_tol (float): Relative tolerance for the Poisson solver.
+        poisson_reg (float): Regularization for the Poisson solver.
         mfinal (float | None): Magnetization threshold for early stopping.
         mstep (float | None): Magnetization change threshold for saving snapshots.
+        bias_type (str | None): Type of symmetry-breaking field ('circular', 'random').
+        bias_strength (float): Strength of the bias field relative to saturation.
+        method (str): Minimizer algorithm (e.g., 'pcohen', 'pcohen_exact', 'lbfgs', 'wg').
+        pc_iters (int): Inner iterations for preconditioned methods.
+        pc_auto (bool): Enable adaptive preconditioning accuracy.
+        pc_force_eta (float): Base constant for adaptive forcing sequence.
+        pc_force_alpha (float): Exponent for adaptive forcing sequence.
+        memory (int): History size for L-BFGS and Anderson acceleration.
+        tn_iters (int): Inner iterations for Newton-CG solvers.
+        lr (float): Learning rate for Nesterov acceleration.
+        mu (float): Momentum factor for Nesterov acceleration.
     """
 
     h_dir: np.ndarray
@@ -64,9 +77,9 @@ class LoopParams:
     loop: bool = True
 
     gamma: int = 5
-    max_iter: int = 200
-    tau_f: float = 1e-6
-    eps_a: float = 1e-8
+    max_iter: int = 2000
+    tau_f: float = 1e-8
+    eps_a: float = 1e-12
     tau0: float = 1e-2
     tau_min: float = 1e-6
     tau_max: float = 1.0
@@ -75,17 +88,39 @@ class LoopParams:
     ls_eta2: float = 0.1
     ls_C: float = 2.0
     ls_c: float = 0.5
-    ls_s0: float = 0.01
+    ls_s0: float = 1.0
     ls_max_evals: int = 15
+    ls_adaptive_mode: str = "none"
 
     out_dir: str = "hyst_out"
     csv_name: str = "hysteresis.csv"
     snapshot_every: int = 1
     verbose: bool = False
     Js_ref: float = 1.0
-    cg_maxiter: int = 400
+    cg_maxiter: int = 2000
+    cg_tol: float = 1e-8
+    poisson_reg: float = 1e-12
     mfinal: float | None = None
     mstep: float | None = None
+    bias_type: str | None = None
+    bias_strength: float = 0.0
+
+    # Advanced Minimizer Defaults (P-Cohen Auto Strict)
+    method: str = "pcohen_hs"
+    pc_iters: int = 15
+    pc_auto: bool = True
+    pc_force_eta: float = 0.5
+    pc_force_alpha: float = 0.5
+    pc_stagnation_nu: float = 0.01
+    memory: int = 5
+    tn_iters: int = 5
+    lr: float = 0.1
+    mu: float = 0.9
+    pc_reg: float = 0.0
+    phi_extrapolate: bool = True
+    wg_gamma: int = 5
+    wg_threshold: float = 1e-6
+    benchmark: bool = False
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -186,8 +221,7 @@ def jax_compute_volume_averaged_m(
     return m_vol_avg
 
 
-def run_hysteresis_loop(
-    *,
+def run_hysteresis_loop(  # noqa: D417
     points: np.ndarray,
     geom: TetGeom,
     A_lookup: np.ndarray,
@@ -199,15 +233,24 @@ def run_hysteresis_loop(
     V_mag: float,
     node_volumes: jnp.ndarray,
     M_nodal: jnp.ndarray,
+    B_bias: np.ndarray | None = None,
     precond_type: str = "jacobi",
     order: int = 3,
     energy_assembly: str = "segment_sum",
     grad_backend: GradBackend = "stored_grad_phi",
     chunk_elems: int = 200_000,
-    cg_maxiter: int = 400,
-    cg_tol: float = 1e-8,
-    poisson_reg: float = 1e-12,
     boundary_mask: jnp.ndarray | None = None,
+    *,
+    mode: str = "matrix_free",
+    A_sparse: Any = None,
+    Dx_sparse: Any = None,
+    Dy_sparse: Any = None,
+    Dz_sparse: Any = None,
+    A_diag: Any = None,
+    K_eff_sparse: Any = None,
+    Gx_sparse: Any = None,
+    Gy_sparse: Any = None,
+    Gz_sparse: Any = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -218,26 +261,27 @@ def run_hysteresis_loop(
         K1_lookup (np.ndarray): Anisotropy constants.
         Js_lookup (np.ndarray): Saturation polarization constants.
         k_easy_lookup (np.ndarray): Easy axis vectors.
-        m0 (np.ndarray): Initial magnetization state.
-        params (LoopParams): Loop control parameters.
-        V_mag (float): Total magnetic volume.
-        node_volumes (jnp.ndarray): Lumped nodal volumes.
-        M_nodal (jnp.ndarray): Nodal magnetic moments.
-        precond_type (str, optional): Poisson solver preconditioner.
-            Defaults to 'jacobi'.
-        order (int, optional): Chebyshev order. Defaults to 3.
-        energy_assembly (str, optional): assembly method. Defaults to 'segment_sum'.
-        grad_backend (GradBackend, optional): Strategy for gradients.
-            Defaults to 'stored_grad_phi'.
-        chunk_elems (int, optional): Loop chunk size. Defaults to 200_000.
-        cg_maxiter (int, optional): Solver iterations. Defaults to 400.
-        cg_tol (float, optional): Solver tolerance. Defaults to 1e-8.
-        poisson_reg (float, optional): Tikhonov regularization. Defaults to 1e-12.
-        boundary_mask (jnp.ndarray | None, optional): Dirichlet mask.
-            Defaults to None.
-
-    Returns:
-        dict[str, Any]: Results dictionary containing 'last_m', 'last_U', and 'history'.
+        m0 (np.ndarray): Initial magnetization vector.
+        params (LoopParams): sweep and solver settings.
+        V_mag (float): Magnetic volume.
+        node_volumes (Array): Nodal volume vector.
+        M_nodal (Array): Nodal magnetic moment scaling.
+        B_bias (np.ndarray | None): Bias field.
+        precond_type (str): Preconditioning strategy.
+        order (int): Chebyshev preconditioner order.
+        energy_assembly (str): Nodal assembly strategy.
+        grad_backend (GradBackend): shape function gradients source.
+        chunk_elems (int): Chunk size for loops.
+        boundary_mask (Array | None): Boundary mask.
+        mode (str): Operator mode ('matrix_free' or 'assembled').
+        A_sparse: Assembled stiffness matrix.
+        Dx_sparse, Dy_sparse, Dz_sparse: Assembled divergence component matrices.
+        A_diag: Precomputed diagonal of A.
+        Kex_sparse: Assembled exchange matrix.
+        Gx_sparse, Gy_sparse, Gz_sparse: Assembled demag gradient component matrices.
+        Kan_sparse: Assembled anisotropy matrix.
+        k_nodes: Precomputed easy axis per node.
+        Kex_diag: Precomputed diagonal of Kex.
     """
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
@@ -246,11 +290,7 @@ def run_hysteresis_loop(
     h = np.asarray(params.h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
-    # inv_M_rel: node-wise scaling to go from (total_energy_grad / V_mag)
-    # to (local_energy_density_grad / Js). This is a physical preconditioner.
-    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-
-    energy_and_grad, energy_only, _ = make_energy_kernels(
+    energy_and_grad, energy_only, _, _ = make_energy_kernels(
         geom,
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
@@ -261,6 +301,7 @@ def run_hysteresis_loop(
         chunk_elems=chunk_elems,
         assembly=energy_assembly,
         grad_backend=grad_backend,
+        mode=mode,
     )
 
     solve_U = make_solve_U(
@@ -270,10 +311,11 @@ def run_hysteresis_loop(
         order=order,
         chunk_elems=chunk_elems,
         cg_maxiter=params.cg_maxiter,
-        cg_tol=cg_tol,
-        poisson_reg=poisson_reg,
+        cg_tol=params.cg_tol,
+        poisson_reg=params.poisson_reg,
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
+        mode=mode,
     )
 
     minimize = make_minimizer(
@@ -285,15 +327,14 @@ def run_hysteresis_loop(
         V_mag=V_mag,
         node_volumes=node_volumes,
         M_nodal=M_nodal,
-        precond_type=precond_type,
-        order=order,
+        solve_U=solve_U,
+        cg_tol=params.cg_tol,
+        method=params.method,
+        B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
         chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
-        cg_maxiter=params.cg_maxiter,
-        cg_tol=cg_tol,
-        poisson_reg=poisson_reg,
         grad_backend=grad_backend,
-        boundary_mask=boundary_mask,
+        mode=mode,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
@@ -301,53 +342,70 @@ def run_hysteresis_loop(
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
-    # Calculate initial state (Issue #25)
-    U_init = solve_U(m, jnp.zeros(m.shape[0]), cg_tol)
-    E_init, g_raw_init = energy_and_grad(m, U_init, jnp.asarray(params.B_start * h))
-    Jpar_init = jax_compute_volume_averaged_J_parallel(
-        m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup), jnp.asarray(h)
-    )
-    m_avg_init = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
-
-    B_tesla_init = float(params.B_start) * params.Js_ref
-    J_tesla_init = float(Jpar_init) * params.Js_ref
-    mx_init, my_init, mz_init = map(float, m_avg_init)
-    E_si_init = float(E_init) * (params.Js_ref**2) / (2.0 * 4e-7 * np.pi)
-
     config_idx = 0
-    J_par_last_saved = Jpar_init
+    J_par_last_saved = None
+    history = []
 
-    # Record initial state
-    history = [[B_tesla_init, J_tesla_init, mx_init, my_init, mz_init, E_si_init]]
-    append_hysteresis_row(
-        csv_path,
-        config_idx,
-        B_tesla_init,
-        J_tesla_init,
-        float(E_init),
-        float(jnp.max(jnp.abs(tangent_grad(m, g_raw_init * inv_M_rel)))),
-    )
+    U = jnp.zeros(m.shape[0], dtype=m.dtype)
 
-    # Save initial VTU if snapshots are enabled
-    if params.snapshot_every > 0 or params.mstep is not None:
-        vtu_path = out_dir / f"state_cfg{config_idx:05d}_B{B_tesla_init:+.4e}T.vtu"
-        write_vtu_tetra(
-            vtu_path,
-            points,
-            np.array(geom.conn),
-            point_data={
-                "m": np.array(m).astype(np.float32),
-                "U": np.array(U_init).astype(np.float32),
+    if params.benchmark:
+        print("Warming up JIT compiler...")
+        B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
+        _m, _U, _ = minimize(
+            m,
+            B_ext_warmup,
+            U0=U,
+            gamma=params.gamma,
+            max_iter=params.max_iter,
+            tau_f=params.tau_f,
+            eps_a=params.eps_a,
+            tau0=params.tau0,
+            tau_min=params.tau_min,
+            tau_max=params.tau_max,
+            ls_eta1=params.ls_eta1,
+            ls_eta2=params.ls_eta2,
+            ls_C=params.ls_C,
+            ls_c=params.ls_c,
+            ls_s0=params.ls_s0,
+            ls_max_evals=params.ls_max_evals,
+            h=h,
+            mfinal=params.mfinal,
+            Js_ref=params.Js_ref,
+            verbose=params.verbose,
+            pc_iters=params.pc_iters,
+            pc_auto=params.pc_auto,
+            pc_force_eta=params.pc_force_eta,
+            pc_force_alpha=params.pc_force_alpha,
+            pc_stagnation_nu=params.pc_stagnation_nu,
+            memory=params.memory,
+            tn_iters=params.tn_iters,
+            lr=params.lr,
+            mu=params.mu,
+            pc_reg=params.pc_reg,
+            phi_extrapolate=params.phi_extrapolate,
+            sparse_ops={
+                "A_sparse": A_sparse,
+                "Dx_sparse": Dx_sparse,
+                "Dy_sparse": Dy_sparse,
+                "Dz_sparse": Dz_sparse,
+                "A_diag": A_diag,
+                "K_eff_sparse": K_eff_sparse,
+                "Gx_sparse": Gx_sparse,
+                "Gy_sparse": Gy_sparse,
+                "Gz_sparse": Gz_sparse,
             },
-            cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
         )
+        _m.block_until_ready()
+        _U.block_until_ready()
+        print("Warmup complete. Starting main loop...")
 
     total_time = 0.0
-    U = U_init
+    total_iters = 0
+    total_preco_iters = 0
+    total_evals = 0
+    total_demag_iters = 0
+
     for step_idx, Bmag in enumerate(B_vals):
-        # Skip redundant first step if it matches start
-        if step_idx == 0 and Bmag == params.B_start:
-            continue
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
         start_step = time.time()
@@ -372,12 +430,38 @@ def run_hysteresis_loop(
             mfinal=params.mfinal,
             Js_ref=params.Js_ref,
             verbose=params.verbose,
+            pc_iters=params.pc_iters,
+            pc_auto=params.pc_auto,
+            pc_force_eta=params.pc_force_eta,
+            pc_force_alpha=params.pc_force_alpha,
+            pc_stagnation_nu=params.pc_stagnation_nu,
+            memory=params.memory,
+            tn_iters=params.tn_iters,
+            lr=params.lr,
+            mu=params.mu,
+            pc_reg=params.pc_reg,
+            phi_extrapolate=params.phi_extrapolate,
+            sparse_ops={
+                "A_sparse": A_sparse,
+                "Dx_sparse": Dx_sparse,
+                "Dy_sparse": Dy_sparse,
+                "Dz_sparse": Dz_sparse,
+                "A_diag": A_diag,
+                "K_eff_sparse": K_eff_sparse,
+                "Gx_sparse": Gx_sparse,
+                "Gy_sparse": Gy_sparse,
+                "Gz_sparse": Gz_sparse,
+            },
         )
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
         U.block_until_ready()
         step_duration = time.time() - start_step
         total_time += step_duration
+        total_iters += info.get("iters", 0)
+        total_preco_iters += info.get("preco_iters", 0)
+        total_evals += info.get("evals", info.get("nf", 0))
+        total_demag_iters += info.get("demag_iters", info.get("icg", 0))
 
         # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
@@ -440,16 +524,25 @@ def run_hysteresis_loop(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
             f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
             f"it={info.get('iters', 0):.0f}  "
-            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s"
+            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
+            f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
+            f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
         )
 
-        if info.get("mfinal_reached", False):
+        # Early termination check
+        if params.mfinal is not None and Jpar <= params.mfinal:
             print(
                 f"\n[loop] mfinal reached ({J_tesla:.4f} T <= {params.mfinal * params.Js_ref:.4f} T). Stopping sweep."
             )
             break
 
-    print(f"\nHysteresis loop finished in {total_time:.3f} s.")
+    print(
+        f"\nHysteresis loop finished in {total_time:.3f} s.\n"
+        f"Total minimizer iterations: {total_iters}\n"
+        f"Total preconditioner iterations: {total_preco_iters}\n"
+        f"Total function evaluations: {total_evals}\n"
+        f"Total Poisson (demag) iterations: {total_demag_iters}"
+    )
     return {
         "out_dir": str(out_dir),
         "csv_path": str(csv_path),

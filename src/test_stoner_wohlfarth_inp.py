@@ -89,7 +89,7 @@ def make_minimizer_no_demag(
         Callable: minimize(m0, B_ext, **kwargs) -> m_final.
     """
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         geom,
         A_lookup=A_lookup,
         K1_lookup=K1_lookup,

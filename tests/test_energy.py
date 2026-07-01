@@ -104,7 +104,7 @@ def test_micromagnetic_energies():
 
     # 4. Kernel Creation
     solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl")
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         geom,
         A_lookup,
         K1_lookup,
