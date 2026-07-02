@@ -145,20 +145,21 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
     return hierarchy
 
 
-def csr_to_jax_bCOO(mat: sp.csr_matrix) -> Any:
-    """Convert a SciPy CSR matrix to JAX BCOO (Blocked COO) format.
+def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
+    """Convert a SciPy CSR matrix to JAX CSR format.
 
     Args:
         mat (sp.csr_matrix): Input SciPy sparse matrix.
 
     Returns:
-        jax.experimental.sparse.BCOO: The JAX sparse matrix.
+        jax.experimental.sparse.CSR: The JAX sparse matrix.
     """
     from jax.experimental import sparse
 
-    coo = mat.tocoo()
-    indices = jnp.stack([jnp.asarray(coo.row), jnp.asarray(coo.col)], axis=1)
-    return sparse.BCOO((jnp.asarray(coo.data), jnp.asarray(indices)), shape=coo.shape)
+    return sparse.CSR(
+        (jnp.asarray(mat.data), jnp.asarray(mat.indices), jnp.asarray(mat.indptr)),
+        shape=mat.shape,
+    )
 
 
 @partial(jax.jit, static_argnums=(0,))

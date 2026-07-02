@@ -581,17 +581,17 @@ def make_solve_U(
         levels_jax = []
         for i in range(len(ml.levels)):
             level = ml.levels[i]
-            from amg_utils import compute_spai0_diagonal, csr_to_jax_bCOO
+            from amg_utils import compute_spai0_diagonal, csr_to_jax_CSR
 
             csr_A = level.A.tocsr()
             level_dict = {
-                "A_sparse": csr_to_jax_bCOO(csr_A),
+                "A_sparse": csr_to_jax_CSR(csr_A),
                 "Mdiag": jnp.asarray(csr_A.diagonal()),
                 "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
             }
             if i < len(ml.levels) - 1:
-                level_dict["P"] = csr_to_jax_bCOO(level.P.tocsr())
-                level_dict["R"] = csr_to_jax_bCOO(level.R.tocsr())
+                level_dict["P"] = csr_to_jax_CSR(level.P.tocsr())
+                level_dict["R"] = csr_to_jax_CSR(level.R.tocsr())
             else:
                 level_dict["A_dense"] = jnp.asarray(csr_A.todense())
             levels_jax.append(level_dict)
