@@ -1,8 +1,8 @@
 """reorder_mesh.py.
 
-Spatially reorder elements and nodes of a tetrahedral NPZ mesh using a 3D Morton
-(Z-order) space-filling curve. This maximizes L1/L2 cache locality on GPUs and
-reduces the active node working set per element chunk.
+Spatially or topologically reorder elements and nodes of a tetrahedral NPZ mesh.
+Supports Morton (Z-order) space-filling curve (optimal for GPU cuSPARSE CSR) and
+Reverse Cuthill-McKee (RCM) graph bandwidth minimization (optimal for CPU MKL).
 
 Author: Antigravity
 License: MIT
@@ -29,7 +29,7 @@ def morton_encode(q_coords: np.ndarray) -> np.ndarray:
     return code
 
 
-def reorder_mesh(in_path: str, out_path: str) -> None:
+def reorder_mesh(in_path: str, out_path: str, target: str = "gpu") -> None:
     print(f"Loading original mesh from {in_path}...")
     data = np.load(in_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
@@ -45,23 +45,58 @@ def reorder_mesh(in_path: str, out_path: str) -> None:
     denom = max_knt - min_knt
     denom = np.where(denom == 0, 1.0, denom)
 
-    # 2. Sort nodes by Morton code
-    print("Generating Morton codes for nodes...")
-    q_knt = ((knt - min_knt) / denom * 1023).astype(np.int32)
-    morton_nodes = morton_encode(q_knt)
-    node_perm = np.argsort(morton_nodes)
+    if target == "cpu":
+        print("Sorting nodes using Reverse Cuthill-McKee (RCM) on graph adjacency...")
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import reverse_cuthill_mckee
 
-    # Construct inverse node mapping to update connectivity
-    inv_node_perm = np.zeros(N, dtype=np.int32)
-    inv_node_perm[node_perm] = np.arange(N, dtype=np.int32)
+        # Build node-to-node adjacency graph from element connectivity (tetrahedron edges)
+        conn = ijk[:, :4].astype(np.int64)
+        e0 = conn[:, [0, 1]]
+        e1 = conn[:, [0, 2]]
+        e2 = conn[:, [0, 3]]
+        e3 = conn[:, [1, 2]]
+        e4 = conn[:, [1, 3]]
+        e5 = conn[:, [2, 3]]
+        all_edges = np.vstack([e0, e1, e2, e3, e4, e5])
 
-    # 3. Sort elements by their centroids' Morton code
-    print("Generating Morton codes for elements...")
-    conn = ijk[:, :4].astype(np.int64)
-    centroids = np.mean(knt[conn], axis=1)
-    q_centroids = ((centroids - min_knt) / denom * 1023).astype(np.int32)
-    morton_elements = morton_encode(q_centroids)
-    elem_perm = np.argsort(morton_elements)
+        rows = all_edges[:, 0]
+        cols = all_edges[:, 1]
+        vals = np.ones(all_edges.shape[0], dtype=bool)
+
+        # Build symmetric adjacency matrix
+        adj = sp.coo_matrix((vals, (rows, cols)), shape=(N, N)).tocsr()
+
+        # Run RCM reordering
+        node_perm = reverse_cuthill_mckee(adj, symmetric=True)
+
+        # Construct inverse node mapping to update element connectivity
+        inv_node_perm = np.zeros(N, dtype=np.int32)
+        inv_node_perm[node_perm] = np.arange(N, dtype=np.int32)
+
+        # Sort elements by their average mapped node index
+        print("Sorting elements by average mapped node index...")
+        mapped_nodes = inv_node_perm[conn]
+        mean_mapped = np.mean(mapped_nodes, axis=1)
+        elem_perm = np.argsort(mean_mapped)
+
+    else:
+        print("Sorting nodes and elements using 3D Morton spatial curve...")
+        # 2. Sort nodes by Morton code
+        q_knt = ((knt - min_knt) / denom * 1023).astype(np.int32)
+        morton_nodes = morton_encode(q_knt)
+        node_perm = np.argsort(morton_nodes)
+
+        # Construct inverse node mapping
+        inv_node_perm = np.zeros(N, dtype=np.int32)
+        inv_node_perm[node_perm] = np.arange(N, dtype=np.int32)
+
+        # 3. Sort elements by their centroids' Morton code
+        conn = ijk[:, :4].astype(np.int64)
+        centroids = np.mean(knt[conn], axis=1)
+        q_centroids = ((centroids - min_knt) / denom * 1023).astype(np.int32)
+        morton_elements = morton_encode(q_centroids)
+        elem_perm = np.argsort(morton_elements)
 
     # 4. Apply reordering
     print("Applying permutations...")
@@ -71,7 +106,7 @@ def reorder_mesh(in_path: str, out_path: str) -> None:
     ijk_sorted = ijk[elem_perm].copy()
     ijk_sorted[:, :4] = inv_node_perm[ijk_sorted[:, :4].astype(np.int64)]
 
-    # 5. Measure node footprint reduction
+    # 5. Measure node footprint reduction (for element chunking verification)
     chunk_size = 200_000
     num_chunks = int(np.ceil(E / chunk_size))
     
@@ -96,13 +131,20 @@ def reorder_mesh(in_path: str, out_path: str) -> None:
         node_perm=node_perm,
         inv_node_perm=inv_node_perm,
     )
-    print("[ok] Finished reordering.")
+    print("[ok] Finished reordering mesh.")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Spatially reorder mesh using Morton code.")
+    ap = argparse.ArgumentParser(description="Spatially or topologically reorder mesh nodes and elements.")
     ap.add_argument("--in-mesh", required=True, help="Input NPZ mesh file.")
-    ap.add_argument("--out-mesh", help="Output NPZ mesh file. Defaults to [in-mesh]_sorted.npz")
+    ap.add_argument("--out-mesh", help="Output NPZ mesh file. Defaults to [in-mesh]_[target_suffix].npz")
+    ap.add_argument(
+        "--target",
+        type=str,
+        default="gpu",
+        choices=["cpu", "gpu"],
+        help="Optimization target. 'gpu' uses 3D Morton curve. 'cpu' uses Reverse Cuthill-McKee (RCM) graph sorting."
+    )
     args = ap.parse_args()
 
     in_path = Path(args.in_mesh)
@@ -111,11 +153,12 @@ def main() -> None:
 
     out_path = args.out_mesh
     if not out_path:
-        out_path = in_path.with_name(f"{in_path.stem}_sorted.npz")
+        suffix = "sorted" if args.target == "gpu" else "rcm"
+        out_path = in_path.with_name(f"{in_path.stem}_{suffix}.npz")
     else:
         out_path = Path(out_path)
 
-    reorder_mesh(str(in_path), str(out_path))
+    reorder_mesh(str(in_path), str(out_path), target=args.target)
 
 
 if __name__ == "__main__":

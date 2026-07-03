@@ -202,7 +202,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
 
     @jax.jit
     def fast_cpu_spmv(x_val):
-        result_shape_dtype = jax.ShapeDtypeStruct(x_val.shape, x_val.dtype)
+        result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), x_val.dtype)
         return jax.pure_callback(
             mkl_spmv_callback,
             result_shape_dtype,
