@@ -1021,6 +1021,10 @@ def main() -> None:
         Dy_sparse = make_sparse_operator(Dy_scipy)
         Dz_sparse = make_sparse_operator(Dz_scipy)
 
+        import scipy.sparse as sp
+        D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+        D_sparse = make_sparse_operator(D_scipy)
+
         Gx_scipy = 2.0 * Dx_scipy.transpose()
         Gy_scipy = 2.0 * Dy_scipy.transpose()
         Gz_scipy = 2.0 * Dz_scipy.transpose()
@@ -1028,6 +1032,9 @@ def main() -> None:
         Gx_sparse = make_sparse_operator(Gx_scipy.tocsr())
         Gy_sparse = make_sparse_operator(Gy_scipy.tocsr())
         Gz_sparse = make_sparse_operator(Gz_scipy.tocsr())
+
+        G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+        G_sparse = make_sparse_operator(G_scipy)
 
         from amg_utils import assemble_exchange_anisotropy_matrix_cpu
 
@@ -1046,6 +1053,8 @@ def main() -> None:
             "Gx_sparse": Gx_sparse,
             "Gy_sparse": Gy_sparse,
             "Gz_sparse": Gz_sparse,
+            "D_sparse": D_sparse,
+            "G_sparse": G_sparse,
         }
         print("[ok] Finished assembly and GPU transfer.")
 

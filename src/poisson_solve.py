@@ -144,7 +144,11 @@ def make_poisson_ops(
             return y
 
         def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
-            y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
+            if "D_sparse" in sparse_ops:
+                m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+                y = sparse_ops["D_sparse"] @ m_flat
+            else:
+                y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
             if boundary_mask is not None:
                 y = y * boundary_mask
             return y

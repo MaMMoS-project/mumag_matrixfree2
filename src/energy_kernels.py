@@ -154,10 +154,14 @@ def make_energy_kernels(
             g_ex_an = g_ex_an_flat.reshape(N, 3)
 
             # 3. Demag gradient: G @ U (shape (N, 3))
-            g_dem_x = sparse_ops["Gx_sparse"] @ U
-            g_dem_y = sparse_ops["Gy_sparse"] @ U
-            g_dem_z = sparse_ops["Gz_sparse"] @ U
-            g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
+            if "G_sparse" in sparse_ops:
+                g_dem_flat = sparse_ops["G_sparse"] @ U
+                g_dem = g_dem_flat.reshape(3, -1).T
+            else:
+                g_dem_x = sparse_ops["Gx_sparse"] @ U
+                g_dem_y = sparse_ops["Gy_sparse"] @ U
+                g_dem_z = sparse_ops["Gz_sparse"] @ U
+                g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
 
             # 4. Zeeman gradient
             B_eff = B_ext[None, :]
