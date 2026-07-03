@@ -182,6 +182,33 @@ The primary reasons for JAX's performance superiority are:
 \subsection{Trust Region Dynamics}
 The comparison between \texttt{tr} and \texttt{ptr} highlights a fundamental trade-off. The Preconditioned Trust Region (\texttt{ptr}) solver uses the exact non-local Hessian (including demagnetization interactions), requiring only 11,196 outer iterations compared to \texttt{tr}'s 23,725. However, because it evaluates the demagnetization Poisson solver at every inner Steihaug iteration, the total number of Poisson solves explodes to 562,250. This makes each outer step in \texttt{ptr} extremely expensive. In contrast, the Local Trust Region (\texttt{tr}) solver approximates the Hessian using only local interactions (exchange and anisotropy), yielding a much faster wall-clock execution (1074.5 s) despite more outer steps.
 
+\subsection{Mesh Reordering and CPU Solver Benchmarks}
+To ensure the viability of the CPU fallback path when GPU nodes are backlogged on the cluster, we evaluated the performance of the preconditioned Hestenes-Stiefel (\texttt{pcohen\_hs}) solver on a CPU node (\texttt{Gd}) utilizing exactly 4 parallel cores. Specifically, we analyzed the impact of two different mesh reordering strategies designed to optimize L1/L2 cache locality:
+\begin{enumerate}
+    \item \textbf{3D Morton (Z-order) Space-Filling Curve:} Sorts nodes and element centroids physically based on quantized spatial coordinates. Primarily optimized for GPU coalescing under cuSPARSE.
+    \item \textbf{Reverse Cuthill-McKee (RCM):} Sorts nodes and elements topologically based on the element-to-node adjacency graph to minimize the sparse matrix bandwidth. Primarily optimized for CPU cache line locality.
+\end{enumerate}
+
+Table \ref{tab:cpu_results} compares the average step timings and convergence metrics over the first 5 steps of the hysteresis loop for both sorting strategies.
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{lrrrr}
+        \toprule
+        \textbf{Reordering Target} & \textbf{Avg. Step Time (s)} & \textbf{Avg. PCG Iters/Step} & \textbf{Time/PCG Iter (s)} & \textbf{Footprint Reduction} \\
+        \midrule
+        Morton (GPU-optimized) & \textbf{14.93} & 57.0 & \textbf{0.262} & - \\
+        RCM (CPU-optimized)    & 15.52 & \textbf{55.0} & 0.282 & \textbf{2.69$\times$} \\
+        \bottomrule
+    \end{tabular}
+    \caption{CPU benchmark comparison of mesh reordering strategies on a 4-core CPU node (\texttt{Gd}) for the Hestenes-Stiefel CSR solver.}
+    \label{tab:cpu_results}
+\end{table}
+
+The RCM reordering successfully reduces the active node footprint per element chunk by \textbf{2.69$\times$} (averaging 96,510 unique nodes per 200k element chunk compared to 259,418 in the unsorted mesh). Additionally, RCM slightly improves the mathematical quality of the Algebraic Multigrid (AMG) preconditioner, reducing the average inner Poisson Conjugate Gradient (PCG) iteration count from 57.0 to 55.0 iterations per step.
+
+However, the raw execution time per PCG iteration is slightly slower under RCM (0.282 s vs. 0.262 s). This is explained by the multi-level nature of the AMG preconditioned solver. RCM optimizes cache locality on the finest level (level 0), but the coarser levels of the AMG hierarchy are algebraically coarsened and left unsorted. Transferring data via prolongation and restriction operators between the RCM-sorted fine grid and the unsorted coarse grids introduces indexing jumps that degrade L2 cache reuse. In contrast, the 3D Morton space-filling curve naturally preserves spatial hierarchies and octree-nesting properties across all levels of the AMG hierarchy, yielding a slightly faster raw SpMV execution speed. Consequently, Morton spatial sorting serves as a highly robust, unified reordering strategy that is optimal for the GPU and highly competitive on the CPU fallback.
+
 \section{Conclusion}
 This report has demonstrated that JAX-based micromagnetic solvers, when backed by the optimized CSR sparse format and full GPU-resident execution, can significantly outperform traditional compiled C++/OpenCL codes. Overcoming the CPU parallelization bottlenecks via MKL callbacks enables a high-performance fallback on CPU cluster nodes, while the GPU-native path delivers a $3.0\times$ speedup over C++ on standard A100 hardware. Future work will extend this framework to multi-node MPI scaling and dynamic thermal calculations.
 

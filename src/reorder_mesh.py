@@ -68,7 +68,7 @@ def reorder_mesh(in_path: str, out_path: str, target: str = "gpu") -> None:
         adj = sp.coo_matrix((vals, (rows, cols)), shape=(N, N)).tocsr()
 
         # Run RCM reordering
-        node_perm = reverse_cuthill_mckee(adj, symmetric=True)
+        node_perm = reverse_cuthill_mckee(adj, symmetric_mode=True)
 
         # Construct inverse node mapping to update element connectivity
         inv_node_perm = np.zeros(N, dtype=np.int32)
