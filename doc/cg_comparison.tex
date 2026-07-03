@@ -14,7 +14,7 @@
 \maketitle
 
 \begin{abstract}
-This report provides a rigorous benchmarking and performance comparison between the high-performance C++/OpenCL micromagnetics code (\texttt{b4vex}) and a new GPU-resident JAX-based framework. We evaluate the convergence properties and wall-clock times of several preconditioned manifold minimizers, including Cohen's Hestenes-Stiefel conjugate gradient, Local Trust Region (\texttt{tr}), and Preconditioned Trust Region (\texttt{ptr}). By transitioning from Coordinate (COO) to Compressed Sparse Row (CSR) format and utilizing NVIDIA cuSPARSE SpMV operations via JAX, we overcome CPU compilation and memory-bandwidth bottlenecks. Benchmarked on a large-scale NdFeB cube mesh containing 1.35 million nodes and 8.08 million tetrahedral elements, the JAX-based Hestenes-Stiefel minimizer achieves a $3.0\times$ wall-clock speedup compared to the C++ baseline, executing the full hysteresis loop in 681 seconds.
+This report provides a rigorous benchmarking and performance comparison between the high-performance C++/OpenCL micromagnetics code (\texttt{b4vex}) and a new GPU-resident JAX-based framework. We evaluate the convergence properties and wall-clock times of several preconditioned manifold minimizers, including Cohen's Hestenes-Stiefel conjugate gradient, Local Trust Region (\texttt{tr}), and Preconditioned Trust Region (\texttt{ptr}). By transitioning from Coordinate (COO) to Compressed Sparse Row (CSR) format and utilizing NVIDIA cuSPARSE SpMV operations via JAX, we overcome CPU compilation and memory-bandwidth bottlenecks. Benchmarked on a large-scale NdFeB cube mesh containing 1.35 million nodes and 8.08 million tetrahedral elements, the JAX-based Hestenes-Stiefel minimizer achieves a $3.15\times$ wall-clock speedup compared to the C++ baseline, executing the full hysteresis loop in 649.1 seconds.
 \end{abstract}
 
 \section{Introduction}
@@ -145,8 +145,8 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \toprule
         \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
         \midrule
-        \texttt{b4vex} (C++ Reference) & 2043.2 & \textbf{10,475} & 23,086 & 102,025 & \textbf{194,927} \\
-        \texttt{pcohen\_hs} (JAX assembled CSR) & \textbf{681.2} & 13,071 & 15,859 & \textbf{97,262} & 186,072 \\
+        \texttt{b4vex} (C++ Reference) & 2043.2 & \textbf{10,475} & 23,086 & 102,025 & 194,927 \\
+        \texttt{pcohen\_hs} (JAX assembled CSR) & \textbf{649.1} & 13,046 & 15,520 & \textbf{97,104} & \textbf{171,288} \\
         \texttt{tr} (JAX assembled CSR)       & 1074.5 & 23,725 & 23,725 & 116,079 & 311,049 \\
         \texttt{ptr} (JAX assembled CSR)      & 1700.0 & 11,196 & \textbf{11,196} & 206,539 & 562,250 \\
         \bottomrule
@@ -167,7 +167,7 @@ Table \ref{tab:results} provides a direct comparison between the JAX assembled C
 
 The JAX implementations show a massive speedup across all tested solvers:
 \begin{itemize}
-    \item \textbf{\texttt{pcohen\_hs} Speedup:} The JAX Hestenes-Stiefel variant of Cohen's Conjugate Gradient method completes the hysteresis loop in \textbf{681.2 seconds}, compared to \textbf{2043.2 seconds} for the C++ reference. This represents a \textbf{$3.0\times$ wall-clock speedup}. While JAX requires slightly more outer iterations (13,071 vs 10,475), the computational cost per step is dramatically lower.
+    \item \textbf{\texttt{pcohen\_hs} Speedup:} The JAX Hestenes-Stiefel variant of Cohen's Conjugate Gradient method completes the hysteresis loop in \textbf{649.1 seconds}, compared to \textbf{2043.2 seconds} for the C++ reference. This represents a \textbf{$3.15\times$ wall-clock speedup}. While JAX requires slightly more outer iterations (13,046 vs 10,475), the computational cost per step is dramatically lower.
     \item \textbf{\texttt{tr} Speedup:} The Local Trust Region solver (\texttt{tr}) in JAX achieves a \textbf{$1.9\times$ speedup} (1074.5 s vs 2043.2 s).
     \item \textbf{\texttt{ptr} Speedup:} The Preconditioned Trust Region solver (\texttt{ptr}) in JAX achieves a \textbf{$1.2\times$ speedup} (1700.0 s vs 2043.2 s).
 \end{itemize}
