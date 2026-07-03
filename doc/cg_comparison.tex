@@ -193,16 +193,17 @@ Table \ref{tab:cpu_results} compares the average step timings and convergence me
 
 \begin{table}[h]
     \centering
-    \begin{tabular}{lrrrr}
+    \begin{tabular}{llrrrr}
         \toprule
-        \textbf{Reordering Target} & \textbf{Avg. Step Time (s)} & \textbf{Avg. PCG Iters/Step} & \textbf{Time/PCG Iter (s)} & \textbf{Footprint Reduction} \\
+        \textbf{Reordering Target} & \textbf{Cores} & \textbf{Avg. Step Time (s)} & \textbf{Avg. PCG Iters/Step} & \textbf{Time/PCG Iter (s)} & \textbf{Footprint Reduction} \\
         \midrule
-        Morton (Standard CPU SpMV) & 14.93 & 57.0 & \textbf{0.262} & - \\
-        Morton + MKL Inspector-Executor & \textbf{14.92} & \textbf{54.0} & 0.276 & - \\
-        RCM (CPU-optimized)    & 15.52 & 55.0 & 0.282 & \textbf{2.69$\times$} \\
+        Morton (Standard CPU SpMV) & 4 & 14.93 & 57.0 & 0.262 & - \\
+        Morton (Standard CPU SpMV) & 8 & \textbf{12.35} & 59.0 & \textbf{0.209} & - \\
+        Morton + MKL Inspector-Executor & 4 & 14.92 & \textbf{54.0} & 0.276 & - \\
+        RCM (CPU-optimized)    & 4 & 15.52 & 55.0 & 0.282 & \textbf{2.69$\times$} \\
         \bottomrule
     \end{tabular}
-    \caption{CPU benchmark comparison of mesh reordering strategies and MKL optimization on a 4-core CPU node (\texttt{Gd}) for the Hestenes-Stiefel CSR solver.}
+    \caption{CPU benchmark comparison of mesh reordering strategies and MKL optimization on a CPU node (\texttt{Gd}) for the Hestenes-Stiefel CSR solver.}
     \label{tab:cpu_results}
 \end{table}
 
