@@ -162,6 +162,71 @@ def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
     )
 
 
+@jax.tree_util.register_pytree_node_class
+class SparseOperator:
+    """A wrapper for sparse matrix operations that overrides the matmul (@) operator.
+    This allows JAX to trace both CPU and GPU execution paths cleanly.
+    """
+    def __init__(self, apply_fn, pytree_parts=()):
+        self.apply_fn = apply_fn
+        self.pytree_parts = pytree_parts
+
+    def __matmul__(self, other):
+        # If there are dynamic JAX arrays (like the GPU CSR object), pass them to apply_fn
+        if len(self.pytree_parts) > 0:
+            return self.apply_fn(self.pytree_parts[0], other)
+        return self.apply_fn(None, other)
+
+    def tree_flatten(self):
+        return (self.pytree_parts, (self.apply_fn,))
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        apply_fn, = aux_data
+        return cls(apply_fn, pytree_parts=children)
+
+
+def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
+    """Creates a fast, multicore CPU SpMV operator using sparse_dot_mkl."""
+    try:
+        from sparse_dot_mkl import dot_product_mkl
+    except ImportError:
+        raise ImportError(
+            "sparse_dot_mkl is required for fast CPU sparse operations. "
+            "Please install it using 'pixi run' or check your environment."
+        )
+
+    def mkl_spmv_callback(x_val, **kwargs):
+        x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+        return dot_product_mkl(scipy_csr_mat, x_np_val)
+
+    @jax.jit
+    def fast_cpu_spmv(x_val):
+        result_shape_dtype = jax.ShapeDtypeStruct(x_val.shape, x_val.dtype)
+        return jax.pure_callback(
+            mkl_spmv_callback,
+            result_shape_dtype,
+            x_val,
+            vectorized=False
+        )
+
+    return fast_cpu_spmv
+
+
+def make_sparse_operator(scipy_csr_mat: sp.csr_matrix) -> SparseOperator:
+    """Dynamically creates the optimal sparse operator depending on the active platform."""
+    device = jax.devices()[0]
+
+    if device.platform == "cpu":
+        cpu_op = make_cpu_csr_op(scipy_csr_mat)
+        # On CPU: no dynamic JAX arrays, pass CPU op as static function
+        return SparseOperator(lambda _, x: cpu_op(x), ())
+    else:
+        # On GPU: convert to JAX CSR and store it in pytree_parts
+        jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+        return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
+
+
 @partial(jax.jit, static_argnums=(0,))
 def jacobi_smooth(
     apply_A: Callable,

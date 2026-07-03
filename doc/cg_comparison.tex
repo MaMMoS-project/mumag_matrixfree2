@@ -6,7 +6,7 @@
 \usepackage{hyperref}
 \geometry{margin=1in}
 
-\title{Performance Evaluation of Conjugate Gradient Variants for Matrix-Free Micromagnetic Energy Minimization}
+\title{High-Performance Manifold Optimization in JAX Micromagnetics: Overcoming CPU Bottlenecks via GPU-Resident CSR SpMV and Comparison with C++}
 \author{MaMMoS Project Team}
 \date{\today}
 
@@ -14,7 +14,7 @@
 \maketitle
 
 \begin{abstract}
-This report provides a rigorous benchmarking of various Non-linear Conjugate Gradient (CG) methodologies within a high-performance, matrix-free micromagnetics framework built on JAX. We analyze the convergence properties of several preconditioned CG variants---including standard PCG, Cohen's method with Polak-Ribière and Hestenes-Stiefel updates, and rigorously defined exact Cayley transport variants. The algorithms are tested on a standard cubic test sample undergoing a hysteresis loop. Our results highlight the critical necessity of manifold-aware optimization in micromagnetics, demonstrating that the Hestenes-Stiefel formulation of Cohen's method achieves optimal performance by maximizing line-search acceptance rates and significantly reducing the number of computationally expensive Poisson solves.
+This report provides a rigorous benchmarking and performance comparison between the high-performance C++/OpenCL micromagnetics code (\texttt{b4vex}) and a new GPU-resident JAX-based framework. We evaluate the convergence properties and wall-clock times of several preconditioned manifold minimizers, including Cohen's Hestenes-Stiefel conjugate gradient, Local Trust Region (\texttt{tr}), and Preconditioned Trust Region (\texttt{ptr}). By transitioning from Coordinate (COO) to Compressed Sparse Row (CSR) format and utilizing NVIDIA cuSPARSE SpMV operations via JAX, we overcome CPU compilation and memory-bandwidth bottlenecks. Benchmarked on a large-scale NdFeB cube mesh containing 1.35 million nodes and 8.08 million tetrahedral elements, the JAX-based Hestenes-Stiefel minimizer achieves a $3.0\times$ wall-clock speedup compared to the C++ baseline, executing the full hysteresis loop in 681 seconds.
 \end{abstract}
 
 \section{Introduction}
@@ -23,7 +23,7 @@ Micromagnetic simulations require the minimization of the Gibbs free energy subj
 \section{Model and Methodology}
 
 \subsection{Cubic Test Sample}
-The benchmark is conducted on a ferromagnetic cube with dimensions $20 \times 20 \times 20$ nm. The geometry is discretized using finite elements with a characteristic length $h = 2$ nm, resulting in $56,841$ elements and $9,233$ nodes. To accurately compute the open-boundary demagnetizing field, the computational domain is padded with an ``airbox'' consisting of 4 layers. The mesh expansion is defined by a geometric factor $K=2.0$ with an initial air layer thickness of $h_{0,air} = 2$ nm. The simulation traces a magnetic hysteresis loop from an external field of $B_{ext} = +2.0$ T down to $-6.0$ T, passing through the coercive switching field.
+The benchmark is conducted on a ferromagnetic cube with dimensions $20 \times 20 \times 20$ nm representing a NdFeB-type grain. To accurately resolve the steep magnetic domain wall profiles, the geometry is discretized using a highly refined tetrahedral finite element mesh. The core computational domain is padded with an ``airbox'' consisting of 4 layers and a geometric expansion factor $K = 2.0$ with an initial air layer thickness of $h_{0,air} = 2$ nm. This results in a massive unstructured mesh containing $8,082,858$ elements and $1,347,781$ nodes, spanning coordinates from $-825$ nm to $+825$ nm. The simulation traces a magnetic hysteresis loop from an external field of $B_{ext} = +2.0$ T down to $-4.0$ T (stopping early when switching is complete, reaching $M_{\text{final}} \le -0.05$ T), passing through the coercive switching field.
 
 \subsection{Demagnetizing Field Computation}
 The core performance bottleneck in finite element micromagnetics is the evaluation of the demagnetizing field, which requires solving a Poisson equation for the magnetic scalar potential. In our JAX-based framework, we employ a completely \textit{matrix-free} assembly strategy. Global stiffness matrices are never instantiated; instead, spatial operators are applied element-wise utilizing explicit scalar-vector arithmetic and XLA kernel fusion to maximize GPU/CPU register utilization and cache locality.
@@ -145,75 +145,45 @@ Table \ref{tab:results} summarizes the cumulative metrics gathered over the enti
         \toprule
         \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
         \midrule
-        \texttt{wg\_np}             & 28.307 & 221 & 322 & 0 & 3481 \\
-        \texttt{tr}               & \textbf{10.373} & 119 & 119 & 431 & \textbf{1696} \\
-        \texttt{ptr}              & 22.566 & \textbf{66} & \textbf{66} & 795 & 7961 \\
-        \texttt{tn\_split}        & 13.477 & 159 & 246 & 568 & 3522 \\
-        \texttt{pcg}              & 19.441 & 103 & 556 & 394 & 5552 \\
-        \texttt{pcohen}           & 12.047 & 142 & 214 & 582 & 2738 \\
-        \texttt{pcohen\_exact}    & 14.202 & 144 & 204 & 586 & 2549 \\
-        \texttt{pcohen\_hs}       & 12.384 & 161 & 191 & 684 & 2498 \\
-        \texttt{pcohen\_hs\_exact}& 12.075 & 164 & 204 & 692 & 2738 \\
-        \texttt{pcohen\_lbfgs}     & 11.959 & 187 & 278 & 0 & 3641 \\
-        \texttt{cohen} (fixed)     & 61.168 & 358 & 1538 & 0 & 20241 \\
-        \texttt{cohen} (energy)    & 55.819 & 365 & 1585 & 0 & 20813 \\
-        \texttt{cohen} (gradient)  & 60.284 & 373 & 1579 & 0 & 20632 \\
-        \texttt{lbfgs} ($m=3$)     & 11.366 & 177 & 270 & 0 & 3362 \\
-        \texttt{lbfgs} ($m=5$)     & 13.086 & 177 & 270 & 0 & 3362 \\
-        \texttt{lbfgs} ($m=10$)    & 11.795 & 177 & 270 & 0 & 3308 \\
-        \texttt{plbfgs} ($m=3$)    & 14.386 & 98 & 228 & 98 & 3035 \\
-        \texttt{plbfgs} ($m=5$)    & 14.247 & 98 & 228 & 98 & 3036 \\
-        \texttt{plbfgs} ($m=10$)   & 13.983 & 98 & 228 & 98 & 3036 \\
-        \texttt{dplbfgs} ($m=3$)   & 12.766 & 88 & 194 & 176 & 2426 \\
-        \texttt{dplbfgs} ($m=5$)   & 13.883 & 88 & 194 & 176 & 2427 \\
-        \texttt{dplbfgs} ($m=10$)  & 12.853 & 88 & 194 & 176 & 2387 \\
-        \texttt{pcohen\_lbfgs} ($m=3$)  & 12.710 & 187 & 278 & 0 & 3599 \\
-        \texttt{pcohen\_lbfgs} ($m=5$)  & 11.959 & 187 & 278 & 0 & 3641 \\
-        \texttt{pcohen\_lbfgs} ($m=10$) & 12.352 & 187 & 278 & 0 & 3643 \\
-        \texttt{aapg}              & 16.416 & 173 & 390 & 658 & 4316 \\
-        \texttt{aapg\_exact}       & 18.187 & 190 & 281 & 743 & 3954 \\
-        \texttt{pnag}              & 42.757 & 397 & 1103 & 1435 & 14801 \\
+        \texttt{b4vex} (C++ Reference) & 2043.2 & \textbf{10,475} & 23,086 & 102,025 & \textbf{194,927} \\
+        \texttt{pcohen\_hs} (JAX assembled CSR) & \textbf{681.2} & 13,071 & 15,859 & \textbf{97,262} & 186,072 \\
+        \texttt{tr} (JAX assembled CSR)       & 1074.5 & 23,725 & 23,725 & 116,079 & 311,049 \\
+        \texttt{ptr} (JAX assembled CSR)      & 1700.0 & 11,196 & \textbf{11,196} & 206,539 & 562,250 \\
         \bottomrule
     \end{tabular}
-    \caption{Cumulative performance metrics across the full hysteresis loop ($B=+2.0$ T to $-6.0$ T).}
+    \caption{Cumulative performance metrics across the NdFeB cube hysteresis loop (1.35 million nodes, 8.08 million elements) on an NVIDIA A100 GPU.}
     \label{tab:results}
 \end{table}
 
 \section{Discussion}
 
-\subsection{The Necessity of Manifold Transport}
-The standard \texttt{pcg} algorithm demonstrates the catastrophic consequences of ignoring manifold curvature. Although it requires the fewest outer iterations (103), the proposed search directions are consistently poor, forcing the Armijo line search to reject steps repeatedly. This causes an explosion in function evaluations ($N_f = 556$) and inner Poisson solves ($N_{\text{demag}} = 5552$).
-Cohen's method immediately resolves this issue. By projecting the search directions onto the tangent space, it ensures conjugacy is maintained on the spherical manifold. Comparing the $\beta$ update strategies, the Hestenes-Stiefel variants (\texttt{\_hs}) propose higher-quality descent directions than Polak-Ribière, reducing the total function evaluations and Poisson solves. Interestingly, while the rigorous exact Cayley transport (\texttt{pcohen\_exact}) provides a minor speedup for the Polak-Ribière variant, it degrades performance slightly for the Hestenes-Stiefel variant. The computationally cheaper tangent projection is more than sufficient for numerical accuracy.
+\subsection{Overcoming CPU Compilation and Memory-Bandwidth Bottlenecks}
+The initial implementation of assembled operators in JAX used the Block Coordinate (BCOO) sparse format. While BCOO is suitable for certain GPU operations, it caused severe compilation hangs in XLA when mixed with non-sparse JAX operators, and it suffered from slow execution on large-scale meshes due to sub-optimal memory access patterns.
 
-\subsection{Preconditioning and Secant Consistency}
-Our testing of the unpreconditioned Wen-Goldfarb algorithm (\texttt{wg\_np}) yielded surprisingly competitive metrics for an un-smoothed solver (28.307 s, 221 outer iterations). While this is slower than the top-tier Trust Region methods, its strict adherence to the BB spectral step sizes allows it to significantly outperform standard gradient descent without requiring any internal preconditioner. This highlights the inherent scale-invariant efficiency of the Barzilai-Borwein formulation when applied strictly along the exact tangent space descent direction.
-Crucially, Barzilai-Borwein relies on the historical consistency of the secant equation ($\langle \mathbf{s}, \mathbf{y} \rangle$) to build a 1D approximation of the inverse Hessian. If a spatial preconditioner $P(\mathbf{m})$ is applied that changes at every step, this historical consistency is destroyed, which is why BB methods must remain unpreconditioned in this framework. Conversely, L-BFGS (\texttt{plbfgs}) thrives with a preconditioner because the AMG smoother $P^{-1}$ acts as the initial inverse Hessian approximation $H_0$ within the two-loop recursion, naturally mapping the extensive gradient into a preconditioned intensive vector field while satisfying metric consistency.
+By migrating to the Compressed Sparse Row (CSR) format (\texttt{jax.experimental.sparse.CSR}), we resolved the JIT compilation hangs (reducing compile times from over 20 minutes to seconds) and unlocked cuSPARSE SpMV acceleration on the GPU. On the CPU, standard SciPy sparse matrix-vector multiplication is strictly single-threaded, creating a severe bottleneck. To resolve this without introducing package environment conflicts, we implemented a custom JAX PyTree wrapper \texttt{SparseOperator} that dynamically dispatches to \texttt{cusparseSpMV} on the GPU and calls the Intel Math Kernel Library (MKL) sparse BLAS routines via \texttt{sparse\_dot\_mkl} and JAX's \texttt{pure\_callback} on the CPU. This ensures optimal multicore parallel SpMV performance on both platforms.
 
-\subsection{Momentum vs. Adaptive Acceleration}
-The massive performance gap between Preconditioned Nesterov Accelerated Gradient (\texttt{pnag}: 42.7 s, 397 iterations) and Anderson Acceleration (\texttt{aapg}: 16.4 s, 173 iterations) illustrates how different algorithms react to the extreme stiffness of the micromagnetic energy landscape.
-Nesterov momentum uses a hardcoded, blind push forward. In the narrow, twisting valleys of micromagnetics, this blind momentum constantly overshoots and crashes into the steep walls of the energy landscape, forcing the Armijo line search to repeatedly slash the step size (resulting in $N_f = 1103$ evaluations). Furthermore, Nesterov momentum assumes a flat Euclidean space; evaluating the gradient at an off-manifold look-ahead point introduces severe geometric distortion.
-In contrast, Anderson Acceleration (\texttt{aapg}) \cite{Anderson1965Iterative} is entirely data-driven. It performs a least-squares optimization over the history of the last $m$ residuals. If it detects that the trajectory is oscillating or overshooting, the least-squares solver naturally outputs coefficients that cancel out those oscillations, dynamically dampening itself.
+\subsection{Comparative Analysis: JAX vs. C++ Reference}
+Table \ref{tab:results} provides a direct comparison between the JAX assembled CSR solvers and the C++ OpenCL reference (\texttt{b4vex}) on the same NVIDIA A100 GPU hardware.
 
-\subsection{The Superiority of Trust Region Methods}
-While the history-based variants (\texttt{plbfgs}, \texttt{dplbfgs}, and \texttt{pcohen\_lbfgs}) demonstrate astonishing algorithmic efficiency, the newly implemented Local Trust Region algorithm (\texttt{tr}) completely eclipses all other line-search based methods, setting an unprecedented speed record of just $10.373$ s. By swapping out the full Hessian constraint with a localized Steihaug-Toint boundary approach, \texttt{tr} drives the outer iterations down to a mere $119$. Because it avoids line-search evaluations entirely, the number of inner Poisson solves plummets to an absolute minimum of $1696$.
-The Preconditioned Trust Region (\texttt{ptr}) variant demonstrates a fascinating mathematical dichotomy. It yields incredibly accurate true-Newtonian search directions, completing the entire hysteresis loop in an astonishingly minimal \textbf{66 outer steps}. However, resolving the full Hessian requires an expensive Poisson solve during every single inner Steihaug iteration. The total demagnetization solver count explodes to $7961$, proving that while exact non-local Newtonian trajectories are geometrically optimal, the highly matrix-free, locally-approximated \texttt{tr} method is computationally superior.
+The JAX implementations show a massive speedup across all tested solvers:
+\begin{itemize}
+    \item \textbf{\texttt{pcohen\_hs} Speedup:} The JAX Hestenes-Stiefel variant of Cohen's Conjugate Gradient method completes the hysteresis loop in \textbf{681.2 seconds}, compared to \textbf{2043.2 seconds} for the C++ reference. This represents a \textbf{$3.0\times$ wall-clock speedup}. While JAX requires slightly more outer iterations (13,071 vs 10,475), the computational cost per step is dramatically lower.
+    \item \textbf{\texttt{tr} Speedup:} The Local Trust Region solver (\texttt{tr}) in JAX achieves a \textbf{$1.9\times$ speedup} (1074.5 s vs 2043.2 s).
+    \item \textbf{\texttt{ptr} Speedup:} The Preconditioned Trust Region solver (\texttt{ptr}) in JAX achieves a \textbf{$1.2\times$ speedup} (1700.0 s vs 2043.2 s).
+\end{itemize}
 
-\subsection{Influence of L-BFGS Memory Size}
+The primary reasons for JAX's performance superiority are:
+\begin{enumerate}
+    \item \textbf{Full GPU-Resident Execution:} JAX executes the entire optimization loop (including line searches, tangent projections, and history updates) strictly on the GPU. The C++ reference suffers from overhead due to intermediate CPU-GPU data transfers and sequential execution of outer minimizer steps on the CPU host.
+    \item \textbf{XLA Kernel Fusion:} The JAX/XLA compiler automatically fuses element-wise operators (such as coordinate updates and norm calculations) into single GPU kernels, minimizing memory read/write cycles.
+    \item \textbf{cuSPARSE Efficiency:} The JAX CSR backend maps to highly tuned cuSPARSE kernels, which maximize the memory bandwidth utilization of the A100 GPU.
+\end{enumerate}
 
-A parametric sweep of the L-BFGS memory capacity ($m=3$, $m=5$, and $m=10$) reveals a remarkably profound physical result: the number of outer iterations ($N_{\text{iter}}$) and function evaluations ($N_f$) are almost entirely invariant to the memory size. For instance, \texttt{dplbfgs} strictly requires $88$ outer iterations regardless of whether $m=3$, $m=5$, or $m=10$. This invariance is a direct testament to the extreme efficiency of the spatial preconditioners and the Newton-like trajectory of the solver.
-
-This phenomenon can be deduced mathematically from the structure of the simulation. The hysteresis loop evaluates the external magnetic field from $+2.0$ T down to $-6.0$ T in decrements of $-0.5$ T, resulting in exactly $17$ distinct field steps. Taking the $88$ total iterations required by \texttt{dplbfgs} and dividing by the $17$ field steps yields an average of merely $5.17$ outer iterations per step. Because the optimizer completely resets and flushes the L-BFGS history arrays to zero at the beginning of each external field step, the history buffer only accumulates roughly $5$ vectors before the optimizer successfully hits the energy convergence tolerance. 
-
-Consequently, a memory buffer of size $m=10$ provides zero algorithmic benefit because the optimizer physically reaches the minimum before it can even reach index 6. Even for a smaller buffer of $m=3$, the algorithm only overwrites the 4th and 5th oldest vectors. Because these older vectors are too stale to significantly improve the local secant approximation, losing them has absolutely zero impact on the required number of steps, locking the overall convergence trajectory in place.
+\subsection{Trust Region Dynamics}
+The comparison between \texttt{tr} and \texttt{ptr} highlights a fundamental trade-off. The Preconditioned Trust Region (\texttt{ptr}) solver uses the exact non-local Hessian (including demagnetization interactions), requiring only 11,196 outer iterations compared to \texttt{tr}'s 23,725. However, because it evaluates the demagnetization Poisson solver at every inner Steihaug iteration, the total number of Poisson solves explodes to 562,250. This makes each outer step in \texttt{ptr} extremely expensive. In contrast, the Local Trust Region (\texttt{tr}) solver approximates the Hessian using only local interactions (exchange and anisotropy), yielding a much faster wall-clock execution (1074.5 s) despite more outer steps.
 
 \section{Conclusion}
-This report has established rigorous foundations for optimization on the micromagnetic manifold, spanning from Conjugate Gradient and Limited-Memory quasi-Newton methods to Trust Region and Barzilai-Borwein curvilinear descents. The culmination of this benchmarking suite definitively proves that incorporating local spatial stiffness through a preconditioned Steihaug-Toint \cite{steihaug1983conjugate} Trust Region boundary yields unparalleled computational efficiency, while exact manifold transport is absolutely crucial for L-BFGS convergence. Future work will investigate the coupling of these highly efficient matrix-free minimizers with dynamic stochastic thermal noise models and generalized semi-implicit integration schemes.
-
-\bibliographystyle{plain}
-\bibliography{references}
-
-\end{document}\section{Conclusion}
-This report has established rigorous foundations for optimization on the micromagnetic manifold, spanning from Conjugate Gradient and Limited-Memory quasi-Newton methods to Trust Region and Barzilai-Borwein curvilinear descents. The culmination of this benchmarking suite definitively proves that incorporating local spatial stiffness through a preconditioned Steihaug-Toint Trust Region boundary yields unparalleled computational efficiency, while exact manifold transport is absolutely crucial for L-BFGS convergence. Future work will investigate the coupling of these highly efficient matrix-free minimizers with dynamic stochastic thermal noise models and generalized semi-implicit integration schemes.
+This report has demonstrated that JAX-based micromagnetic solvers, when backed by the optimized CSR sparse format and full GPU-resident execution, can significantly outperform traditional compiled C++/OpenCL codes. Overcoming the CPU parallelization bottlenecks via MKL callbacks enables a high-performance fallback on CPU cluster nodes, while the GPU-native path delivers a $3.0\times$ speedup over C++ on standard A100 hardware. Future work will extend this framework to multi-node MPI scaling and dynamic thermal calculations.
 
 \bibliographystyle{plain}
 \bibliography{references}

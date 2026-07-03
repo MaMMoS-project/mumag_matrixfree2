@@ -1003,7 +1003,7 @@ def main() -> None:
         from amg_utils import (
             assemble_divergence_matrices_cpu,
             assemble_poisson_matrix_cpu,
-            csr_to_jax_CSR,
+            make_sparse_operator,
         )
 
         # Ensure grad_phi is computed
@@ -1014,27 +1014,27 @@ def main() -> None:
         )
         A_diag_cpu = A_scipy.diagonal()
         A_diag = jnp.asarray(A_diag_cpu)
-        A_sparse = csr_to_jax_CSR(A_scipy)
+        A_sparse = make_sparse_operator(A_scipy)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
-        Dx_sparse = csr_to_jax_CSR(Dx_scipy)
-        Dy_sparse = csr_to_jax_CSR(Dy_scipy)
-        Dz_sparse = csr_to_jax_CSR(Dz_scipy)
+        Dx_sparse = make_sparse_operator(Dx_scipy)
+        Dy_sparse = make_sparse_operator(Dy_scipy)
+        Dz_sparse = make_sparse_operator(Dz_scipy)
 
         Gx_scipy = 2.0 * Dx_scipy.transpose()
         Gy_scipy = 2.0 * Dy_scipy.transpose()
         Gz_scipy = 2.0 * Dz_scipy.transpose()
 
-        Gx_sparse = csr_to_jax_CSR(Gx_scipy.tocsr())
-        Gy_sparse = csr_to_jax_CSR(Gy_scipy.tocsr())
-        Gz_sparse = csr_to_jax_CSR(Gz_scipy.tocsr())
+        Gx_sparse = make_sparse_operator(Gx_scipy.tocsr())
+        Gy_sparse = make_sparse_operator(Gy_scipy.tocsr())
+        Gz_sparse = make_sparse_operator(Gz_scipy.tocsr())
 
         from amg_utils import assemble_exchange_anisotropy_matrix_cpu
 
         K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
             conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
         )
-        K_eff_sparse = csr_to_jax_CSR(K_eff_scipy)
+        K_eff_sparse = make_sparse_operator(K_eff_scipy)
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
