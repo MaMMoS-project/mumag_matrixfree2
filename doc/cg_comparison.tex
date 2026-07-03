@@ -197,15 +197,18 @@ Table \ref{tab:cpu_results} compares the average step timings and convergence me
         \toprule
         \textbf{Reordering Target} & \textbf{Avg. Step Time (s)} & \textbf{Avg. PCG Iters/Step} & \textbf{Time/PCG Iter (s)} & \textbf{Footprint Reduction} \\
         \midrule
-        Morton (GPU-optimized) & \textbf{14.93} & 57.0 & \textbf{0.262} & - \\
-        RCM (CPU-optimized)    & 15.52 & \textbf{55.0} & 0.282 & \textbf{2.69$\times$} \\
+        Morton (Standard CPU SpMV) & 14.93 & 57.0 & \textbf{0.262} & - \\
+        Morton + MKL Inspector-Executor & \textbf{14.92} & \textbf{54.0} & 0.276 & - \\
+        RCM (CPU-optimized)    & 15.52 & 55.0 & 0.282 & \textbf{2.69$\times$} \\
         \bottomrule
     \end{tabular}
-    \caption{CPU benchmark comparison of mesh reordering strategies on a 4-core CPU node (\texttt{Gd}) for the Hestenes-Stiefel CSR solver.}
+    \caption{CPU benchmark comparison of mesh reordering strategies and MKL optimization on a 4-core CPU node (\texttt{Gd}) for the Hestenes-Stiefel CSR solver.}
     \label{tab:cpu_results}
 \end{table}
 
 The RCM reordering successfully reduces the active node footprint per element chunk by \textbf{2.69$\times$} (averaging 96,510 unique nodes per 200k element chunk compared to 259,418 in the unsorted mesh). Additionally, RCM slightly improves the mathematical quality of the Algebraic Multigrid (AMG) preconditioner, reducing the average inner Poisson Conjugate Gradient (PCG) iteration count from 57.0 to 55.0 iterations per step.
+
+Integrating the Intel MKL Inspector-Executor Sparse BLAS API (\texttt{mkl\_sparse\_optimize}) on top of the Morton-sorted mesh yields similar average step runtimes (14.92 s vs. 14.93 s), but optimizes JIT tracer compilations, reducing the initial compilation and setup warmup phase from 398.6 s to 383.9 s. It also results in slightly better numerical solver stability (reducing average PCG iterations to 54.0 per step). The lack of further step runtime speedup from the Inspector-Executor handle is primarily due to the overhead of Python \texttt{ctypes} structure serialization (when passing descriptor structures by value in \texttt{mkl\_sparse\_d\_mv} at every callback invocation), which offsets the raw execution speedups gained from MKL's cache-tiling optimization.
 
 However, the raw execution time per PCG iteration is slightly slower under RCM (0.282 s vs. 0.262 s). This is explained by the multi-level nature of the AMG preconditioned solver. RCM optimizes cache locality on the finest level (level 0), but the coarser levels of the AMG hierarchy are algebraically coarsened and left unsorted. Transferring data via prolongation and restriction operators between the RCM-sorted fine grid and the unsorted coarse grids introduces indexing jumps that degrade L2 cache reuse. In contrast, the 3D Morton space-filling curve naturally preserves spatial hierarchies and octree-nesting properties across all levels of the AMG hierarchy, yielding a slightly faster raw SpMV execution speed. Consequently, Morton spatial sorting serves as a highly robust, unified reordering strategy that is optimal for the GPU and highly competitive on the CPU fallback.
 

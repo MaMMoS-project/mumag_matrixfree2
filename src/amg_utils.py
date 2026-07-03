@@ -8,6 +8,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any
 
+import ctypes
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -186,19 +187,127 @@ class SparseOperator:
         return cls(apply_fn, pytree_parts=children)
 
 
-def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
-    """Creates a fast, multicore CPU SpMV operator using sparse_dot_mkl."""
-    try:
-        from sparse_dot_mkl import dot_product_mkl
-    except ImportError:
-        raise ImportError(
-            "sparse_dot_mkl is required for fast CPU sparse operations. "
-            "Please install it using 'pixi run' or check your environment."
+class MatrixDescr(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_int),
+        ("mode", ctypes.c_int),
+        ("diag", ctypes.c_int)
+    ]
+
+
+class OptimizedMKLMatrix:
+    """Manages the lifecycle of an Intel MKL optimized sparse matrix handle (Inspector-Executor)."""
+    def __init__(self, scipy_csr: sp.csr_matrix):
+        try:
+            from sparse_dot_mkl._mkl_interface import MKL
+        except ImportError:
+            raise ImportError("sparse_dot_mkl is required for MKL Inspector-Executor API.")
+
+        # Bind prototype arguments dynamically if not already bound
+        if not hasattr(MKL, "mkl_sparse_d_create_csr_bound"):
+            MKL.mkl_sparse_d_create_csr.argtypes = [
+                ctypes.POINTER(ctypes.c_void_p), ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+            ]
+            MKL.mkl_sparse_d_create_csr.restype = ctypes.c_int
+
+            MKL.mkl_sparse_set_mv_hint.argtypes = [
+                ctypes.c_void_p, ctypes.c_int, MatrixDescr, ctypes.c_int
+            ]
+            MKL.mkl_sparse_set_mv_hint.restype = ctypes.c_int
+
+            MKL.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
+            MKL.mkl_sparse_optimize.restype = ctypes.c_int
+
+            MKL.mkl_sparse_d_mv.argtypes = [
+                ctypes.c_int, ctypes.c_double, ctypes.c_void_p, MatrixDescr,
+                ctypes.c_void_p, ctypes.c_double, ctypes.c_void_p
+            ]
+            MKL.mkl_sparse_d_mv.restype = ctypes.c_int
+
+            MKL.mkl_sparse_destroy.argtypes = [ctypes.c_void_p]
+            MKL.mkl_sparse_destroy.restype = ctypes.c_int
+            MKL.mkl_sparse_d_create_csr_bound = True
+
+        self.MKL = MKL
+        self.shape = scipy_csr.shape
+
+        # Enforce strict contiguous 32-bit integer array types for LP64 MKL compatibility
+        self.data = np.ascontiguousarray(scipy_csr.data, dtype=np.float64)
+        self.indices = np.ascontiguousarray(scipy_csr.indices, dtype=np.int32)
+        self.indptr = np.ascontiguousarray(scipy_csr.indptr, dtype=np.int32)
+
+        # Create MKL sparse matrix handle
+        self.handle = ctypes.c_void_p()
+        status = MKL.mkl_sparse_d_create_csr(
+            ctypes.byref(self.handle),
+            0, # 0-based indexing (C-style)
+            self.shape[0],
+            self.shape[1],
+            self.indptr[:-1].ctypes.data,
+            self.indptr[1:].ctypes.data,
+            self.indices.ctypes.data,
+            self.data.ctypes.data
+        )
+        if status != 0:
+            raise RuntimeError(f"mkl_sparse_d_create_csr failed with status: {status}")
+
+        # Set general matrix description
+        self.descr = MatrixDescr(type=20, mode=0, diag=0) # SPARSE_MATRIX_TYPE_GENERAL
+
+        # Set Hint: matrix-vector product (10), expected iterations 2000
+        MKL.mkl_sparse_set_mv_hint(self.handle, 10, self.descr, 2000)
+
+        # Optimize the sparse matrix layout
+        status = MKL.mkl_sparse_optimize(self.handle)
+        if status != 0:
+            raise RuntimeError(f"mkl_sparse_optimize failed with status: {status}")
+
+    def spmv(self, x: np.ndarray, y: np.ndarray) -> None:
+        # y = 1.0 * A * x + 0.0 * y
+        self.MKL.mkl_sparse_d_mv(
+            10, # SPARSE_OPERATION_NON_TRANSPOSE
+            1.0,
+            self.handle,
+            self.descr,
+            x.ctypes.data,
+            0.0,
+            y.ctypes.data
         )
 
+    def __del__(self):
+        if hasattr(self, "handle") and self.handle:
+            self.MKL.mkl_sparse_destroy(self.handle)
+
+
+def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
+    """Creates a fast, multicore CPU SpMV operator using optimized Intel MKL handles."""
+    try:
+        optimized_matrix = OptimizedMKLMatrix(scipy_csr_mat)
+    except Exception as e:
+        # Fall back to standard sparse_dot_mkl if optimization fails or isn't available
+        from sparse_dot_mkl import dot_product_mkl
+        def mkl_spmv_fallback(x_val, **kwargs):
+            x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+            return dot_product_mkl(scipy_csr_mat, x_np_val)
+        
+        @jax.jit
+        def fast_cpu_spmv_fallback(x_val):
+            result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), x_val.dtype)
+            return jax.pure_callback(
+                mkl_spmv_fallback,
+                result_shape_dtype,
+                x_val,
+                vectorized=False
+            )
+        return fast_cpu_spmv_fallback
+
+    # Local buffer callback for thread safety (no shared state)
     def mkl_spmv_callback(x_val, **kwargs):
-        x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
-        return dot_product_mkl(scipy_csr_mat, x_np_val)
+        x_np_val = np.ascontiguousarray(x_val, dtype=np.float64)
+        output_buffer = np.empty(scipy_csr_mat.shape[0], dtype=np.float64)
+        optimized_matrix.spmv(x_np_val, output_buffer)
+        return output_buffer
 
     @jax.jit
     def fast_cpu_spmv(x_val):
