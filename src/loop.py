@@ -1017,17 +1017,23 @@ def main() -> None:
         A_sparse = make_sparse_operator(A_scipy)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
-        Dx_sparse = make_sparse_operator(Dx_scipy)
-        Dy_sparse = make_sparse_operator(Dy_scipy)
-        Dz_sparse = make_sparse_operator(Dz_scipy)
+        
+        import scipy.sparse as sp
+        D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+        D_sparse = make_sparse_operator(D_scipy)
+        del Dx_scipy, Dy_scipy, Dz_scipy
+        Dx_sparse = Dy_sparse = Dz_sparse = None
 
-        Gx_scipy = 2.0 * Dx_scipy.transpose()
-        Gy_scipy = 2.0 * Dy_scipy.transpose()
-        Gz_scipy = 2.0 * Dz_scipy.transpose()
+        N = knt.shape[0]
+        Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
+        Gy_scipy = 2.0 * D_scipy[:, N:2*N].transpose()
+        Gz_scipy = 2.0 * D_scipy[:, 2*N:].transpose()
+        del D_scipy
 
-        Gx_sparse = make_sparse_operator(Gx_scipy.tocsr())
-        Gy_sparse = make_sparse_operator(Gy_scipy.tocsr())
-        Gz_sparse = make_sparse_operator(Gz_scipy.tocsr())
+        G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+        G_sparse = make_sparse_operator(G_scipy)
+        del Gx_scipy, Gy_scipy, Gz_scipy
+        Gx_sparse = Gy_sparse = Gz_sparse = None
 
         from amg_utils import assemble_exchange_anisotropy_matrix_cpu
 
@@ -1038,14 +1044,16 @@ def main() -> None:
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
-            "Dx_sparse": Dx_sparse,
-            "Dy_sparse": Dy_sparse,
-            "Dz_sparse": Dz_sparse,
+            "Dx_sparse": None,
+            "Dy_sparse": None,
+            "Dz_sparse": None,
             "A_diag": A_diag,
             "K_eff_sparse": K_eff_sparse,
-            "Gx_sparse": Gx_sparse,
-            "Gy_sparse": Gy_sparse,
-            "Gz_sparse": Gz_sparse,
+            "Gx_sparse": None,
+            "Gy_sparse": None,
+            "Gz_sparse": None,
+            "D_sparse": D_sparse,
+            "G_sparse": G_sparse,
         }
         print("[ok] Finished assembly and GPU transfer.")
 

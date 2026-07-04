@@ -251,6 +251,8 @@ def run_hysteresis_loop(  # noqa: D417
     Gx_sparse: Any = None,
     Gy_sparse: Any = None,
     Gz_sparse: Any = None,
+    D_sparse: Any = None,
+    G_sparse: Any = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -393,6 +395,8 @@ def run_hysteresis_loop(  # noqa: D417
                 "Gx_sparse": Gx_sparse,
                 "Gy_sparse": Gy_sparse,
                 "Gz_sparse": Gz_sparse,
+                "D_sparse": D_sparse,
+                "G_sparse": G_sparse,
             },
         )
         _m.block_until_ready()
@@ -451,6 +455,8 @@ def run_hysteresis_loop(  # noqa: D417
                 "Gx_sparse": Gx_sparse,
                 "Gy_sparse": Gy_sparse,
                 "Gz_sparse": Gz_sparse,
+                "D_sparse": D_sparse,
+                "G_sparse": G_sparse,
             },
         )
         # Accurate timing: wait for GPU to finish

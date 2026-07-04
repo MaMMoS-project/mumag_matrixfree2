@@ -144,7 +144,11 @@ def make_poisson_ops(
             return y
 
         def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
-            y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
+            if "D_sparse" in sparse_ops and sparse_ops["D_sparse"] is not None:
+                m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+                y = sparse_ops["D_sparse"] @ m_flat
+            else:
+                y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
             if boundary_mask is not None:
                 y = y * boundary_mask
             return y
@@ -585,7 +589,7 @@ def make_solve_U(
 
             csr_A = level.A.tocsr()
             level_dict = {
-                "A_sparse": make_sparse_operator(csr_A),
+                "A_sparse": None if i == 0 else make_sparse_operator(csr_A),
                 "Mdiag": jnp.asarray(csr_A.diagonal()),
                 "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
             }
