@@ -244,6 +244,7 @@ def make_energy_kernels(
 
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
+    n_chunks_dyn = jnp.asarray(n_chunks, dtype=jnp.int32)
 
     # Ensure all lookups are JAX arrays
     A_lookup = jnp.asarray(A_lookup)
@@ -330,7 +331,7 @@ def make_energy_kernels(
                 g_acc = g_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
             return g_acc
 
-        g_local = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
+        g_local = lax.fori_loop(0, n_chunks_dyn, body, jnp.zeros((N, 3), dtype=dtype))
         return g_local * inv_Vmag
 
     def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
@@ -429,7 +430,7 @@ def make_energy_kernels(
             return g_acc
 
         # Compute sum of quadratic gradients (Ex + An + Demag)
-        g_quad = lax.fori_loop(0, n_chunks, body, jnp.zeros((N, 3), dtype=dtype))
+        g_quad = lax.fori_loop(0, n_chunks_dyn, body, jnp.zeros((N, 3), dtype=dtype))
 
         # 4. Zeeman Gradient (Linear)
         B_eff = B_ext[None, :]
@@ -555,7 +556,8 @@ def compute_exchange_diagonal(
         return d_acc
         
     d0 = jnp.zeros((N,), dtype=dtype)
-    d_diag = jax.lax.fori_loop(0, n_chunks, body, d0)
+    n_chunks_dyn = jnp.asarray(n_chunks, dtype=jnp.int32)
+    d_diag = jax.lax.fori_loop(0, n_chunks_dyn, body, d0)
     
     # Scale by inv_Vmag to match the scaling of local_grad_only
     d_diag = d_diag * inv_Vmag

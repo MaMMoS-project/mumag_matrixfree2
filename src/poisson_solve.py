@@ -164,6 +164,7 @@ def make_poisson_ops(
 
     E_pad = int(conn.shape[0])
     n_chunks = E_pad // chunk_elems
+    n_chunks_dyn = jnp.asarray(n_chunks, dtype=jnp.int32)
 
     if geom_p.x_nodes is not None:
         N = int(geom_p.x_nodes.shape[0])
@@ -227,7 +228,7 @@ def make_poisson_ops(
                 return y_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
 
         y0 = jnp.zeros_like(U)
-        y = lax.fori_loop(0, n_chunks, body, y0)
+        y = lax.fori_loop(0, n_chunks_dyn, body, y0)
         y = y + jnp.asarray(reg, dtype=dtype) * U
 
         # Choice: Dirichlet boundary conditions (U=0) are enforced by zeroing out
@@ -266,7 +267,7 @@ def make_poisson_ops(
                 return b_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
 
         b0 = jnp.zeros((m.shape[0],), dtype=dtype)
-        return lax.fori_loop(0, n_chunks, body, b0)
+        return lax.fori_loop(0, n_chunks_dyn, body, b0)
 
     def assemble_diag(sparse_ops, N: int) -> Array:
         dtype = jnp.float64
@@ -284,7 +285,7 @@ def make_poisson_ops(
                 return d_acc + assemble_segment_sum(N, conn_c, local, dtype)
 
         d0 = jnp.zeros((N,), dtype=dtype)
-        d = lax.fori_loop(0, n_chunks, body, d0)
+        d = lax.fori_loop(0, n_chunks_dyn, body, d0)
         return d + jnp.asarray(reg, dtype=dtype)
 
     return (
