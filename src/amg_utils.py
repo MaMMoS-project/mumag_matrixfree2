@@ -56,7 +56,7 @@ def assemble_poisson_matrix_cpu(
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
         mask = np.array(boundary_mask)
         boundary_nodes = np.where(mask == 0)[0]
-        is_boundary = (mask == 0)
+        is_boundary = mask == 0
 
         # Zero out rows and columns to maintain symmetry
         # 1. Zero rows (vectorized)
@@ -98,10 +98,10 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
     """
     # Square of each element
     A_sq = sp.csr_matrix((A.data**2, A.indices, A.indptr), shape=A.shape)
-    
+
     # Sum over rows
     row_sum_sq = np.array(A_sq.sum(axis=1)).ravel()
-    
+
     # Diagonal elements A_ii
     a_ii = A.diagonal()
 
@@ -167,6 +167,7 @@ class SparseOperator:
     """A wrapper for sparse matrix operations that overrides the matmul (@) operator.
     This allows JAX to trace both CPU and GPU execution paths cleanly.
     """
+
     def __init__(self, apply_fn, pytree_parts=()):
         self.apply_fn = apply_fn
         self.pytree_parts = pytree_parts
@@ -182,7 +183,7 @@ class SparseOperator:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        apply_fn, = aux_data
+        (apply_fn,) = aux_data
         return cls(apply_fn, pytree_parts=children)
 
 
@@ -203,12 +204,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
     @jax.jit
     def fast_cpu_spmv(x_val):
         result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), x_val.dtype)
-        return jax.pure_callback(
-            mkl_spmv_callback,
-            result_shape_dtype,
-            x_val,
-            vectorized=False
-        )
+        return jax.pure_callback(mkl_spmv_callback, result_shape_dtype, x_val, vectorized=False)
 
     return fast_cpu_spmv
 
@@ -468,7 +464,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             return x_curr
 
-        # Start with a dynamically-shielded zero vector to prevent XLA from 
+        # Start with a dynamically-shielded zero vector to prevent XLA from
         # treating `x_curr` as a static constant and unrolling/folding apply_A_fine.
         x_start = jax.lax.cond(r[0] == 12345.6789, lambda: r, lambda: jnp.zeros_like(r))
         return vcycle_recursive(0, r, x_start)
@@ -591,7 +587,6 @@ def assemble_anisotropy_matrix_cpu(
     return Kan
 
 
-
 def assemble_exchange_anisotropy_matrix_cpu(
     conn: np.ndarray,
     volume: np.ndarray,
@@ -608,28 +603,28 @@ def assemble_exchange_anisotropy_matrix_cpu(
     A_elem = A_lookup[mat_id - 1]
     K1_elem = K1_lookup[mat_id - 1]
     k_elem = k_easy_lookup[mat_id - 1]  # (E, 3)
-    
+
     # Kex part (E, 4, 4)
     Kex_e = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
-    
+
     # Kan part (E, 4, 4)
     val_elem = -2.0 * K1_elem * volume / 20.0
     Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
-    
+
     # Kex_block: (E, 4, 4, 3, 3)
     I3 = np.eye(3, dtype=np.float64)
     Kex_block = Kex_e[:, :, :, None, None] * I3[None, None, None, :, :]
-    
+
     # Kan_block: (E, 4, 4, 3, 3)
-    kkT = np.einsum('eu,ev->euv', k_elem, k_elem)
+    kkT = np.einsum("eu,ev->euv", k_elem, k_elem)
     Kan_block = Kan_e[:, :, :, None, None] * kkT[:, None, None, :, :]
-    
+
     K_block = Kex_block + Kan_block  # (E, 4, 4, 3, 3)
-    
+
     # Global rows and cols
     row_nodes = np.repeat(conn, 4, axis=1).flatten()  # (E*16,)
-    col_nodes = np.tile(conn, (1, 4)).flatten()       # (E*16,)
-    
+    col_nodes = np.tile(conn, (1, 4)).flatten()  # (E*16,)
+
     # We expand to 3x3 components for each element in the 16 pairs
     r = 3 * row_nodes[:, None, None] + np.arange(3)[None, :, None]
     c = 3 * col_nodes[:, None, None] + np.arange(3)[None, None, :]
@@ -637,7 +632,7 @@ def assemble_exchange_anisotropy_matrix_cpu(
     rows = rows.flatten()
     cols = cols.flatten()
     data = K_block.flatten()
-    
-    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3*N, 3*N)).tocsr()
+
+    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3 * N, 3 * N)).tocsr()
     K_eff.sum_duplicates()
     return K_eff

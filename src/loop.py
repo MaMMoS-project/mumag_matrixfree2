@@ -1022,6 +1022,7 @@ def main() -> None:
         Dz_sparse = make_sparse_operator(Dz_scipy)
 
         import scipy.sparse as sp
+
         D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
         D_sparse = make_sparse_operator(D_scipy)
 

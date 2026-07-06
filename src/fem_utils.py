@@ -160,14 +160,14 @@ def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype: Any) -> A
     """
     idx = conn_c.reshape(-1)
     val = contrib.reshape(-1, *contrib.shape[2:])
-    
-    # CRITICAL XLA HACK: 
+
+    # CRITICAL XLA HACK:
     # Use jnp.where with a condition XLA cannot mathematically prove is false.
-    # This forces `dummy` to remain a dynamic runtime tensor, hiding `idx` from the 
+    # This forces `dummy` to remain a dynamic runtime tensor, hiding `idx` from the
     # GatherScatterSimplifier.
     dummy = jnp.where(val.reshape(-1)[0] == 12345.6789, jnp.int32(1), jnp.int32(0))
     idx = idx + dummy
-    
+
     return jax.ops.segment_sum(val, idx, N).astype(dtype)
 
 
@@ -223,28 +223,28 @@ def _B_split_from_JinvT(JinvT_c: Array, dtype: Any) -> tuple[Array, Array, Array
         tuple[Array, Array, Array]: (Bx, By, Bz) shape function gradients (chunk_elems, 4) each.
     """
     J_cast = JinvT_c.astype(dtype)
-    
+
     # x-components
     bx1 = J_cast[:, 0, 0]
     bx2 = J_cast[:, 0, 1]
     bx3 = J_cast[:, 0, 2]
     bx0 = -(bx1 + bx2 + bx3)
     bx = jnp.stack([bx0, bx1, bx2, bx3], axis=1)
-    
+
     # y-components
     by1 = J_cast[:, 1, 0]
     by2 = J_cast[:, 1, 1]
     by3 = J_cast[:, 1, 2]
     by0 = -(by1 + by2 + by3)
     by = jnp.stack([by0, by1, by2, by3], axis=1)
-    
+
     # z-components
     bz1 = J_cast[:, 2, 0]
     bz2 = J_cast[:, 2, 1]
     bz3 = J_cast[:, 2, 2]
     bz0 = -(bz1 + bz2 + bz3)
     bz = jnp.stack([bz0, bz1, bz2, bz3], axis=1)
-    
+
     return bx, by, bz
 
 

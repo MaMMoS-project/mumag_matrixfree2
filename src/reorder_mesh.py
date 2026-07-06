@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
 import numpy as np
 
 
@@ -109,7 +110,7 @@ def reorder_mesh(in_path: str, out_path: str, target: str = "gpu") -> None:
     # 5. Measure node footprint reduction (for element chunking verification)
     chunk_size = 200_000
     num_chunks = int(np.ceil(E / chunk_size))
-    
+
     unique_orig = []
     unique_sorted = []
     for i in range(num_chunks):
@@ -143,7 +144,7 @@ def main() -> None:
         type=str,
         default="gpu",
         choices=["cpu", "gpu"],
-        help="Optimization target. 'gpu' uses 3D Morton curve. 'cpu' uses Reverse Cuthill-McKee (RCM) graph sorting."
+        help="Optimization target. 'gpu' uses 3D Morton curve. 'cpu' uses Reverse Cuthill-McKee (RCM) graph sorting.",
     )
     args = ap.parse_args()
 
