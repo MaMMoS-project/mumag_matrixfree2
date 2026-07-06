@@ -967,8 +967,13 @@ def main() -> None:
         f.write("| Parameter | Value | Source |\n")
         f.write("| :--- | :--- | :--- |\n")
         for k in sorted(log_dict.keys()):
+            if "extrapolate" in k:
+                continue
             source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
             f.write(f"| {k} | {log_dict[k]} | {source} |\n")
+            if k == "cg_tol":
+                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.1))
+                f.write(f"| phi_tol | {phi_tol} | derived |\n")
 
     params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
 
