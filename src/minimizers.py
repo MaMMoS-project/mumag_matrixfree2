@@ -517,14 +517,13 @@ class CohenState:
     U_prev: Array
     g: Array
     g_raw: Array
-    p: Array
+    y: Array
+    d: Array
     E: Array
     E_last_step: Array
     gnorm: Array
     it: jnp.int32
     converged: Array
-    tau_prev: Array
-    pg_prev: Array
     evals: jnp.int32 = 0
     preco_iters: jnp.int32 = 0
     demag_iters: jnp.int32 = 0
@@ -542,14 +541,13 @@ class CohenState:
             self.U_prev,
             self.g,
             self.g_raw,
-            self.p,
+            self.y,
+            self.d,
             self.E,
             self.E_last_step,
             self.gnorm,
             self.it,
             self.converged,
-            self.tau_prev,
-            self.pg_prev,
             self.evals,
             self.preco_iters,
             self.demag_iters,
@@ -569,43 +567,43 @@ def make_cohen_minimizer(
 
     def step(state: CohenState, B_ext: Array, params: dict) -> CohenState:
         sparse_ops = params.get("sparse_ops")
-        m, U, g_prev, g_raw, p_prev, E_prev = state.m, state.U, state.g, state.g_raw, state.p, state.E
+        m, U, g_prev, g_raw, y_prev, d_prev, E_prev = (
+            state.m,
+            state.U,
+            state.g,
+            state.g_raw,
+            state.y,
+            state.d,
+            state.E,
+        )
 
+        g_tan_ext = tangent_grad(m, g_raw)
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
-        num = jnp.vdot(g_tan, g_tan - g_prev)
-        den = jnp.vdot(g_prev, g_prev) + 1e-30
-        beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+        y = g_tan
 
-        p_prev_proj = tangent_grad(m, p_prev)
-        p = g_tan + beta * p_prev_proj
+        # Polak-Ribiere (PR) Beta
+        num = jnp.vdot(y, g_tan_ext - g_prev)
+        den = jnp.vdot(y_prev, g_prev) + 1e-30
+        beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
 
-        # Ensure descent direction: taking a step along -p must reduce true energy.
-        # This requires g_raw dot p > 0.
-        p = jnp.where(jnp.vdot(g_raw, p) <= 0, g_tan, p)
+        d_prev_proj = tangent_grad(m, d_prev)
+        d = -y + beta * d_prev_proj
 
-        H = -jnp.cross(m, p)
-        pg = -jnp.vdot(g_raw, p)
+        # Ensure descent
+        d = jnp.where(jnp.vdot(d, g_tan_ext) > 0, -y, d)
 
-        # Nocedal & Wright: Energy-based Heuristic
-        tau_adaptive_energy = 2.0 * (state.E - state.E_last_step) / (-pg + 1e-30)
+        H = -jnp.cross(m, -d)
+        pg = jnp.vdot(g_raw, d)
 
-        # Nocedal & Wright: Gradient-based Heuristic
-        tau_adaptive_grad = state.tau_prev * (-state.pg_prev) / (-pg + 1e-30)
-
-        ls_mode = params.get("ls_adaptive_mode", "none")
-        is_grad_mode = ls_mode == "gradient"
-        is_none_mode = ls_mode == "none"
-
-        tau_adaptive = jnp.where(is_grad_mode, jnp.abs(tau_adaptive_grad), jnp.abs(tau_adaptive_energy))
+        # Nocedal & Wright: Energy-based quadratic interpolation heuristic
+        tau_adaptive = 2.0 * (state.E - state.E_last_step) / (-pg + 1e-30)
+        tau_adaptive = jnp.minimum(1.0, 1.01 * jnp.abs(tau_adaptive))
         tau_adaptive = jnp.clip(tau_adaptive, 1e-4, 10.0)
 
-        # Trigger adaptive heuristic if ls_adaptive_mode is not "none"
-        use_adaptive = (~is_none_mode) & (state.it > 0)
-
-        # Use tau0 for the first step, otherwise tau_adaptive or tau0 based on mode
-        tau_init = jnp.where(use_adaptive, tau_adaptive, params["tau0"])
+        # Use tau0 for the first step, otherwise tau_adaptive
+        tau_init = jnp.where(state.it > 0, tau_adaptive, params["tau0"])
 
         tau, E_new, g_raw_new, U_new, m_new, ls_evals, ls_demag = ls(
             m,
@@ -632,16 +630,15 @@ def make_cohen_minimizer(
             m_new,
             U_new,
             U,
-            g_tan,
+            g_tan_ext,
             g_raw_new,
-            p,
+            y,
+            d,
             E_new,
             E_prev,  # Set E_last_step to the energy before this step
             gnorm_inf,
             state.it + 1,
             conv,
-            tau,
-            pg,
             state.evals + ls_evals,
             state.preco_iters,
             state.demag_iters + ls_demag,
@@ -776,7 +773,6 @@ def make_pcg_minimizer(
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
-        g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Automated tuning of preconditioner accuracy (Forcing sequence)
@@ -805,7 +801,7 @@ def make_pcg_minimizer(
         num = jnp.vdot(diff_g, y)
         den = jnp.vdot(diff_g, d_prev) + 1e-30
 
-        restart = (state.it % params.get("L", 100)) == 0
+        restart = (state.it % (params.get("L") or m.shape[0])) == 0
         beta = jnp.where(restart, 0.0, jnp.maximum(0.0, num / den))
 
         d = -y + beta * d_prev
@@ -929,13 +925,13 @@ def make_pcohen_minimizer(
             # Polak-Ribiere (PR) Beta
             num = jnp.vdot(y, g_tan_ext - g_prev)
             den = jnp.vdot(y_prev, g_prev) + 1e-30
-            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+            beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
         else:
             # Hestenes-Stiefel (HS) Beta
             diff_g = g_tan_ext - g_prev
             num = jnp.vdot(y, diff_g)
             den = jnp.vdot(d_prev, diff_g) + 1e-30
-            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+            beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         d_prev_proj = tangent_grad(m, d_prev)
         d = -y + beta * d_prev_proj
@@ -1078,12 +1074,12 @@ def make_pcohen_exact_minimizer(
             # Polak-Ribiere (PR) Beta with Exact Transport
             num = jnp.vdot(z, diff_g)
             den = jnp.vdot(z_prev, g_prev_transported) + 1e-30
-            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+            beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
         else:
             # Hestenes-Stiefel (HS) Beta with Exact Transport
             num = jnp.vdot(z, diff_g)
             den = jnp.vdot(d_prev_transported, diff_g) + 1e-30
-            beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+            beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         # Update search direction
         d = -z + beta * d_prev_transported
@@ -1469,13 +1465,8 @@ def make_plbfgs_minimizer(
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         sparse_ops = params.get("sparse_ops")
-        jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, _, E_prev, g_raw = state.m, state.U, state.g, state.E, state.g_raw
-
-        tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
-        g_tan_ext = tangent_grad(m, g_raw)
-
         # Use the smoothed (preconditioned) gradient for the convergence check.
         y = solve_P(
             m,
@@ -1758,13 +1749,8 @@ def make_dplbfgs_minimizer(
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         sparse_ops = params.get("sparse_ops")
-        jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
         m, U, _, E_prev, g_raw = state.m, state.U, state.g, state.E, state.g_raw
-
-        tangent_grad(m, g_raw * inv_M_rel)
         g_tan_ext = tangent_grad(m, g_raw)
-        g_tan_ext = tangent_grad(m, g_raw)
-
         # Use the smoothed (preconditioned) gradient for the convergence check.
         y = solve_P(
             m,
@@ -2806,7 +2792,7 @@ def make_pcohen_lbfgs_minimizer(
         # Cohen CG Beta (Polak-Ribiere)
         num = jnp.vdot(z, g_tan_ext - state.g)
         den = jnp.vdot(state.g, state.z) + 1e-30
-        beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
+        beta = jnp.where(state.it % (params.get("L") or m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         p = -z + beta * tangent_grad(m, state.p)
         p = jnp.where(jnp.vdot(p, g_tan_ext) > 0, -z, p)
@@ -2949,6 +2935,7 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
+            g_tan_ext = kwargs.get("g_tan_ext")
             init_evals = kwargs.get("evals", 0)
             init_preco = kwargs.get("preco_iters", 0)
             init_demag = kwargs.get("demag_iters", 0)
@@ -2956,16 +2943,15 @@ def make_minimizer(
                 m,
                 U,
                 U,
-                g,
+                g_tan_ext,
                 g_raw,
-                jnp.zeros_like(g),
+                g,         # y = g_tan
+                -g,        # d = -g_tan
                 E,
                 E,  # E_last_step initialized to E
                 gnorm,
                 0,
                 jnp.array(False),
-                jnp.array(1.0),
-                jnp.array(-1.0),
                 jnp.int32(init_evals),
                 jnp.int32(init_preco),
                 jnp.int32(init_demag),

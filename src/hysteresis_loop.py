@@ -90,7 +90,6 @@ class LoopParams:
     ls_c: float = 0.5
     ls_s0: float = 1.0
     ls_max_evals: int = 15
-    ls_adaptive_mode: str = "none"
 
     out_dir: str = "hyst_out"
     csv_name: str = "hysteresis.csv"
@@ -121,6 +120,7 @@ class LoopParams:
     wg_gamma: int = 5
     wg_threshold: float = 1e-6
     benchmark: bool = False
+    L: int | None = None
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -385,6 +385,7 @@ def run_hysteresis_loop(  # noqa: D417
             mu=params.mu,
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
+            L=params.L,
             sparse_ops={
                 "A_sparse": A_sparse,
                 "Dx_sparse": Dx_sparse,
@@ -445,6 +446,7 @@ def run_hysteresis_loop(  # noqa: D417
             mu=params.mu,
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
+            L=params.L,
             sparse_ops={
                 "A_sparse": A_sparse,
                 "Dx_sparse": Dx_sparse,

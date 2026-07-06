@@ -17,7 +17,7 @@ mstep = 0.05
 mfinal = 1.80
 loop = false
 bias_type = circular
-bias_strength = 1e-10
+bias_strength = 1e-9
 
 [minimizer]
 method = pcohen_hs

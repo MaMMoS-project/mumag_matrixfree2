@@ -495,6 +495,12 @@ def main() -> None:
         help="Maximum iterations for the energy minimizer per field step.",
     )
     ap.add_argument(
+        "--L",
+        type=int,
+        default=None,
+        help="Restart frequency for conjugate gradient methods (default: number of nodes).",
+    )
+    ap.add_argument(
         "--tau-f",
         type=float,
         default=1e-8,
@@ -523,13 +529,6 @@ def main() -> None:
         type=float,
         default=1.0,
         help="Maximum step size allowed for the BB minimizer.",
-    )
-    ap.add_argument(
-        "--ls-adaptive-mode",
-        type=str,
-        default="none",
-        choices=["none", "energy", "gradient"],
-        help="Heuristic strategy for adaptive step size: 'none' (fixed tau0), 'energy', or 'gradient'.",
     )
     ap.add_argument(
         "--bias-type",
