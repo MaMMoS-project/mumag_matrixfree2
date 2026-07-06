@@ -446,7 +446,7 @@ def main() -> None:
     ap.add_argument(
         "--operator-mode",
         choices=["matrix_free", "assembled"],
-        default="matrix_free",
+        default="assembled",
         help="Solver operator execution mode: matrix_free (on-the-fly) or assembled (sparse matrix SpMV).",
     )
     ap.add_argument(
