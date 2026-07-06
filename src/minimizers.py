@@ -572,15 +572,18 @@ def make_cohen_minimizer(
         m, U, g_prev, g_raw, p_prev, E_prev = state.m, state.U, state.g, state.g_raw, state.p, state.E
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         num = jnp.vdot(g_tan, g_tan - g_prev)
         den = jnp.vdot(g_prev, g_prev) + 1e-30
-        beta = jnp.where(state.it % params.get("restart_iters", m.shape[0]) == 0, 0.0, jnp.maximum(0.0, num / den))
+        beta = jnp.where(state.it % params.get("L", 100) == 0, 0.0, jnp.maximum(0.0, num / den))
 
         p_prev_proj = tangent_grad(m, p_prev)
         p = g_tan + beta * p_prev_proj
+
+        # Ensure descent direction: taking a step along -p must reduce true energy.
+        # This requires g_raw dot p > 0.
+        p = jnp.where(jnp.vdot(g_raw, p) <= 0, g_tan, p)
 
         H = -jnp.cross(m, p)
         pg = -jnp.vdot(g_raw, p)
@@ -738,7 +741,6 @@ class PCGExactState:
             self.evals,
             self.preco_iters,
             self.demag_iters,
-            self.hist_it,
         )
         return children, None
 
@@ -803,7 +805,7 @@ def make_pcg_minimizer(
         num = jnp.vdot(diff_g, y)
         den = jnp.vdot(diff_g, d_prev) + 1e-30
 
-        restart = (state.it % params.get("restart_iters", m.shape[0])) == 0
+        restart = (state.it % params.get("L", 100)) == 0
         beta = jnp.where(restart, 0.0, jnp.maximum(0.0, num / den))
 
         d = -y + beta * d_prev
@@ -898,7 +900,6 @@ def make_pcohen_minimizer(
         )
 
         g_tan = tangent_grad(m, g_raw * inv_M_rel)
-        g_tan_ext = tangent_grad(m, g_raw)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -2329,7 +2330,6 @@ class AAExactState:
             self.evals,
             self.preco_iters,
             self.demag_iters,
-            self.hist_it,
         )
         return children, None
 
@@ -2538,7 +2538,7 @@ def make_aapg_minimizer(
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
         # Store history
-        idx = state.hist_it % memory
+        idx = state.it % memory
         X_next = state.X.at[idx].set(m)
         F_next = state.F.at[idx].set(z)
 
@@ -3204,7 +3204,6 @@ def make_minimizer(
                 kwargs.get("evals", jnp.int32(0)),
                 kwargs.get("preco_iters", jnp.int32(0)),
                 kwargs.get("demag_iters", jnp.int32(0)),
-                jnp.int32(0),
             )
 
     elif method == "aapg_exact":
@@ -3231,7 +3230,6 @@ def make_minimizer(
                 kwargs.get("evals", jnp.int32(0)),
                 kwargs.get("preco_iters", jnp.int32(0)),
                 kwargs.get("demag_iters", jnp.int32(0)),
-                jnp.int32(0),
             )
 
     elif method == "pnag":
@@ -3252,7 +3250,6 @@ def make_minimizer(
                 kwargs.get("evals", jnp.int32(0)),
                 kwargs.get("preco_iters", jnp.int32(0)),
                 kwargs.get("demag_iters", jnp.int32(0)),
-                jnp.int32(0),
             )
 
     elif method == "pcohen_lbfgs":
