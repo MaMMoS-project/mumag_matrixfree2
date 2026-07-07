@@ -1855,38 +1855,15 @@ def mesh_backend_neper_poly(
     mesh = meshio.read(vtk_path)
 
     knt = mesh.points
-    cell_type = None
-    tets = None
-    for candidate in ("tetra", "tetra10", "tetra20"):
-        tets = mesh.cells_dict.get(candidate)
-        if tets is not None:
-            cell_type = candidate
-            break
-    if tets is None or cell_type is None:
+    tets = mesh.cells_dict.get("tetra")
+    if tets is None:
         raise RuntimeError("No tetra cells found in Neper output VTK.")
-
-    # Neper may emit quadratic tetrahedra for poly meshes, but the benchmark
-    # pipeline only consumes linear P1 connectivity, so keep the corner nodes
-    # and renumber the compact mesh.
-    if tets.shape[1] != 4:
-        if tets.shape[1] < 4:
-            raise RuntimeError(f"Unexpected {cell_type} connectivity with {tets.shape[1]} nodes per cell.")
-        print(
-            f"[warn] Neper output contains {cell_type}; using corner-node connectivity only.",
-            file=sys.stderr,
-        )
-        tets = tets[:, :4]
-    tets = np.asarray(tets, dtype=np.int32)
-
-    used_nodes, remapped = np.unique(tets.reshape(-1), return_inverse=True)
-    knt = np.asarray(knt[used_nodes], dtype=np.float64)
-    tets = remapped.reshape(tets.shape).astype(np.int32)
 
     # Try to find a per-tetra cell-data array to use as material/grain IDs.
     mat = None
     # Prefer the cell_data_dict (present in modern meshio versions)
     try:
-        cd_tet = mesh.cell_data_dict.get(cell_type, {})
+        cd_tet = mesh.cell_data_dict.get("tetra", {})
         for key in (
             "matids",
             "mat_id",
@@ -1908,7 +1885,7 @@ def mesh_backend_neper_poly(
         for _key, data_list in mesh.cell_data.items():
             # Each data_list aligns with mesh.cells blocks
             for cell_block, data in zip(mesh.cells, data_list, strict=False):
-                if getattr(cell_block, "type", getattr(cell_block, "type", None)) == cell_type:
+                if getattr(cell_block, "type", getattr(cell_block, "type", None)) == "tetra":
                     mat = np.asarray(data, dtype=np.int32).ravel()
                     break
             if mat is not None:
