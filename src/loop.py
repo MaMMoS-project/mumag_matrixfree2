@@ -707,7 +707,14 @@ def main() -> None:
     if args.mesh is None:
         ap.error("the following arguments are required: --mesh or modelname")
 
-    data = np.load(args.mesh)
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists() and mesh_path.suffix == "":
+        candidate = mesh_path.with_suffix(".npz")
+        if candidate.exists():
+            mesh_path = candidate
+    args.mesh = str(mesh_path)
+
+    data = np.load(mesh_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
     ijk = np.asarray(data["ijk"])
 
