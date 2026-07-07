@@ -109,10 +109,22 @@ To overcome this, preconditioning is absolutely essential. A preconditioner appl
 The micromagnetics community has long recognized the critical need for preconditioning to resolve these stiff systems. Early on, E. Della Torre introduced the ``mode pushing'' technique \cite{TorfehIsfahani1983}, which functioned as a physical preconditioner by estimating and explicitly accelerating the slowly converging eigenmodes. More recently, L. Exl et al. \cite{Exl2014} demonstrated the immense value of mathematically rigorous preconditioning in large-scale finite element micromagnetics. They utilized sparse approximations of the discrete exchange Hessian to precondition the nonlinear conjugate gradient (NLCG) method, effectively neutralizing the mesh-dependent stiffness and drastically reducing the required number of iterations. Similar preconditioning strategies have since been deployed to accelerate quasi-Newton and gradient descent methods in modern GPU-accelerated frameworks \cite{Chang2011}.
 
 \section{Minimization Algorithms}
+In this paper, we propose a new finite element based micromagnetic solver that incorporates and compares several advanced optimization algorithms. Our framework provides a comprehensive suite of minimizers that efficiently explore the total micromagnetic energy landscape while strictly respecting the spherical constraint. These algorithms can be grouped into five major mathematical families.
 
-\subsection{Theoretical Description of Solvers}
-In this paper, we propose a new finite element based micromagnetic solver that incorporates and compares several advanced optimization algorithms, including projected conjugate gradient and curvilinear search methods, to efficiently minimize the total micromagnetic energy. We evaluate methods such as steepest descent, conjugate gradient, quasi-Newton (e.g., L-BFGS), trust region, and truncated Newton approaches.
+\subsection{Conjugate Gradient Methods}
+This class of algorithms utilizes search directions that are conjugate to previous steps with respect to the local energy curvature. Our implementation includes the standard adapted conjugate gradient method for spherical constraints pioneered by Cohen, Lin, and Luskin \cite{Cohen1989}, as well as heavily preconditioned variants (PCG) designed to cluster the stiff exchange eigenspectrum and accelerate convergence in complex microstructures.
 
+\subsection{Accelerated Gradient Methods}
+To overcome the traditionally slow convergence of pure gradient descent, accelerated gradient schemes incorporate historical momentum to propel the system rapidly toward the minimum. We have implemented preconditioned Nesterov Accelerated Gradient (NAG) methods, alongside exact and standard variants of the Accelerated Alternating Projected Gradient (AAPG) method, adapting these powerful convex optimization techniques for the non-convex micromagnetic manifold.
+
+\subsection{Curvilinear Search Methods}
+Unlike methods that step linearly along tangent planes and rely on post-update renormalizations, curvilinear search algorithms evaluate the objective function directly along curves tracing the spherical manifold. We implement the Wen-Goldfarb curvilinear line search \cite{Wen2009}, which intrinsically preserves the norm constraint at every trial point during the line search phase without suffering from tangent-space distortion.
+
+\subsection{Quasi-Newton Methods}
+Quasi-Newton methods build an approximation of the inverse Hessian matrix using historical gradient information to achieve superlinear convergence. We employ the Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm, carefully adapted for spherical manifolds. To further handle the specific stiffness of the micromagnetic exchange interaction, we implement preconditioned (PL-BFGS) and doubly preconditioned variants, as well as a hybrid approach combining the robustness of Cohen's method with L-BFGS acceleration.
+
+\subsection{Newton-Type and Trust Region Methods}
+For problems requiring rigorous evaluation of the local curvature, we implement both Truncated Newton and Trust Region methods. The standard trust region solver constructs its constrained local model using an approximated sparse Hessian—incorporating only near-field and local interactions such as the exchange and crystalline anisotropy energies. Conversely, our advanced preconditioned trust region method utilizes the exact, full dense Hessian (including the long-range magnetostatic interactions) to build the trust region model, while employing the sparse local near-field Hessian strictly as a preconditioner to solve the internal subproblem efficiently.
 \section{Software Implementation}
 
 \subsection{JAX-Based Framework}
