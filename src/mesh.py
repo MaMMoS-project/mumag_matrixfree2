@@ -1847,7 +1847,7 @@ def mesh_backend_neper_poly(
     # subprocess.run(cmd_vis, check=True)
 
     # 2) Mesh tessellation
-    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-format", "vtk"]
+    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-order 1", "-format", "vtk"]
     subprocess.run(cmd_mesh, check=True)
 
     # 3) Load VTK and propagate grain IDs
