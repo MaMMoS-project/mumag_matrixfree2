@@ -186,23 +186,87 @@ class SparseOperator:
         return cls(apply_fn, pytree_parts=children)
 
 
+class PersistentMKLOperator:
+    """A persistent MKL sparse matrix handle that utilizes the Inspector-Executor API.
+    
+    This avoids creating, optimizing, and destroying the MKL handle on every SpMV iteration.
+    """
+    def __init__(self, scipy_csr_mat: sp.csr_matrix):
+        import ctypes
+        import ctypes.util
+        from sparse_dot_mkl._mkl_interface import _create_mkl_sparse, _output_dtypes, MKL, matrix_descr
+
+        self.scipy_csr_mat = scipy_csr_mat  # IMPORTANT: Keep reference to prevent GC of underlying arrays!
+        self.shape = scipy_csr_mat.shape
+        self.dtype = scipy_csr_mat.dtype
+
+        # 1. Load MKL directly to access the Inspector-Executor functions
+        mkl_lib_path = ctypes.util.find_library("mkl_rt")
+        if not mkl_lib_path:
+            mkl_lib_path = "libmkl_rt.so"
+        self.libmkl = ctypes.cdll.LoadLibrary(mkl_lib_path)
+        self.libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
+        self.libmkl.mkl_sparse_optimize.restype = ctypes.c_int
+
+        # 2. Create the MKL handle
+        self.mkl_a, self.dbl, self.cplx = _create_mkl_sparse(scipy_csr_mat)
+
+        # 3. Optimize the matrix (Inspector stage)
+        self.libmkl.mkl_sparse_optimize(self.mkl_a)
+
+        # 4. Cache necessary execution arguments
+        self.output_dtype = _output_dtypes[(self.dbl, self.cplx)]
+        from sparse_dot_mkl._mkl_interface import _mkl_scalar
+        self.scalar = _mkl_scalar(1.0, self.cplx, self.dbl)
+        self.out_scalar = _mkl_scalar(0.0, self.cplx, self.dbl)
+        self.matrix_desc = matrix_descr()
+        
+        funcs = {
+            (False, False): MKL._mkl_sparse_s_mv,
+            (True, False): MKL._mkl_sparse_d_mv,
+            (False, True): MKL._mkl_sparse_c_mv,
+            (True, True): MKL._mkl_sparse_z_mv,
+        }
+        self.func = funcs[(self.dbl, self.cplx)]
+
+    def apply(self, x_val):
+        from sparse_dot_mkl._mkl_interface import _out_matrix
+        x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
+        
+        # Allocate output array (must be dense contiguous)
+        output_arr = _out_matrix((self.shape[0],), self.output_dtype)
+        
+        # 10 is SPARSE_OPERATION_NON_TRANSPOSE
+        self.func(10, self.scalar, self.mkl_a, self.matrix_desc, x_np_val, self.out_scalar, output_arr)
+        return output_arr
+
+    def __del__(self):
+        try:
+            from sparse_dot_mkl._mkl_interface import _destroy_mkl_handle
+            _destroy_mkl_handle(self.mkl_a)
+        except Exception:
+            pass
+
+
 def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
-    """Creates a fast, multicore CPU SpMV operator using sparse_dot_mkl."""
+    """Creates a fast, multicore CPU SpMV operator using the MKL Inspector-Executor API."""
     try:
-        from sparse_dot_mkl import dot_product_mkl
+        import sparse_dot_mkl
     except ImportError:
         raise ImportError(
             "sparse_dot_mkl is required for fast CPU sparse operations. "
             "Please install it using 'pixi run' or check your environment."
         )
 
+    # Initialize the persistent, optimized MKL handle once
+    persistent_op = PersistentMKLOperator(scipy_csr_mat)
+
     def mkl_spmv_callback(x_val, **kwargs):
-        x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
-        return dot_product_mkl(scipy_csr_mat, x_np_val)
+        return persistent_op.apply(x_val)
 
     @jax.jit
     def fast_cpu_spmv(x_val):
-        result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), x_val.dtype)
+        result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
         return jax.pure_callback(
             mkl_spmv_callback,
             result_shape_dtype,
