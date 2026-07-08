@@ -486,6 +486,7 @@ def make_solve_U(
     Dy_sparse: Any = None,
     Dz_sparse: Any = None,
     A_diag: Any = None,
+    cpu_spmv_backend: str = "persistent_mkl",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
@@ -590,13 +591,13 @@ def make_solve_U(
 
             csr_A = level.A.tocsr()
             level_dict = {
-                "A_sparse": None if i == 0 else make_sparse_operator(csr_A),
+                "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
                 "Mdiag": jnp.asarray(csr_A.diagonal()),
                 "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
             }
             if i < len(ml.levels) - 1:
-                level_dict["P"] = make_sparse_operator(level.P.tocsr())
-                level_dict["R"] = make_sparse_operator(level.R.tocsr())
+                level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
             else:
                 level_dict["A_dense"] = jnp.asarray(csr_A.todense())
             levels_jax.append(level_dict)

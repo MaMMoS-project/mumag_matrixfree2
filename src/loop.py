@@ -467,6 +467,13 @@ def main() -> None:
         default=1e-12,
         help="Tikhonov regularization constant for the Poisson operator diagonal.",
     )
+    ap.add_argument(
+        "--cpu-spmv-backend",
+        type=str,
+        default="persistent_mkl",
+        choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax"],
+        help="Backend for SpMV operations when running on CPU in assembled mode.",
+    )
 
     # loop settings
     ap.add_argument(
@@ -1001,6 +1008,7 @@ def main() -> None:
 
     mode = args.operator_mode
     assembled_kwargs = {}
+    cpu_spmv_backend = args.cpu_spmv_backend
 
     if mode == "assembled":
         print("Assembling global sparse operators on CPU...")
@@ -1018,13 +1026,13 @@ def main() -> None:
         )
         A_diag_cpu = A_scipy.diagonal()
         A_diag = jnp.asarray(A_diag_cpu)
-        A_sparse = make_sparse_operator(A_scipy)
+        A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
         
         import scipy.sparse as sp
         D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-        D_sparse = make_sparse_operator(D_scipy)
+        D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
         del Dx_scipy, Dy_scipy, Dz_scipy
         Dx_sparse = Dy_sparse = Dz_sparse = None
 
@@ -1035,7 +1043,7 @@ def main() -> None:
         del D_scipy
 
         G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-        G_sparse = make_sparse_operator(G_scipy)
+        G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
         del Gx_scipy, Gy_scipy, Gz_scipy
         Gx_sparse = Gy_sparse = Gz_sparse = None
 
@@ -1044,7 +1052,7 @@ def main() -> None:
         K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
             conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
         )
-        K_eff_sparse = make_sparse_operator(K_eff_scipy)
+        K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
@@ -1079,6 +1087,7 @@ def main() -> None:
         chunk_elems=int(args.chunk_elems),
         boundary_mask=jnp.asarray(boundary_mask, dtype=jnp.float64) if boundary_mask is not None else None,
         mode=mode,
+        cpu_spmv_backend=cpu_spmv_backend,
         **assembled_kwargs,
     )
 

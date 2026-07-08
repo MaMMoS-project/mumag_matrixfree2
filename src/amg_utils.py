@@ -248,27 +248,36 @@ class PersistentMKLOperator:
             pass
 
 
-def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
-    """Creates a fast, multicore CPU SpMV operator using the MKL Inspector-Executor API."""
-    try:
-        import sparse_dot_mkl
-    except ImportError:
-        raise ImportError(
-            "sparse_dot_mkl is required for fast CPU sparse operations. "
-            "Please install it using 'pixi run' or check your environment."
-        )
-
-    # Initialize the persistent, optimized MKL handle once
-    persistent_op = PersistentMKLOperator(scipy_csr_mat)
-
-    def mkl_spmv_callback(x_val, **kwargs):
-        return persistent_op.apply(x_val)
+def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl"):
+    """Creates a fast, multicore CPU SpMV operator via callbacks."""
+    if cpu_spmv_backend == "persistent_mkl":
+        try:
+            import sparse_dot_mkl
+        except ImportError:
+            raise ImportError("sparse_dot_mkl is required for persistent_mkl.")
+        persistent_op = PersistentMKLOperator(scipy_csr_mat)
+        def spmv_callback(x_val, **kwargs):
+            return persistent_op.apply(x_val)
+    elif cpu_spmv_backend == "dot_product_mkl":
+        try:
+            from sparse_dot_mkl import dot_product_mkl
+        except ImportError:
+            raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")
+        def spmv_callback(x_val, **kwargs):
+            x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+            return dot_product_mkl(scipy_csr_mat, x_np_val)
+    elif cpu_spmv_backend == "scipy":
+        def spmv_callback(x_val, **kwargs):
+            x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+            return scipy_csr_mat @ x_np_val
+    else:
+        raise ValueError(f"Unknown CPU SpMV backend for callback: {cpu_spmv_backend}")
 
     @jax.jit
     def fast_cpu_spmv(x_val):
         result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
         return jax.pure_callback(
-            mkl_spmv_callback,
+            spmv_callback,
             result_shape_dtype,
             x_val,
             vectorized=False
@@ -277,14 +286,30 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix):
     return fast_cpu_spmv
 
 
-def make_sparse_operator(scipy_csr_mat: sp.csr_matrix) -> SparseOperator:
+def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl") -> SparseOperator:
     """Dynamically creates the optimal sparse operator depending on the active platform."""
     device = jax.devices()[0]
 
     if device.platform == "cpu":
-        cpu_op = make_cpu_csr_op(scipy_csr_mat)
-        # On CPU: no dynamic JAX arrays, pass CPU op as static function
-        return SparseOperator(lambda _, x: cpu_op(x), ())
+        if cpu_spmv_backend == "jax_default":
+            jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+            return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
+        elif cpu_spmv_backend == "custom_jax":
+            data = jnp.asarray(scipy_csr_mat.data)
+            indices = jnp.asarray(scipy_csr_mat.indices)
+            row_indices = np.repeat(np.arange(scipy_csr_mat.shape[0]), np.diff(scipy_csr_mat.indptr))
+            row_indices = jnp.asarray(row_indices)
+            num_rows = scipy_csr_mat.shape[0]
+
+            def custom_spmv(parts, x):
+                d, idx, r_idx = parts
+                vals = d * x[idx]
+                return jax.ops.segment_sum(vals, r_idx, num_segments=num_rows)
+            
+            return SparseOperator(custom_spmv, ((data, indices, row_indices),))
+        else:
+            cpu_op = make_cpu_csr_op(scipy_csr_mat, cpu_spmv_backend=cpu_spmv_backend)
+            return SparseOperator(lambda _, x: cpu_op(x), ())
     else:
         # On GPU: convert to JAX CSR and store it in pytree_parts
         jax_csr = csr_to_jax_CSR(scipy_csr_mat)

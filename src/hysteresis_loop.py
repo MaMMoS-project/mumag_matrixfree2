@@ -253,6 +253,7 @@ def run_hysteresis_loop(  # noqa: D417
     Gz_sparse: Any = None,
     D_sparse: Any = None,
     G_sparse: Any = None,
+    cpu_spmv_backend: str = "persistent_mkl",
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -318,6 +319,7 @@ def run_hysteresis_loop(  # noqa: D417
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
         mode=mode,
+        cpu_spmv_backend=cpu_spmv_backend,
     )
 
     minimize = make_minimizer(
