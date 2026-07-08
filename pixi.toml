@@ -20,6 +20,7 @@ pytest = "*"
 ruff = "*"
 pre-commit = ">=4.6.0,<5"
 mkl = "*"
+mkl-include = "*"
 libblas = { version = "*", build = "*mkl" }
 sparse_dot_mkl = "*"
 _openmp_mutex = { version = "*", build = "*_llvm" }

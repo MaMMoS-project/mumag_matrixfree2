@@ -13,6 +13,18 @@ import jax.numpy as jnp
 import numpy as np
 import pyamg
 import scipy.sparse as sp
+import os
+import sys
+
+try:
+    sys.path.append(os.path.dirname(__file__))
+    import mkl_ffi_lib
+    import jax.ffi as ffi
+    for name, capsule in mkl_ffi_lib.get_registrations().items():
+        ffi.register_ffi_target(name, capsule, platform="cpu")
+    HAS_MKL_FFI = True
+except Exception:
+    HAS_MKL_FFI = False
 
 
 def assemble_poisson_matrix_cpu(
@@ -307,6 +319,29 @@ def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "
                 return jax.ops.segment_sum(vals, r_idx, num_segments=num_rows)
             
             return SparseOperator(custom_spmv, ((data, indices, row_indices),))
+        elif cpu_spmv_backend == "mkl_ffi":
+            if not HAS_MKL_FFI:
+                raise ImportError("mkl_ffi_lib was not compiled successfully.")
+            
+            persistent_op = PersistentMKLOperator(scipy_csr_mat)
+            mkl_a_val = persistent_op.mkl_a
+            if isinstance(mkl_a_val, bytes):
+                mkl_handle_addr = int.from_bytes(mkl_a_val, byteorder=sys.byteorder)
+            elif hasattr(mkl_a_val, "value") and mkl_a_val.value is not None:
+                mkl_handle_addr = mkl_a_val.value
+            else:
+                import ctypes
+                mkl_handle_addr = ctypes.cast(mkl_a_val, ctypes.c_void_p).value
+            
+            @jax.jit
+            def ffi_spmv(x_val):
+                out_shape = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
+                return ffi.ffi_call(
+                    "mkl_spmv_ffi",
+                    out_shape
+                )(x_val, jnp.asarray(mkl_handle_addr, dtype=jnp.int64))
+            
+            return SparseOperator(lambda _, x: ffi_spmv(x) if persistent_op else None, ())
         else:
             cpu_op = make_cpu_csr_op(scipy_csr_mat, cpu_spmv_backend=cpu_spmv_backend)
             return SparseOperator(lambda _, x: cpu_op(x), ())

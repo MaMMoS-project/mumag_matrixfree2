@@ -471,7 +471,7 @@ def main() -> None:
         "--cpu-spmv-backend",
         type=str,
         default="persistent_mkl",
-        choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax"],
+        choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax", "mkl_ffi"],
         help="Backend for SpMV operations when running on CPU in assembled mode.",
     )
 
