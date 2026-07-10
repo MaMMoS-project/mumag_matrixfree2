@@ -99,6 +99,7 @@ class LoopParams:
     cg_maxiter: int = 2000
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
+    poisson_solver: str = "jax"
     mfinal: float | None = None
     mstep: float | None = None
     bias_type: str | None = None
@@ -319,7 +320,9 @@ def run_hysteresis_loop(  # noqa: D417
         grad_backend=grad_backend,
         boundary_mask=boundary_mask,
         mode=mode,
+        A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
+        poisson_solver=params.poisson_solver,
     )
 
     minimize = make_minimizer(

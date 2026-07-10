@@ -474,6 +474,13 @@ def main() -> None:
         choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax", "mkl_ffi"],
         help="Backend for SpMV operations when running on CPU in assembled mode.",
     )
+    ap.add_argument(
+        "--poisson-solver",
+        type=str,
+        default="jax",
+        choices=["jax", "pardiso", "jax_mkl"],
+        help="Solver to use for the magnetostatic Poisson problem.",
+    )
 
     # loop settings
     ap.add_argument(
@@ -902,6 +909,7 @@ def main() -> None:
         "wg_threshold": float(args.wg_threshold),
         "phi_extrapolate": bool(args.phi_extrapolate),
         "benchmark": bool(args.benchmark),
+        "poisson_solver": str(args.poisson_solver),
     }
     for k in params_dict:
         param_sources[k] = "default"

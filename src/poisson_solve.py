@@ -487,6 +487,7 @@ def make_solve_U(
     Dz_sparse: Any = None,
     A_diag: Any = None,
     cpu_spmv_backend: str = "persistent_mkl",
+    poisson_solver: str = "jax",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
@@ -552,7 +553,7 @@ def make_solve_U(
         Mdiag = assemble_diag(None, N)
         l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
 
-    elif precond_type in ["amg", "amgcl"]:
+    elif precond_type in ["amg", "amgcl"] and poisson_solver not in ["pardiso"]:
         print(f"Setting up AMG hierarchy on CPU (PyAMG, mode={precond_type})...")
         import numpy as np
         import pyamg
@@ -583,51 +584,75 @@ def make_solve_U(
         )
 
         print(f"AMG hierarchy has {len(ml.levels)} levels.")
-
-        levels_jax = []
-        for i in range(len(ml.levels)):
-            level = ml.levels[i]
-            from amg_utils import compute_spai0_diagonal, make_sparse_operator
-
-            csr_A = level.A.tocsr()
-            level_dict = {
-                "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
-                "Mdiag": jnp.asarray(csr_A.diagonal()),
-                "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
-            }
-            if i < len(ml.levels) - 1:
-                level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-                level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-            else:
-                level_dict["A_dense"] = jnp.asarray(csr_A.todense())
-            levels_jax.append(level_dict)
-
-        from amg_utils import AMGHierarchy
-
-        hierarchy_jax = AMGHierarchy(levels_jax)
-
-        def apply_A_masked(sparse_ops, v: Array) -> Array:
-            res = apply_A(sparse_ops, v)
-            if boundary_mask is not None:
-                res = res * boundary_mask
-            return res
-
-        if precond_type == "amgcl":
-            apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
+        
+        if poisson_solver == "jax_mkl":
+            from amg_utils import make_jax_mkl_solve_linear
+            solve_linear = make_jax_mkl_solve_linear(ml, cg_maxiter=cg_maxiter, cg_tol=cg_tol)
         else:
-            apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
+            levels_jax = []
+            for i in range(len(ml.levels)):
+                level = ml.levels[i]
+                from amg_utils import compute_spai0_diagonal, make_sparse_operator
 
-    solve_linear = make_pcg_solve(
-        apply_A,
-        Mdiag,
-        precond_type=precond_type,
-        apply_Minv_amg=apply_Minv_amg,
-        order=order,
-        maxiter=cg_maxiter,
-        tol=cg_tol,
-        boundary_mask=boundary_mask,
-        l_max=l_max,
-    )
+                csr_A = level.A.tocsr()
+                level_dict = {
+                    "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
+                    "Mdiag": jnp.asarray(csr_A.diagonal()),
+                    "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
+                }
+                if i < len(ml.levels) - 1:
+                    level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                    level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                else:
+                    level_dict["A_dense"] = jnp.asarray(csr_A.todense())
+                levels_jax.append(level_dict)
+
+            from amg_utils import AMGHierarchy
+
+            hierarchy_jax = AMGHierarchy(levels_jax)
+
+            def apply_A_masked(sparse_ops, v: Array) -> Array:
+                res = apply_A(sparse_ops, v)
+                if boundary_mask is not None:
+                    res = res * boundary_mask
+                return res
+
+            if precond_type == "amgcl":
+                apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
+            else:
+                apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
+
+    if poisson_solver == "pardiso":
+        import numpy as np
+        from amg_utils import assemble_poisson_matrix_cpu, make_pardiso_solve_linear
+        
+        if geom.grad_phi is not None:
+            gp = np.array(geom.grad_phi)
+        else:
+            from loop import compute_grad_phi_from_JinvT
+            gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
+            
+        A_cpu = assemble_poisson_matrix_cpu(
+            np.array(geom.conn),
+            np.array(geom.volume),
+            gp,
+            boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
+            reg=poisson_reg,
+        )
+        
+        solve_linear = make_pardiso_solve_linear(A_cpu)
+    elif poisson_solver != "jax_mkl":
+        solve_linear = make_pcg_solve(
+            apply_A,
+            Mdiag,
+            precond_type=precond_type,
+            apply_Minv_amg=apply_Minv_amg,
+            order=order,
+            maxiter=cg_maxiter,
+            tol=cg_tol,
+            boundary_mask=boundary_mask,
+            l_max=l_max,
+        )
 
     if hierarchy_jax is None:
         @partial(jax.jit, static_argnums=(3,))
