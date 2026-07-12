@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Matrix-free micromagnetic simulations with JAX"
 authors = ["MaMMoS-project"]
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["linux-64", "osx-arm64", "win-64"]
 
 [dependencies]
 python = ">=3.11"
@@ -19,6 +19,7 @@ pip = "*"
 pytest = "*"
 ruff = "*"
 pre-commit = ">=4.6.0,<5"
+[target.linux-64.dependencies]
 mkl = "*"
 mkl-include = "*"
 libblas = { version = "*", build = "*mkl" }
@@ -28,7 +29,7 @@ cmake = "*"
 make = "*"
 cxx-compiler = "*"
 
-[activation]
+[target.linux-64.activation]
 scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
