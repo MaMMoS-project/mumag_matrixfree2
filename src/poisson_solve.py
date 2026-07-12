@@ -654,46 +654,95 @@ def make_solve_U(
             l_max=l_max,
         )
 
-    if hierarchy_jax is None:
-        @partial(jax.jit, static_argnums=(3,))
-        def solve_U(
+    try:
+        gpus = jax.devices("gpu")
+        num_gpus = len(gpus)
+    except Exception:
+        gpus = []
+        num_gpus = 0
+
+    if num_gpus >= 2:
+        from amg_utils import get_gpu_assignments
+        assignments = get_gpu_assignments(num_gpus, gpus)
+        master_device = gpus[0]
+        dev_d = assignments["D"]
+
+        @jax.jit
+        def mvp_D(D_op, m_vec):
+            return D_op @ m_vec
+
+        @jax.jit
+        def solve_linear_step(sparse_ops, b, x0, tol, hierarchy_dyn):
+            if enforce_zero_mean:
+                b = b - jnp.mean(b)
+                x0 = x0 - jnp.mean(x0)
+            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
+            if enforce_zero_mean:
+                U = U - jnp.mean(U)
+            return U, it, r2
+
+        def solve_U_multigpu(
             m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
         ) -> Array | tuple[Array, int, float]:
-            b = rhs_from_m(sparse_ops, m)
+            m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+            m_flat_gpu = jax.device_put(m_flat, dev_d)
+            y_gpu = mvp_D(sparse_ops["D_sparse"], m_flat_gpu)
+            b = jax.device_put(y_gpu, master_device)
+            if boundary_mask is not None:
+                b = b * boundary_mask
             bnorm2 = jnp.vdot(b, b)
-
-            if enforce_zero_mean:
-                b = b - jnp.mean(b)
-                x0 = x0 - jnp.mean(x0)
-
-            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=None)
-
-            if enforce_zero_mean:
-                U = U - jnp.mean(U)
+            
+            poisson_keys = ["A_sparse", "A_diag", "Dx_sparse", "Dy_sparse", "Dz_sparse"]
+            poisson_ops = {k: sparse_ops[k] for k in poisson_keys if k in sparse_ops}
+            U, it, r2 = solve_linear_step(poisson_ops, b, x0, tol, hierarchy_jax)
+            
             if return_info:
                 rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
                 return U, it, rel_res
             return U
+
+        solve_U = solve_U_multigpu
     else:
-        @partial(jax.jit, static_argnums=(3,))
-        def solve_U(
-            m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None, hierarchy_dyn=hierarchy_jax
-        ) -> Array | tuple[Array, int, float]:
-            b = rhs_from_m(sparse_ops, m)
-            bnorm2 = jnp.vdot(b, b)
+        if hierarchy_jax is None:
+            @partial(jax.jit, static_argnums=(3,))
+            def solve_U(
+                m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
+            ) -> Array | tuple[Array, int, float]:
+                b = rhs_from_m(sparse_ops, m)
+                bnorm2 = jnp.vdot(b, b)
 
-            if enforce_zero_mean:
-                b = b - jnp.mean(b)
-                x0 = x0 - jnp.mean(x0)
+                if enforce_zero_mean:
+                    b = b - jnp.mean(b)
+                    x0 = x0 - jnp.mean(x0)
 
-            U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
+                U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=None)
 
-            if enforce_zero_mean:
-                U = U - jnp.mean(U)
-            if return_info:
-                rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
-                return U, it, rel_res
-            return U
+                if enforce_zero_mean:
+                    U = U - jnp.mean(U)
+                if return_info:
+                    rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                    return U, it, rel_res
+                return U
+        else:
+            @partial(jax.jit, static_argnums=(3,))
+            def solve_U(
+                m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None, hierarchy_dyn=hierarchy_jax
+            ) -> Array | tuple[Array, int, float]:
+                b = rhs_from_m(sparse_ops, m)
+                bnorm2 = jnp.vdot(b, b)
+
+                if enforce_zero_mean:
+                    b = b - jnp.mean(b)
+                    x0 = x0 - jnp.mean(x0)
+
+                U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
+
+                if enforce_zero_mean:
+                    U = U - jnp.mean(U)
+                if return_info:
+                    rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                    return U, it, rel_res
+                return U
 
     if hasattr(solve_linear, 'pardiso_obj'):
         solve_U.pardiso_obj = solve_linear.pardiso_obj

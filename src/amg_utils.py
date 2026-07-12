@@ -298,6 +298,44 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
     return fast_cpu_spmv
 
 
+def get_gpu_assignments(num_gpus, devices):
+    assignments = {}
+    if num_gpus == 2:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[0]
+        assignments["D"] = devices[0]
+        assignments["Keff"] = devices[1]
+    elif num_gpus == 3:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[0]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[1]
+        assignments["Ky"] = devices[2]
+        assignments["Kz"] = devices[2]
+    elif num_gpus == 4:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[2]
+        assignments["Ky"] = devices[3]
+        assignments["Kz"] = devices[3]
+    elif num_gpus == 5:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[2]
+        assignments["Ky"] = devices[3]
+        assignments["Kz"] = devices[4]
+    else: # 6 or more
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[2]
+        assignments["Kx"] = devices[3]
+        assignments["Ky"] = devices[4]
+        assignments["Kz"] = devices[5]
+    return assignments
+
+
 def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl") -> SparseOperator:
     """Dynamically creates the optimal sparse operator depending on the active platform."""
     device = jax.devices()[0]

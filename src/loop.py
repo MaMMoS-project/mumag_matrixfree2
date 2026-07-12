@@ -1057,6 +1057,7 @@ def main() -> None:
             assemble_divergence_matrices_cpu,
             assemble_poisson_matrix_cpu,
             make_sparse_operator,
+            get_gpu_assignments,
         )
 
         # Ensure grad_phi is computed
@@ -1067,7 +1068,26 @@ def main() -> None:
         )
         A_diag_cpu = A_scipy.diagonal()
         A_diag = jnp.asarray(A_diag_cpu)
+
+        # GPU device detection and assignment
+        try:
+            gpus = jax.devices("gpu")
+            num_gpus = len(gpus)
+        except Exception:
+            gpus = []
+            num_gpus = 0
+
+        if num_gpus >= 2:
+            assignments = get_gpu_assignments(num_gpus, gpus)
+            print(f"[multi-gpu] Found {num_gpus} GPUs. Device assignments: {assignments}")
+            dev_amg = assignments["AMG"]
+            dev_d = assignments["D"]
+            dev_g = assignments["G"]
+        else:
+            dev_amg = dev_d = dev_g = jax.devices()[0]
+
         A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend)
+        A_sparse = jax.device_put(A_sparse, dev_amg)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
         
@@ -1082,6 +1102,7 @@ def main() -> None:
             D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
             D_scipy.sort_indices()
             D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = jax.device_put(D_sparse, dev_d)
             
             Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
             Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
@@ -1092,15 +1113,18 @@ def main() -> None:
             G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
             G_scipy.sort_indices()
             G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = jax.device_put(G_sparse, dev_g)
         else:
             D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
             D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = jax.device_put(D_sparse, dev_d)
             N = knt.shape[0]
             Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
             Gy_scipy = 2.0 * D_scipy[:, N:2*N].transpose()
             Gz_scipy = 2.0 * D_scipy[:, 2*N:].transpose()
             G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
             G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = jax.device_put(G_sparse, dev_g)
             del Gx_scipy, Gy_scipy, Gz_scipy
 
         del Dx_scipy, Dy_scipy, Dz_scipy
@@ -1112,7 +1136,32 @@ def main() -> None:
         K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
             conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
         )
-        K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
+
+        Kx_sparse = Ky_sparse = Kz_sparse = None
+        if num_gpus >= 3:
+            K_eff_coo = K_eff_scipy.tocoo()
+            N = knt.shape[0]
+            P_idx_row = (K_eff_coo.row % 3) * N + (K_eff_coo.row // 3)
+            P_idx_col = (K_eff_coo.col % 3) * N + (K_eff_coo.col // 3)
+            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3*N, 3*N))
+            Kx_scipy = K_eff_blocked[:N, :]
+            Ky_scipy = K_eff_blocked[N:2*N, :]
+            Kz_scipy = K_eff_blocked[2*N:, :]
+            
+            Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kx_sparse = jax.device_put(Kx_sparse, assignments["Kx"])
+            
+            Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Ky_sparse = jax.device_put(Ky_sparse, assignments["Ky"])
+            
+            Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kz_sparse = jax.device_put(Kz_sparse, assignments["Kz"])
+            
+            K_eff_sparse = None
+        else:
+            K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            if num_gpus == 2:
+                K_eff_sparse = jax.device_put(K_eff_sparse, assignments["Keff"])
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
@@ -1121,6 +1170,10 @@ def main() -> None:
             "Dz_sparse": None,
             "A_diag": A_diag,
             "K_eff_sparse": K_eff_sparse,
+            "Kx_sparse": Kx_sparse,
+            "Ky_sparse": Ky_sparse,
+            "Kz_sparse": Kz_sparse,
+            "num_gpus": num_gpus,
             "Gx_sparse": None,
             "Gy_sparse": None,
             "Gz_sparse": None,
