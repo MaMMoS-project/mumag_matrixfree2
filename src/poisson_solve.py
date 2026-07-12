@@ -695,4 +695,7 @@ def make_solve_U(
                 return U, it, rel_res
             return U
 
+    if hasattr(solve_linear, 'pardiso_obj'):
+        solve_U.pardiso_obj = solve_linear.pardiso_obj
+
     return solve_U

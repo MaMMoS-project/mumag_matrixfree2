@@ -26,3 +26,15 @@ benchmarking/BENCHMARK_REPORT.md
 trace_dir/
 .pixi/
 pixi.lock
+
+# LaTeX artifacts
+*.aux
+*.bbl
+*.blg
+
+# CMake and build artifacts
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+*.so

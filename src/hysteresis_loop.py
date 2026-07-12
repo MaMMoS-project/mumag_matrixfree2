@@ -122,6 +122,7 @@ class LoopParams:
     wg_threshold: float = 1e-6
     benchmark: bool = False
     L: int | None = None
+    cpp_mkl: bool = True
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -254,6 +255,9 @@ def run_hysteresis_loop(  # noqa: D417
     Gz_sparse: Any = None,
     D_sparse: Any = None,
     G_sparse: Any = None,
+    K_eff_scipy: Any = None,
+    D_scipy: Any = None,
+    G_scipy: Any = None,
     cpu_spmv_backend: str = "persistent_mkl",
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
@@ -291,7 +295,10 @@ def run_hysteresis_loop(  # noqa: D417
     csv_path = out_dir / params.csv_name
     write_hysteresis_header(csv_path)
 
-    h = np.asarray(params.h_dir, dtype=np.float64)
+    if isinstance(params.h_dir, str):
+        h = np.array([float(x) for x in params.h_dir.split(",")], dtype=np.float64)
+    else:
+        h = np.asarray(params.h_dir, dtype=np.float64)
     h /= np.linalg.norm(h) + 1e-30
 
     energy_and_grad, energy_only, _, _ = make_energy_kernels(
@@ -355,7 +362,7 @@ def run_hysteresis_loop(  # noqa: D417
 
     U = jnp.zeros(m.shape[0], dtype=m.dtype)
 
-    if params.benchmark:
+    if params.benchmark and not getattr(params, "cpp_mkl", False):
         print("Warming up JIT compiler...")
         B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
         _m, _U, _ = minimize(
@@ -419,53 +426,95 @@ def run_hysteresis_loop(  # noqa: D417
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
         start_step = time.time()
-        m, U, info = minimize(
-            m,
-            B_ext,
-            U0=U,
-            gamma=params.gamma,
-            max_iter=params.max_iter,
-            tau_f=params.tau_f,
-            eps_a=params.eps_a,
-            tau0=params.tau0,
-            tau_min=params.tau_min,
-            tau_max=params.tau_max,
-            ls_eta1=params.ls_eta1,
-            ls_eta2=params.ls_eta2,
-            ls_C=params.ls_C,
-            ls_c=params.ls_c,
-            ls_s0=params.ls_s0,
-            ls_max_evals=params.ls_max_evals,
-            h=h,
-            mfinal=params.mfinal,
-            Js_ref=params.Js_ref,
-            verbose=params.verbose,
-            pc_iters=params.pc_iters,
-            pc_auto=params.pc_auto,
-            pc_force_eta=params.pc_force_eta,
-            pc_force_alpha=params.pc_force_alpha,
-            pc_stagnation_nu=params.pc_stagnation_nu,
-            memory=params.memory,
-            tn_iters=params.tn_iters,
-            lr=params.lr,
-            mu=params.mu,
-            pc_reg=params.pc_reg,
-            phi_extrapolate=params.phi_extrapolate,
-            L=params.L,
-            sparse_ops={
-                "A_sparse": A_sparse,
-                "Dx_sparse": Dx_sparse,
-                "Dy_sparse": Dy_sparse,
-                "Dz_sparse": Dz_sparse,
-                "A_diag": A_diag,
-                "K_eff_sparse": K_eff_sparse,
-                "Gx_sparse": Gx_sparse,
-                "Gy_sparse": Gy_sparse,
-                "Gz_sparse": Gz_sparse,
-                "D_sparse": D_sparse,
-                "G_sparse": G_sparse,
-            },
-        )
+
+        if params.cpp_mkl:
+            from cpp_minimizer import cpp_minimize
+            # Add parameters needed by C++ wrapper
+            params.M_nodal = M_nodal
+            params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
+            params.V_mag = V_mag
+            from energy_kernels import compute_exchange_diagonal
+            d_diag = compute_exchange_diagonal(
+                geom,
+                jnp.asarray(A_lookup, dtype=jnp.float64),
+                V_mag,
+                chunk_elems=chunk_elems,
+                assembly=energy_assembly,
+                grad_backend=grad_backend,
+            )
+            params.inv_M_prec = 1.0 / (d_diag + 1e-30)
+            m, U, info = cpp_minimize(
+                m,
+                B_ext,
+                U,
+                params,
+                sparse_ops={
+                    "A_sparse": A_sparse,
+                    "Dx_sparse": Dx_sparse,
+                    "Dy_sparse": Dy_sparse,
+                    "Dz_sparse": Dz_sparse,
+                    "A_diag": A_diag,
+                    "K_eff_sparse": K_eff_scipy if K_eff_scipy is not None else K_eff_sparse,
+                    "Gx_sparse": Gx_sparse,
+                    "Gy_sparse": Gy_sparse,
+                    "Gz_sparse": Gz_sparse,
+                    "D_sparse": D_scipy if D_scipy is not None else D_sparse,
+                    "G_sparse": G_scipy if G_scipy is not None else G_sparse,
+                },
+                solve_U=solve_U,
+                boundary_mask=boundary_mask,
+            )
+        else:
+            m, U, info = minimize(
+                m,
+                B_ext,
+                U0=U,
+                gamma=params.gamma,
+                max_iter=params.max_iter,
+                tau_f=params.tau_f,
+                eps_a=params.eps_a,
+                tau0=params.tau0,
+                tau_min=params.tau_min,
+                tau_max=params.tau_max,
+                ls_eta1=params.ls_eta1,
+                ls_eta2=params.ls_eta2,
+                ls_C=params.ls_C,
+                ls_c=params.ls_c,
+                ls_s0=params.ls_s0,
+                ls_max_evals=params.ls_max_evals,
+                h=h,
+                mfinal=params.mfinal,
+                Js_ref=params.Js_ref,
+                verbose=params.verbose,
+                pc_iters=params.pc_iters,
+                pc_auto=params.pc_auto,
+                pc_force_eta=params.pc_force_eta,
+                pc_force_alpha=params.pc_force_alpha,
+                pc_stagnation_nu=params.pc_stagnation_nu,
+                memory=params.memory,
+                tn_iters=params.tn_iters,
+                lr=params.lr,
+                mu=params.mu,
+                pc_reg=params.pc_reg,
+                phi_extrapolate=params.phi_extrapolate,
+                L=params.L,
+                sparse_ops={
+                    "A_sparse": A_sparse,
+                    "Dx_sparse": Dx_sparse,
+                    "Dy_sparse": Dy_sparse,
+                    "Dz_sparse": Dz_sparse,
+                    "A_diag": A_diag,
+                    "K_eff_sparse": K_eff_sparse,
+                    "Gx_sparse": Gx_sparse,
+                    "Gy_sparse": Gy_sparse,
+                    "Gz_sparse": Gz_sparse,
+                    "D_sparse": D_sparse,
+                    "G_sparse": G_sparse,
+                },
+            )
+            # Accurate timing: wait for GPU to finish
+            m.block_until_ready()
+            U.block_until_ready()
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
         U.block_until_ready()
