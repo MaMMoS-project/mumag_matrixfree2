@@ -477,9 +477,9 @@ def main() -> None:
     ap.add_argument(
         "--poisson-solver",
         type=str,
-        default="jax",
-        choices=["jax", "pardiso", "jax_mkl"],
-        help="Solver to use for the magnetostatic Poisson problem.",
+        default="auto",
+        choices=["auto", "jax", "pardiso", "jax_mkl"],
+        help="Solver to use for the magnetostatic Poisson problem (default: auto).",
     )
 
     # loop settings
@@ -671,9 +671,9 @@ def main() -> None:
     )
     ap.add_argument(
         "--cpp-mkl",
-        action="store_true",
-        default=False,
-        help="Use the pure C++ MKL minimizer backend for the entire field step.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use the pure C++ MKL minimizer backend for the entire field step (default: True on CPU with MKL, False otherwise).",
     )
     ap.add_argument(
         "--no-phi-extrapolate",
@@ -711,6 +711,25 @@ def main() -> None:
     )
 
     args = ap.parse_args()
+
+    # Dynamic defaults based on platform
+    try:
+        has_gpu = any(d.platform == "gpu" for d in jax.devices())
+    except Exception:
+        has_gpu = False
+
+    try:
+        import ctypes
+        ctypes.CDLL("libmkl_rt.so")
+        has_mkl = True
+    except OSError:
+        has_mkl = False
+
+    if args.cpp_mkl is None:
+        args.cpp_mkl = (not has_gpu and has_mkl)
+
+    if args.poisson_solver == "auto":
+        args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
 
     # Automatic file discovery if modelname is provided
     modelname = args.modelname
