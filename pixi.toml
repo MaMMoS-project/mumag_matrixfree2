@@ -14,12 +14,14 @@ matplotlib = "*"
 pyamg = "*"
 meshio = "*"
 meshpy = "*"
-neper = "*"
 pip = "*"
 pytest = "*"
 ruff = "*"
 pre-commit = ">=4.6.0,<5"
 gmsh = ">=4.12.2,<5"
+
+[target.unix.dependencies]
+neper = "*"
 
 [target.linux-64.dependencies]
 mkl = "*"
