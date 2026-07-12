@@ -24,6 +24,12 @@ mkl-include = "*"
 libblas = { version = "*", build = "*mkl" }
 sparse_dot_mkl = "*"
 _openmp_mutex = { version = "*", build = "*_llvm" }
+cmake = "*"
+make = "*"
+cxx-compiler = "*"
+
+[activation]
+scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
 jaxopt = "*"

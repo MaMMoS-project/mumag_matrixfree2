@@ -1,5 +1,5 @@
 #!/bin/bash
-gcc -shared -fPIC -O3 -march=native -ffast-math -funroll-loops -fopenmp -std=c++17 \
+${CXX:-g++} -shared -fPIC -O3 -march=native -ffast-math -funroll-loops -fopenmp -std=c++17 \
     src/cpp_mkl_minimizer.cpp src/mkl_ffi_lib.so \
     -o src/libcpp_mkl_minimizer.so \
     -I/ceph/home/schrefl/jax_dev/mumag_matrixfree2/.pixi/envs/default/include \
