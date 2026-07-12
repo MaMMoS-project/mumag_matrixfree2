@@ -587,8 +587,8 @@ def main() -> None:
     ap.add_argument(
         "--pc-iters",
         type=int,
-        default=15,
-        help="Inner iterations for preconditioning (default: 15).",
+        default=10,
+        help="Inner iterations for preconditioning (default: 10).",
     )
     ap.add_argument(
         "--pc-auto",
