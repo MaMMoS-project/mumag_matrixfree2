@@ -59,6 +59,7 @@
 \newlabel{alg:generic_trust_region}{{2}{7}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Conjugate Gradient Methods}{7}{}\protected@file@percent }
 \citation{Wen2009}
+\citation{Vansteenkiste2014,Lepadatu2020,Bruckner2023}
 \@writefile{loa}{\contentsline {algorithm}{\numberline {3}{\ignorespaces Preconditioned Cohen Conjugate Gradient Method (HS Update)}}{8}{}\protected@file@percent }
 \newlabel{alg:pcohen_hs}{{3}{8}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Accelerated Gradient Methods}{8}{}\protected@file@percent }
@@ -67,56 +68,59 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.6}Newton-Type and Trust Region Methods}{8}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {4}Software Implementation}{8}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.1}JAX-Based Framework}{8}{}\protected@file@percent }
-\citation{IntelXeon6242}
-\citation{NVIDIA_A100}
+\citation{IntelMKL}
+\citation{IntelMKL,Schenk2004}
+\citation{Schenk2004}
+\citation{cuSPARSE}
+\citation{Bell2023}
+\citation{Williams2009}
+\citation{McCalpin1995}
+\citation{Deakin2018}
 \@writefile{toc}{\contentsline {section}{\numberline {5}Results and Validation}{9}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Validation against Existing Solvers}{9}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Comparison of Optimization Algorithms}{9}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Hardware Acceleration and Memory Bandwidth Analysis}{9}{}\protected@file@percent }
-\citation{Williams2009,Dongarra2014HPCG}
-\citation{Williams2009}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{}\protected@file@percent }
 \bibstyle{plain}
 \bibdata{references}
 \bibcite{Abert2013}{1}
 \bibcite{Aharoni1996}{2}
 \bibcite{Viallix1988}{3}
-\bibcite{Hubert1993}{4}
-\bibcite{Bisotti2018}{5}
-\bibcite{Brown1963}{6}
-\bibcite{Bruckner2023}{7}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Sparse matrix operators, their memory footprints, and evaluation frequencies averaged per minimizer iteration over the entire hysteresis loop. Line references correspond to the mathematical operations detailed in Algorithm 3\hbox {}.}}{10}{}\protected@file@percent }
-\newlabel{tab:spmv_traffic}{{1}{10}}
-\@writefile{toc}{\contentsline {section}{\numberline {6}Discussion}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Cache Size Constraints and SpMV Efficiency}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion}{10}{}\protected@file@percent }
-\bibcite{Chang2011}{8}
-\bibcite{Cohen1989}{9}
-\bibcite{DellaTorre1985}{10}
-\bibcite{DellaTorre1986}{11}
-\bibcite{DeSimone2002}{12}
-\bibcite{Otto2006}{13}
-\bibcite{Donahue1999}{14}
-\bibcite{Dongarra2014HPCG}{15}
-\bibcite{Exl2014}{16}
-\bibcite{Fischbacher2007}{17}
-\bibcite{Fredkin1990}{18}
-\bibcite{GillMurray1981}{19}
-\bibcite{Wen2009}{20}
-\bibcite{DelVecchio1993}{21}
-\bibcite{IntelXeon6242}{22}
-\bibcite{kinderlehrer1997hysteretic}{23}
-\bibcite{LaBonte1969}{24}
-\bibcite{Lepadatu2020}{25}
-\bibcite{Monk2003}{26}
-\bibcite{Monk1999}{27}
-\bibcite{Monk2001}{28}
-\bibcite{Muller2019}{29}
-\bibcite{NVIDIA_A100}{30}
-\bibcite{Schabes1988}{31}
-\bibcite{Scholz2003}{32}
-\bibcite{Shewchuk1994}{33}
-\bibcite{Sun2006}{34}
-\bibcite{TorfehIsfahani1983}{35}
-\bibcite{Vansteenkiste2014}{36}
-\bibcite{Williams2009}{37}
-\gdef \@abspage@last{12}
+\bibcite{Bell2023}{4}
+\bibcite{Hubert1993}{5}
+\bibcite{Bisotti2018}{6}
+\bibcite{Brown1963}{7}
+\bibcite{Bruckner2023}{8}
+\bibcite{Chang2011}{9}
+\bibcite{Cohen1989}{10}
+\bibcite{Deakin2018}{11}
+\bibcite{DellaTorre1985}{12}
+\bibcite{DellaTorre1986}{13}
+\bibcite{DeSimone2002}{14}
+\bibcite{Otto2006}{15}
+\bibcite{Donahue1999}{16}
+\bibcite{Exl2014}{17}
+\bibcite{Fischbacher2007}{18}
+\bibcite{Fredkin1990}{19}
+\bibcite{GillMurray1981}{20}
+\bibcite{Wen2009}{21}
+\bibcite{DelVecchio1993}{22}
+\bibcite{IntelMKL}{23}
+\bibcite{kinderlehrer1997hysteretic}{24}
+\bibcite{LaBonte1969}{25}
+\bibcite{Lepadatu2020}{26}
+\bibcite{McCalpin1995}{27}
+\bibcite{Monk2003}{28}
+\bibcite{Monk1999}{29}
+\bibcite{Monk2001}{30}
+\bibcite{Muller2019}{31}
+\bibcite{cuSPARSE}{32}
+\bibcite{Schabes1988}{33}
+\bibcite{Schenk2004}{34}
+\bibcite{Scholz2003}{35}
+\bibcite{Shewchuk1994}{36}
+\bibcite{Sun2006}{37}
+\bibcite{TorfehIsfahani1983}{38}
+\bibcite{Vansteenkiste2014}{39}
+\bibcite{Williams2009}{40}
+\gdef \@abspage@last{11}

@@ -16,6 +16,11 @@ A.~Bagn{\`e}res-Viallix, P.~Baras, and J.~B. Albertini.
 \newblock A finite element formulation for the micromagnetic problem.
 \newblock {\em IEEE Transactions on Magnetics}, 24(6):2371--2373, 1988.
 
+\bibitem{Bell2023}
+Nathan Bell, Luke~N. Olson, Jacob Schroder, and Ben Southworth.
+\newblock {PyAMG}: Algebraic multigrid solvers in {Python}.
+\newblock {\em Journal of Open Source Software}, 8(87):5495, 2023.
+
 \bibitem{Hubert1993}
 D.~V. Berkov, K.~Ramst{\"o}ck, and A.~Hubert.
 \newblock Solving micromagnetic problems: towards an optimal numerical method.
@@ -52,6 +57,13 @@ S.~D. Cohen, S.~Y. Lin, and M.~Luskin.
   crystals.
 \newblock {\em Computer Physics Communications}, 53(1-3):455--465, 1989.
 
+\bibitem{Deakin2018}
+Tom Deakin, James Price, Matt Martineau, and Simon McIntosh-Smith.
+\newblock Evaluating attainable memory bandwidth of parallel programming models
+  via babelstream.
+\newblock {\em International Journal of Computational Science and Engineering},
+  17(3):247--262, 2018.
+
 \bibitem{DellaTorre1985}
 E.~Della~Torre.
 \newblock Fine particle micromagnetics.
@@ -77,11 +89,6 @@ A.~DeSimone, R.~V. Kohn, S.~M{\"u}ller, and F.~Otto.
 M.~J. Donahue and D.~G. Porter.
 \newblock Oommf user's guide, version 1.0.
 \newblock {\em Interagency Report NISTIR 6376}, 1999.
-
-\bibitem{Dongarra2014HPCG}
-J.~Dongarra, M.~A. Heroux, and P.~Luszczek.
-\newblock Toward a new metric for ranking high performance computing systems.
-\newblock {\em Sandia National Laboratories, Tech. Rep. SAND2013-8752}, 2013.
 
 \bibitem{Exl2014}
 L.~Exl, S.~Bance, F.~Reichel, T.~Schrefl, H.~P. Stimming, and N.~J. Mauser.
@@ -115,13 +122,11 @@ R.~S. Hebbert, L.~J. Schwee, and R.~M. Del~Vecchio.
 \newblock A finite-element formulation for micromagnetics.
 \newblock {\em IEEE Transactions on Magnetics}, 29(6):2494--2496, 1993.
 
-\bibitem{IntelXeon6242}
-Intel Corporation.
-\newblock {\em Intel\textsuperscript{\textregistered}
-  Xeon\textsuperscript{\textregistered} Gold 6242 Processor Product
-  Specifications}, 2019.
+\bibitem{IntelMKL}
+{Intel Corporation}.
+\newblock {\em Intel® oneAPI Math Kernel Library Developer Reference}, 2024.
 \newblock
-  \url{https://ark.intel.com/content/www/us/en/ark/products/192444/intel-xeon-gold-6242-processor-22m-cache-2-80-ghz.html}.
+  \url{https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html}.
 
 \bibitem{kinderlehrer1997hysteretic}
 D.~Kinderlehrer and L.~Ma.
@@ -138,6 +143,13 @@ S.~Lepadatu.
 \newblock Boris computational spintronics—high performance multi-mesh
   magnetic and spin transport modeling software.
 \newblock {\em Journal of Applied Physics}, 128(24):243902, 2020.
+
+\bibitem{McCalpin1995}
+John~D. McCalpin.
+\newblock Memory bandwidth and machine balance in current high performance
+  computers.
+\newblock {\em IEEE Computer Society Technical Committee on Computer
+  Architecture (TCCA) Newsletter}, December 1995.
 
 \bibitem{Monk2003}
 P.~Monk.
@@ -161,16 +173,20 @@ G.~P. M{\"u}ller, M.~Hoffmann, C.~Di{\ss}elkamp, D.~Sch{\"u}rhoff, S.~Mavros,
 \newblock Spirit: Multifunctional framework for atomistic spin simulations.
 \newblock {\em Physical Review B}, 99(22):224414, 2019.
 
-\bibitem{NVIDIA_A100}
+\bibitem{cuSPARSE}
 {NVIDIA Corporation}.
-\newblock Nvidia a100 tensor core gpu architecture.
-\newblock Technical report, NVIDIA, 2020.
-\newblock Whitepaper.
+\newblock {\em cuSPARSE Library}, 2024.
+\newblock \url{https://developer.nvidia.com/cusparse/}.
 
 \bibitem{Schabes1988}
 M.~E. Schabes and H.~N. Bertram.
 \newblock Magnetization processes in ferromagnetic cubes.
 \newblock {\em Journal of Applied Physics}, 64(3):1347--1357, 1988.
+
+\bibitem{Schenk2004}
+O.~Schenk and K.~G{\"a}rtner.
+\newblock Solving unsymmetric sparse systems of linear equations with pardiso.
+\newblock {\em Future Generation Computer Systems}, 20(3):475--487, 2004.
 
 \bibitem{Scholz2003}
 W.~Scholz, J.~Fidler, T.~Schrefl, D.~Suess, R.~Dittrich, H.~Forster, and

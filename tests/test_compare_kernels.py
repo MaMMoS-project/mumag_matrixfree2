@@ -150,7 +150,7 @@ def test_compare():
     
     # C++ Energy & Grad
     import ctypes
-    lib_path = os.path.join(os.path.dirname(__file__), "../src/libcpp_minimizer.so")
+    lib_path = os.path.join(os.path.dirname(__file__), "../src/libcpp_mkl_minimizer.so")
     lib = ctypes.CDLL(lib_path)
     
     # Let's call evaluate_energy_and_grad using ctypes
@@ -233,13 +233,13 @@ def test_compare():
     assert max_diff_g < 1e-10
     
     # 5. Compare Hessian Action (Ap) and first PCG step
-    lib.solve_P.argtypes = [
+    lib.solve_Py_g.argtypes = [
         ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), # m, b, g_ext, inv_M_prec
-        ctypes.c_void_p, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double, # K_eff, max_iter, tol, reg, inv_Vmag
-        ctypes.POINTER(ctypes.c_double) # y
+        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), # m, g_ext, g_tan_ext, inv_M_prec
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, # K_eff, max_iter, tol, reg, stagnation_nu, inv_Vmag
+        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int) # y, out_iters
     ]
-    lib.solve_P.restype = None
+    lib.solve_Py_g.restype = None
     
     # Compute g_tan_ext in python
     g_tan_ext = tangent_grad(m, py_g)
@@ -248,20 +248,23 @@ def test_compare():
     # Prepare inv_M_prec for C++:
     inv_M_prec_arr = np.ascontiguousarray(inv_M_prec.flatten(), dtype=np.float64)
     
-    # Run C++ solve_P for exactly 1 iteration
+    # Run C++ solve_Py_g for exactly 1 iteration
     cpp_y = np.zeros(3*N, dtype=np.float64)
-    lib.solve_P(
+    out_iters = ctypes.c_int()
+    lib.solve_Py_g(
         N,
         m_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-        g_tan_ext_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         py_g_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        g_tan_ext_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         inv_M_prec_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         K_handle,
         1, # 1 iteration
         0.0, # tol
         0.0, # reg
+        1e-3, # stagnation_nu
         1.0 / V_mag,
-        cpp_y.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        cpp_y.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        ctypes.byref(out_iters)
     )
     
     # Compute Python PCG for exactly 1 iteration
