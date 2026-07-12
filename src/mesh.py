@@ -1833,20 +1833,21 @@ def mesh_backend_neper_poly(
     ]
     subprocess.run(cmd_tess, check=True)
 
-    # Optional preview (kept as-is)
-    cmd_vis = [
-        "neper",
-        "-V",
-        f"n{n}-id{seed}.tess",
-        "-datacellcol",
-        "id",
-        "-print",
-        f"n{n}-id{seed}",
-    ]
-    subprocess.run(cmd_vis, check=True)
+    # Optional preview: Neper's -V export uses POV-Ray, which is not available
+    # on this setup, so keep the command here as documentation only.
+    # cmd_vis = [
+    #     "neper",
+    #     "-V",
+    #     f"n{n}-id{seed}.tess",
+    #     "-datacellcol",
+    #     "id",
+    #     "-print",
+    #     f"n{n}-id{seed}",
+    # ]
+    # subprocess.run(cmd_vis, check=True)
 
     # 2) Mesh tessellation
-    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-format", "vtk"]
+    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-order", "1", "-format", "vtk"]
     subprocess.run(cmd_mesh, check=True)
 
     # 3) Load VTK and propagate grain IDs
