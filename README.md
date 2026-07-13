@@ -287,7 +287,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | `--pc-stagnation-nu`| Relative threshold for detecting quadratic model stagnation. | `0.01` |
 | `--pc-reg` | Diagonal regularization shift for the preconditioner matrix. | `0.0` |
 | `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `2000` |
-| `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. | `1e-8` |
+| `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` |
 | `--poisson-reg` | Tikhonov regularization constant for the Poisson operator diagonal. | `1e-12` |
 | `--phi-extrapolate` / `--no-phi-extrapolate` | Use linear extrapolation of scalar potential for faster iterative Poisson solves. | `True` |
 
@@ -351,5 +351,5 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
 | `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
-| `cg_tol` | Relative residual tolerance for Poisson PCG solver. | `1e-8` | `--cg-tol` |
+| `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` | `--cg-tol` |
 | `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
