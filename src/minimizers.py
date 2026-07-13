@@ -3157,7 +3157,7 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
-            return TRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
+            return TRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False), evals=kwargs.get("evals", jnp.int32(0)), preco_iters=kwargs.get("preco_iters", jnp.int32(0)), demag_iters=kwargs.get("demag_iters", jnp.int32(0)))
 
     elif method == "ptr":
         step_fn = make_ptr_minimizer(
@@ -3166,7 +3166,7 @@ def make_minimizer(
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
-            return PTRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False))
+            return PTRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False), evals=kwargs.get("evals", jnp.int32(0)), preco_iters=kwargs.get("preco_iters", jnp.int32(0)), demag_iters=kwargs.get("demag_iters", jnp.int32(0)))
 
     elif method == "aapg":
         memory = kwargs.get("memory", 5)
@@ -3542,6 +3542,77 @@ def make_minimizer(
                     return y_ret, it
                 return y_ret
 
+            def solve_Py_g_tr_multigpu(m_vec, g_raw_vec, g_tan_ext, delta_val, max_iter=20, tol=0.0, reg=0.0, return_info=False, sparse_ops=None):
+                def apply_P(v):
+                    Cv = local_grad_only_multigpu(v, sparse_ops=sparse_ops)
+                    m_dot_Cv = jnp.sum(m_vec * Cv, axis=1, keepdims=True)
+                    comp2 = m_dot_Cv * m_vec
+                    m_dot_g = jnp.sum(m_vec * g_raw_vec, axis=1, keepdims=True)
+                    comp3 = m_dot_g * v
+                    return Cv - comp2 - comp3 + reg * v
+
+                y = jnp.zeros_like(g_tan_ext)
+                r = g_tan_ext
+                z = r * inv_M_prec
+                p = z
+                rho = float(jnp.vdot(r, z))
+                target_rho = (tol**2) * rho
+
+                it = 0
+                done = False
+
+                while (it < max_iter) and (rho > target_rho) and (rho > 1e-25) and (rho < 1e20) and not done:
+                    Ap = apply_P(p)
+                    pAp = float(jnp.vdot(p, Ap))
+                    
+                    if pAp <= 0.0:
+                        p_norm2 = float(jnp.vdot(p, p))
+                        y_norm2 = float(jnp.vdot(y, y))
+                        yp = float(jnp.vdot(y, p))
+                        a = p_norm2
+                        b = 2.0 * yp
+                        c = y_norm2 - float(delta_val)**2
+                        det = b**2 - 4.0 * a * c
+                        tau_val = 1.0
+                        if det > 0.0:
+                            tau_val = (-b + float(np.sqrt(det))) / (2.0 * a)
+                        else:
+                            tau_val = float(delta_val) / float(np.sqrt(p_norm2) + 1e-30)
+                        y = y + tau_val * p
+                        done = True
+                        break
+
+                    alpha = rho / (pAp + 1e-30)
+                    y_next = y + alpha * p
+                    y_next_norm = float(jnp.linalg.norm(y_next))
+                    
+                    if y_next_norm >= float(delta_val):
+                        p_norm2 = float(jnp.vdot(p, p))
+                        y_norm2 = float(jnp.vdot(y, y))
+                        yp = float(jnp.vdot(y, p))
+                        a = p_norm2
+                        b = 2.0 * yp
+                        c = y_norm2 - float(delta_val)**2
+                        det = b**2 - 4.0 * a * c
+                        tau_val = alpha
+                        if det > 0.0:
+                            tau_val = (-b + float(np.sqrt(det))) / (2.0 * a)
+                        y = y + tau_val * p
+                        done = True
+                        break
+                        
+                    y = y_next
+                    r = r - alpha * Ap
+                    z = r * inv_M_prec
+                    rho_next = float(jnp.vdot(r, z))
+                    p = z + (rho_next / (rho + 1e-30)) * p
+                    rho = rho_next
+                    it += 1
+
+                if return_info:
+                    return y, it
+                return y
+
             def ls_multigpu(m_vec, pg, H_vec, E0, U_base, g_raw_init, B_ext_vec, phi_tol, eta1, eta2, C, c_fact, s0, max_evals, return_info=False, sparse_ops=None):
                 s = float(s0)
                 s_min = 0.0
@@ -3658,93 +3729,168 @@ def make_minimizer(
                 beta_style = "hs" if "hs" in method else "pr"
 
                 while (not bool(state_local.converged)) and (it_count < max_it):
-                    s_m, s_U, s_g_prev, s_g_raw, s_y_prev, s_d_prev, s_E_prev = (
-                        state_local.m,
-                        state_local.U,
-                        state_local.g,
-                        state_local.g_raw,
-                        state_local.y,
-                        state_local.d,
-                        state_local.E,
-                    )
-                    
-                    s_g_tan = tangent_grad_jit(s_m, s_g_raw * inv_M_rel)
-                    s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
-                    s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
-                    
-                    eta_base = params.get("pc_force_eta", 0.5)
-                    alpha_val = params.get("pc_force_alpha", 0.5)
-                    pc_t = min(eta_base, s_gnorm_inf ** alpha_val) if params.get("pc_auto", True) else 0.0
+                    if method in ["tr", "ptr"]:
+                        s_m, s_U, s_g_raw, s_E, s_delta = state_local.m, state_local.U, state_local.g_raw, state_local.E, state_local.delta
+                        
+                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * inv_M_rel)
+                        s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
+                        s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
+                        
+                        eta_base = params.get("pc_force_eta", 0.5)
+                        alpha_val = params.get("pc_force_alpha", 0.5)
+                        pc_t = min(eta_base, s_gnorm_inf ** alpha_val) if params.get("pc_auto", True) else 0.0
 
-                    s_y, s_preco_it = solve_Py_g_multigpu(
-                        s_m,
-                        s_g_raw,
-                        s_g_tan_ext,
-                        max_iter=params.get("pc_iters", 10),
-                        tol=pc_t,
-                        reg=params.get("pc_reg", 0.0),
-                        stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
-                        return_info=True,
-                        sparse_ops=sparse_ops,
-                    )
-                    
-                    s_gnorm_inf_smooth = jnp.max(jnp.abs(s_y))
-                    
-                    if beta_style == "pr":
-                        num = float(jnp.vdot(s_y, s_g_tan_ext - s_g_prev))
-                        den = float(jnp.vdot(s_y_prev, s_g_prev)) + 1e-30
-                        beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
+                        s_d, s_preco_it = solve_Py_g_tr_multigpu(
+                            s_m,
+                            s_g_raw,
+                            -s_g_tan_ext,
+                            s_delta,
+                            max_iter=params.get("tn_iters", 5),
+                            tol=pc_t,
+                            reg=params.get("pc_reg", 0.0),
+                            return_info=True,
+                            sparse_ops=sparse_ops,
+                        )
+
+                        # Predicted reduction
+                        Pd_val = local_grad_only_multigpu(s_d, sparse_ops=sparse_ops)
+                        Pd_val = Pd_val - jnp.sum(s_m * Pd_val, axis=1, keepdims=True) * s_m - jnp.sum(s_m * s_g_raw, axis=1, keepdims=True) * s_d
+                        pred_reduction = float(-(jnp.vdot(s_g_raw, s_d) + 0.5 * jnp.vdot(s_d, Pd_val)))
+
+                        # Evaluate step
+                        m_trial = update_m_jit(s_m, -jnp.cross(s_m, -s_d), 1.0)
+                        U_trial, it_demag, _ = solve_U(m_trial, s_U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
+                        E_trial, g_raw_trial = energy_and_grad_multigpu(m_trial, U_trial, B_ext_vec, sparse_ops=sparse_ops)
+                        E_trial_val = float(E_trial)
+                        if not np.isfinite(E_trial_val):
+                            E_trial_val = 1e20
+                            E_trial = jnp.asarray(1e20, dtype=s_m.dtype)
+
+                        actual_reduction = float(s_E) - E_trial_val
+                        rho_tr = actual_reduction / (pred_reduction + 1e-30)
+
+                        if rho_tr < 0.25:
+                            delta_next = 0.25 * float(s_delta)
+                        elif (rho_tr > 0.75) and (float(jnp.linalg.norm(s_d)) >= 0.9 * float(s_delta)):
+                            delta_next = min(2.0 * float(s_delta), 100.0)
+                        else:
+                            delta_next = float(s_delta)
+
+                        accept = rho_tr > 0.01
+                        
+                        s_m_new = m_trial if accept else s_m
+                        s_U_new = U_trial if accept else s_U
+                        s_E_new = E_trial if accept else s_E
+                        s_g_raw_new = g_raw_trial if accept else s_g_raw
+                        
+                        s_conv = check_convergence_jit(state_local.it, s_E_new, s_E, s_m, s_m_new, s_gnorm_inf, params["tau_f"], params["eps_a"])
+                        
+                        if params.get("verbose", False):
+                            print(f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf):.3e} rho={rho_tr:.3f} dlt={delta_next:.3e} conv={bool(s_conv)}")
+
+                        state_class = PTRState if method == "ptr" else TRState
+                        state_local = state_class(
+                            s_m_new,
+                            s_U_new,
+                            s_U,
+                            s_g_raw_new,
+                            s_E_new,
+                            jnp.array(delta_next, dtype=s_m.dtype),
+                            s_gnorm_inf,
+                            state_local.it + 1,
+                            s_conv,
+                            state_local.evals + 1,
+                            state_local.preco_iters + s_preco_it,
+                            state_local.demag_iters + int(it_demag),
+                        )
                     else:
-                        diff_g = s_g_tan_ext - s_g_prev
-                        num = float(jnp.vdot(s_y, diff_g))
-                        den = float(jnp.vdot(s_d_prev, diff_g)) + 1e-30
-                        beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
-
-                    s_d = d_update_jit(s_y, beta, tangent_grad_jit(s_m, s_d_prev))
-                    s_d = jnp.where(jnp.vdot(s_d, s_g_tan_ext) > 0, -s_y, s_d)
-                    
-                    s_H, s_pg = H_pg_jit(s_m, s_d, s_g_raw)
-                    
-                    s_tau, s_E_new, s_g_raw_new, s_U_new, s_m_new, s_ls_evals, s_ls_demag = ls_multigpu(
-                        s_m,
-                        s_pg,
-                        s_H,
-                        s_E_prev,
-                        s_U,
-                        s_g_raw,
-                        B_ext_vec,
-                        params["phi_tol"],
-                        params["ls_eta1"],
-                        params["ls_eta2"],
-                        params["ls_C"],
-                        params["ls_c"],
-                        1.0,
-                        15,
-                        return_info=True,
-                        sparse_ops=sparse_ops,
-                    )
-                    
-                    s_conv = check_convergence_jit(state_local.it, s_E_new, s_E_prev, s_m, s_m_new, s_gnorm_inf_smooth, params["tau_f"], params["eps_a"])
-                    
-                    if params.get("verbose", False):
-                        print(f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}")
-
-                    state_local = PCGState(
-                        s_m_new,
-                        s_U_new,
-                        s_U,
-                        s_g_tan_ext,
-                        s_g_raw_new,
-                        s_y,
-                        s_d,
-                        s_E_new,
-                        s_gnorm_inf_smooth,
-                        state_local.it + 1,
-                        s_conv,
-                        state_local.evals + s_ls_evals,
-                        state_local.preco_iters + s_preco_it,
-                        state_local.demag_iters + s_ls_demag,
-                    )
+                        s_m, s_U, s_g_prev, s_g_raw, s_y_prev, s_d_prev, s_E_prev = (
+                            state_local.m,
+                            state_local.U,
+                            state_local.g,
+                            state_local.g_raw,
+                            state_local.y,
+                            state_local.d,
+                            state_local.E,
+                        )
+                        
+                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * inv_M_rel)
+                        s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
+                        s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
+                        
+                        eta_base = params.get("pc_force_eta", 0.5)
+                        alpha_val = params.get("pc_force_alpha", 0.5)
+                        pc_t = min(eta_base, s_gnorm_inf ** alpha_val) if params.get("pc_auto", True) else 0.0
+    
+                        s_y, s_preco_it = solve_Py_g_multigpu(
+                            s_m,
+                            s_g_raw,
+                            s_g_tan_ext,
+                            max_iter=params.get("pc_iters", 10),
+                            tol=pc_t,
+                            reg=params.get("pc_reg", 0.0),
+                            stagnation_nu=params.get("pc_stagnation_nu", 1e-3),
+                            return_info=True,
+                            sparse_ops=sparse_ops,
+                        )
+                        
+                        s_gnorm_inf_smooth = jnp.max(jnp.abs(s_y))
+                        
+                        if beta_style == "pr":
+                            num = float(jnp.vdot(s_y, s_g_tan_ext - s_g_prev))
+                            den = float(jnp.vdot(s_y_prev, s_g_prev)) + 1e-30
+                            beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
+                        else:
+                            diff_g = s_g_tan_ext - s_g_prev
+                            num = float(jnp.vdot(s_y, diff_g))
+                            den = float(jnp.vdot(s_d_prev, diff_g)) + 1e-30
+                            beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
+    
+                        s_d = d_update_jit(s_y, beta, tangent_grad_jit(s_m, s_d_prev))
+                        s_d = jnp.where(jnp.vdot(s_d, s_g_tan_ext) > 0, -s_y, s_d)
+                        
+                        s_H, s_pg = H_pg_jit(s_m, s_d, s_g_raw)
+                        
+                        s_tau, s_E_new, s_g_raw_new, s_U_new, s_m_new, s_ls_evals, s_ls_demag = ls_multigpu(
+                            s_m,
+                            s_pg,
+                            s_H,
+                            s_E_prev,
+                            s_U,
+                            s_g_raw,
+                            B_ext_vec,
+                            params["phi_tol"],
+                            params["ls_eta1"],
+                            params["ls_eta2"],
+                            params["ls_C"],
+                            params["ls_c"],
+                            1.0,
+                            15,
+                            return_info=True,
+                            sparse_ops=sparse_ops,
+                        )
+                        
+                        s_conv = check_convergence_jit(state_local.it, s_E_new, s_E_prev, s_m, s_m_new, s_gnorm_inf_smooth, params["tau_f"], params["eps_a"])
+                        
+                        if params.get("verbose", False):
+                            print(f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}")
+    
+                        state_local = PCGState(
+                            s_m_new,
+                            s_U_new,
+                            s_U,
+                            s_g_tan_ext,
+                            s_g_raw_new,
+                            s_y,
+                            s_d,
+                            s_E_new,
+                            s_gnorm_inf_smooth,
+                            state_local.it + 1,
+                            s_conv,
+                            state_local.evals + s_ls_evals,
+                            state_local.preco_iters + s_preco_it,
+                            state_local.demag_iters + s_ls_demag,
+                        )
                     it_count += 1
                 return state_local
 
