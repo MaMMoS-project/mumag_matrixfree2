@@ -682,6 +682,12 @@ def main() -> None:
         help="Disable linear extrapolation of scalar potential.",
     )
     ap.add_argument(
+        "--data-parallel",
+        action="store_true",
+        default=False,
+        help="Use SPMD Data Parallelism for multi-GPU instead of Operator Parallelism (default: False).",
+    )
+    ap.add_argument(
         "--out-dir",
         type=str,
         default="hyst_out",
@@ -943,6 +949,7 @@ def main() -> None:
         "cpp_mkl": bool(args.cpp_mkl),
         "benchmark": bool(args.benchmark),
         "poisson_solver": str(args.poisson_solver),
+        "data_parallel": bool(args.data_parallel),
     }
     for k in params_dict:
         param_sources[k] = "default"
