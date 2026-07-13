@@ -107,7 +107,7 @@ A simulation requires three primary input files, usually sharing the same `<mode
 
 1. **Mesh File (`<modelname>.npz`)**: A numpy archive containing the tetrahedral mesh nodes (`knt`) and elements (`ijk`). It can be generated using `src/mesh.py`. Alternatively, you can convert existing meshes using provided scripts:
    - `src/mesh_convert.py`: Converts a VTK UnstructuredGrid (`.vtu`) mesh into the required `.npz` format (and vice versa).
-   - `src/salomeMeshToNpz.py`: Converts SALOME text output files (`.knt` for nodes, `.ijk` for connectivity) into the `.npz` format.
+   - `src/salomeMeshToNpz.py`: Converts FEMME input files (`.knt` for nodes, `.ijk` for connectivity) into the `.npz` format.
 2. **Parameters File (`<modelname>.p2`)**: An INI-formatted configuration file defining the physical environment, field sweeps, and solver tolerances.
 3. **Materials File (`<modelname>.krn`)**: A 6-column space-separated text file mapping material IDs to their intrinsic magnetic properties (theta, phi, K1, -, Js, A).
 
