@@ -204,3 +204,91 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--backend` | choice | Meshing engine: `meshpy` (TetGen) or `grid`. |
 | `--out-name` | string | Base name for output files. |
 | `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. |
+
+## 9. Appendix: Complete CLI Parameters for `src/loop.py`
+
+Below is an exhaustive list of all command-line arguments accepted by the main driver script `src/loop.py`, categorized by function.
+
+### Positional Arguments
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `modelname` | Base name of the model (for compatibility). Looks for `<modelname>.npz`, `.krn`, and `.p2`. | N/A |
+
+### General I/O & Execution
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--mesh` | Path to the input NPZ mesh file (`knt`, `ijk`). | Extracted from `<modelname>.npz` |
+| `--materials` | Path to a `.krn` file mapping material IDs to intrinsic properties. | Extracted from `<modelname>.krn` |
+| `--out-dir` | Directory where results and snapshots are saved. | `hyst_out` |
+| `--snapshot-every` | Save VTU snapshots of the vector state every N steps (0 to disable). | `1` |
+| `--verbose` | Print detailed inner minimizer iterations at each field step. | `False` |
+| `--benchmark` | Run a dummy warmup step before the main loop to compile JIT functions ahead of time. | `False` |
+
+### Field Sweep & Initialization
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--h-dir` | Applied field direction as a unit vector `"hx,hy,hz"`. | `"0,0,1"` |
+| `--B-start` | Starting magnitude of the applied field (in Tesla). | `-1.0` |
+| `--B-end` | Final magnitude of the applied field (in Tesla). | `1.0` |
+| `--dB` | Field step size magnitude (in Tesla). | `0.05` |
+| `--m0-dir` | Initial uniform magnetization direction `"mx,my,mz"`. | Same as field direction |
+| `--bias-type` | Type of symmetry-breaking field for mode initialization (`circular` or `random`). | `None` |
+| `--bias-strength` | Strength of the bias field relative to saturation (e.g., 0.01). | `0.0` |
+
+### Shell Generation (Airbox)
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--add-shell` | Automatically add a graded airbox shell around the core mesh. | `False` |
+| `--layers` | Number of graded shell layers to generate ($\ge 1$). | `4` |
+| `--K` | Geometric growth factor for the shell layer thickness ($> 1$). | `1.3` |
+| `--beta` | Mesh-size/geometry coupling exponent (1.0 for linear scaling). | `1.0` |
+| `--center` | Ray origin for shell expansion as `"cx,cy,cz"` (in mesh units). | `"0,0,0"` |
+| `--h0` | Target edge length near the body surface (in mesh units). | `None` |
+| `--hmax` | Target edge length at the outermost shell boundary (in mesh units). | `None` |
+| `--minratio` | TetGen quality `minratio` (`-q`) for the shell tetrahedra. | `1.4` |
+| `--max-steiner` | Limit the number of Steiner points added by TetGen. | `None` |
+| `--no-exact` | Suppress exact arithmetic in TetGen (`-X`). | `False` |
+| `--shell-verbose` | Enable verbose standard output from the shell generation pipeline. | `False` |
+
+### Solver Backend & Parallelization
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--operator-mode` | SpMV execution mode: `matrix_free` (recompute on-the-fly) or `assembled` (sparse matrix format). | `assembled` |
+| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`, `jax_mkl`). | `auto` |
+| `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`, `mkl_ffi`). | `persistent_mkl` |
+| `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
+| `--chunk-elems` | Number of elements processed per chunk to control peak GPU memory. | `200000` |
+| `--geom-backend` | Strategy for providing shape gradients: `stored_JinvT`, `stored_grad_phi`, or `on_the_fly`. | `stored_JinvT` |
+
+### Energy Minimizer Configuration
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `lbfgs`, `pnag`, `tn_split`). | `pcohen_hs` |
+| `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `2000` |
+| `--tau-f` | Relative energy convergence tolerance for the minimizer. | `1e-8` |
+| `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `1e-12` |
+| `--tau0` | Initial step size guess for the minimizer line search. | `0.01` |
+| `--tau-min` | Minimum allowed step size (mainly for the BB minimizer). | `1e-6` |
+| `--tau-max` | Maximum allowed step size (mainly for the BB minimizer). | `1.0` |
+| `--L` | Restart frequency for conjugate gradient methods. | Number of nodes |
+| `--memory` | History size ($m$) for L-BFGS and Anderson acceleration. | `5` |
+| `--tn-iters` | Maximum inner iterations for Truncated Newton-CG solvers. | `5` |
+| `--lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` |
+| `--mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` |
+| `--wg-gamma` | Number of steps in convex region before switching to BB (WG method). | `5` |
+| `--wg-threshold` | Convexity threshold for the WG algorithm. | `1e-6` |
+
+### Preconditioning Configuration
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `--precond-type` | Poisson solver preconditioner: `amgcl`, `jacobi`, `chebyshev`, or `amg`. | `amgcl` |
+| `--pc-iters` | Inner iteration limit for preconditioning solvers. | `10` |
+| `--pc-auto` / `--pc-no-auto`| Enable automated tuning of preconditioning accuracy. | `True` |
+| `--pc-force-eta` | Base forcing parameter for adaptive preconditioning. | `0.5` |
+| `--pc-force-alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` |
+| `--pc-stagnation-nu`| Relative threshold for detecting quadratic model stagnation. | `0.01` |
+| `--pc-reg` | Diagonal regularization shift for the preconditioner matrix. | `0.0` |
+| `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `2000` |
+| `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. | `1e-8` |
+| `--poisson-reg` | Tikhonov regularization constant for the Poisson operator diagonal. | `1e-12` |
+| `--phi-extrapolate` / `--no-phi-extrapolate` | Use linear extrapolation of scalar potential for faster iterative Poisson solves. | `True` |
