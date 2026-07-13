@@ -165,7 +165,7 @@ pixi run sample
 
 ### Energy Minimization Methods (`--method`)
 The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ constraint at every node.
-- **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. Highly robust for micromagnetics.
+- **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks, demonstrating superior convergence stability even on complex topologies and very large meshes.
 - **`pcohen`**: Preconditioned Cohen CG with Polak-Ribière update.
 - **`lbfgs` / `plbfgs`**: Standard and Preconditioned Limited-memory BFGS.
 - **`tn`**: Truncated Newton-CG.
