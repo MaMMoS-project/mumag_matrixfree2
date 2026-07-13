@@ -165,11 +165,9 @@ pixi run sample
 
 ### Energy Minimization Methods (`--method`)
 The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ constraint at every node.
-- **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks, demonstrating superior convergence stability even on complex topologies and very large meshes.
+- **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks.
 - **`pcohen`**: Preconditioned Cohen CG with Polak-Ribière update.
-- **`lbfgs` / `plbfgs`**: Standard and Preconditioned Limited-memory BFGS.
 - **`tn`**: Truncated Newton-CG.
-- **`pbb`**: Preconditioned Barzilai-Borwein.
 
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
