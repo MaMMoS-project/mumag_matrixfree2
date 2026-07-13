@@ -80,6 +80,27 @@ pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
 ```
 Submit with: `sbatch run_gpu.slurm`
 
+### Slurm Job for Multi-GPU
+To run a multi-GPU job (e.g., on a node with multiple `L40S` or `A100` GPUs), explicitly target the `cuda` environment and request more than one GPU in the SLURM headers. The codebase automatically detects the number of available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
+
+Create a file `run_multigpu.slurm`:
+```bash
+#!/bin/bash
+#SBATCH --job-name=mumag_multigpu
+#SBATCH --partition=dissSims
+#SBATCH --gres=gpu:l40s:4
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=128G
+
+export JAX_ENABLE_X64=True
+# Limit memory fraction per GPU to avoid overallocation
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+
+# Run the simulation. The code automatically distributes operators across all available GPUs!
+pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
+```
+Submit with: `sbatch run_multigpu.slurm`
+
 ## 4. Required Input
 
 A simulation requires three primary input files, usually sharing the same `<modelname>` prefix:
