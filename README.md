@@ -292,3 +292,66 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. | `1e-8` |
 | `--poisson-reg` | Tikhonov regularization constant for the Poisson operator diagonal. | `1e-12` |
 | `--phi-extrapolate` / `--no-phi-extrapolate` | Use linear extrapolation of scalar potential for faster iterative Poisson solves. | `True` |
+
+## 10. Appendix: `.p2` Configuration Parameters and Overrides
+
+In addition to CLI arguments, you can define simulation parameters permanently using a `<modelname>.p2` INI file. 
+
+### Parameter Resolution Priority
+The code dynamically merges parameters with the following strict priority:
+1. **Explicit CLI Flags** (Highest priority, completely overwrites `.p2` and defaults)
+2. **`.p2` Parameter File** (Overwrites built-in defaults)
+3. **Built-in Defaults** (Lowest priority)
+
+This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run python3 src/loop.py my_model --method lbfgs`).
+
+### Supported `.p2` Parameters
+
+#### `[mesh]`
+| Parameter | Description | Default | CLI Equivalent |
+| :--- | :--- | :--- | :--- |
+| `size` | Size of one mesh unit in meters (e.g., `1e-9` for nm). | `1e-9` | N/A |
+
+#### `[initial state]`
+| Parameter | Description | Default | CLI Equivalent |
+| :--- | :--- | :--- | :--- |
+| `mx`, `my`, `mz` | Uniform initial magnetization vector components. | Field direction | `--m0-dir` |
+
+#### `[field]`
+| Parameter | Description | Default | CLI Equivalent |
+| :--- | :--- | :--- | :--- |
+| `h` (or `hx`,`hy`,`hz`) | Applied field direction vector. | `0,0,1` | `--h-dir` |
+| `hstart` | Starting magnitude of the applied field (Tesla). | `-1.0` | `--B-start` |
+| `hfinal` | Final magnitude of the applied field (Tesla). | `1.0` | `--B-end` |
+| `hstep` | Field sweep step size magnitude (Tesla). | `0.05` | `--dB` |
+| `bias_type` | Symmetry-breaking initialization field (`circular` or `random`). | `None` | `--bias-type` |
+| `bias_strength` | Strength of the bias field relative to saturation. | `0.0` | `--bias-strength` |
+
+#### `[minimizer]`
+| Parameter | Description | Default | CLI Equivalent |
+| :--- | :--- | :--- | :--- |
+| `method` | Energy minimization algorithm. | `pcohen_hs` | `--method` |
+| `max_iter` | Maximum inner iterations per field step. | `2000` | `--max-iter` |
+| `tol_fun` | Relative energy convergence tolerance. | `1e-8` | `--tau-f` |
+| `eps_a` | Absolute tangent gradient norm tolerance. | `1e-12` | `--eps-a` |
+| `tau0` | Initial step size guess. | `0.01` | `--tau0` |
+| `tau_min` | Minimum allowed step size. | `1e-6` | `--tau-min` |
+| `tau_max` | Maximum allowed step size. | `1.0` | `--tau-max` |
+| `pc_iters` | Inner iteration limit for preconditioning solvers. | `10` | `--pc-iters` |
+| `pc_auto` | Enable automated tuning of preconditioning. | `True` | `--pc-auto` |
+| `pc_force_eta` | Base forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-eta` |
+| `pc_force_alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-alpha` |
+| `pc_stagnation_nu`| Stagnation threshold for quadratic models. | `0.01` | `--pc-stagnation-nu` |
+| `memory` | History size for L-BFGS and Anderson acceleration. | `5` | `--memory` |
+| `tn_iters` | Maximum inner iterations for Truncated Newton-CG. | `5` | `--tn-iters` |
+| `lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` | `--lr` |
+| `mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` | `--mu` |
+| `wg_gamma` | Steps in convex region before switching to BB. | `5` | `--wg-gamma` |
+| `wg_threshold` | Convexity threshold for the WG algorithm. | `1e-6` | `--wg-threshold` |
+
+#### `[poisson]`
+| Parameter | Description | Default | CLI Equivalent |
+| :--- | :--- | :--- | :--- |
+| `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
+| `cg_tol` | Relative residual tolerance for Poisson PCG solver. | `1e-8` | `--cg-tol` |
+| `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
