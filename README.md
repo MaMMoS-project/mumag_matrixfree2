@@ -261,7 +261,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Energy Minimizer Configuration
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `lbfgs`, `pnag`, `tn_split`). | `pcohen_hs` |
+| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `pcohen`, `tn`). | `pcohen_hs` |
 | `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `2000` |
 | `--tau-f` | Relative energy convergence tolerance for the minimizer. | `1e-8` |
 | `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `1e-12` |
