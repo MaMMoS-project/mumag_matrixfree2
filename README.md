@@ -172,7 +172,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
 - **`pardiso`**: Direct sparse solver utilizing the C++ Intel MKL backend. Vastly superior for CPU nodes.
-- **`jax`**: Iterative Preconditioned Conjugate Gradient (PCG) matrix-free solver. Highly parallelized for massive GPU execution.
+- **`jax`**: Iterative Preconditioned Conjugate Gradient (PCG) matrix-free solver. It uses an algebraic multigrid method for preconditioning the conjugate gradient. Highly parallelized for massive GPU execution.
 
 ## 8. CLI Features & Arguments
 
