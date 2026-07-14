@@ -16,15 +16,7 @@ import scipy.sparse as sp
 import os
 import sys
 
-try:
-    sys.path.append(os.path.dirname(__file__))
-    import mkl_ffi_lib
-    import jax.ffi as ffi
-    for name, capsule in mkl_ffi_lib.get_registrations().items():
-        ffi.register_ffi_target(name, capsule, platform="cpu")
-    HAS_MKL_FFI = True
-except Exception:
-    HAS_MKL_FFI = False
+HAS_MKL_FFI = False
 
 
 def assemble_poisson_matrix_cpu(
@@ -358,28 +350,7 @@ def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "
             
             return SparseOperator(custom_spmv, ((data, indices, row_indices),))
         elif cpu_spmv_backend == "mkl_ffi":
-            if not HAS_MKL_FFI:
-                raise ImportError("mkl_ffi_lib was not compiled successfully.")
-            
-            persistent_op = PersistentMKLOperator(scipy_csr_mat)
-            mkl_a_val = persistent_op.mkl_a
-            if isinstance(mkl_a_val, bytes):
-                mkl_handle_addr = int.from_bytes(mkl_a_val, byteorder=sys.byteorder)
-            elif hasattr(mkl_a_val, "value") and mkl_a_val.value is not None:
-                mkl_handle_addr = mkl_a_val.value
-            else:
-                import ctypes
-                mkl_handle_addr = ctypes.cast(mkl_a_val, ctypes.c_void_p).value
-            
-            @jax.jit
-            def ffi_spmv(x_val):
-                out_shape = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
-                return ffi.ffi_call(
-                    "mkl_spmv_ffi",
-                    out_shape
-                )(x_val, jnp.asarray(mkl_handle_addr, dtype=jnp.int64))
-            
-            return SparseOperator(lambda _, x: ffi_spmv(x) if persistent_op else None, ())
+            raise ValueError("mkl_ffi backend was removed. Use persistent_mkl instead.")
         else:
             cpu_op = make_cpu_csr_op(scipy_csr_mat, cpu_spmv_backend=cpu_spmv_backend)
             return SparseOperator(lambda _, x: cpu_op(x), ())
@@ -807,12 +778,11 @@ def assemble_exchange_anisotropy_matrix_cpu(
 
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
-    if not HAS_MKL_FFI:
-        raise ImportError("mkl_ffi_lib was not compiled successfully.")
-
     import ctypes
     import os
-    lib_path = os.path.join(os.path.dirname(__file__), "mkl_ffi_lib.so")
+    lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+    if not os.path.exists(lib_path):
+        raise ImportError("libcpp_mkl_minimizer.so was not compiled successfully.")
     ffi_lib = ctypes.CDLL(lib_path)
     
     ffi_lib.init_pardiso.argtypes = [
@@ -844,6 +814,13 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
         raise RuntimeError(f"PARDISO initialization failed with error code {-handle_id}")
     print("PARDISO initialization successful.")
     
+    ffi_lib.pardiso_solve_direct.argtypes = [
+        ctypes.c_int64,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double)
+    ]
+    ffi_lib.pardiso_solve_direct.restype = ctypes.c_int
+
     class PardisoHandle:
         def __init__(self, hid, a, ia, ja):
             self.handle_id = hid
@@ -858,11 +835,18 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     
     @jax.jit
     def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy: Any = None):
-        out_shape = jax.ShapeDtypeStruct(b.shape, b.dtype)
-        x = ffi.ffi_call(
-            "pardiso_solve_ffi",
-            out_shape
-        )(b, handle_id_val)
+        def cb(b_val):
+            b_np = np.ascontiguousarray(b_val, dtype=np.float64)
+            x_np = np.zeros_like(b_np)
+            b_ptr = b_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            x_ptr = x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            error = ffi_lib.pardiso_solve_direct(pardiso_obj.handle_id, b_ptr, x_ptr)
+            if error != 0:
+                raise RuntimeError(f"PARDISO solve failed with error {error}")
+            return x_np
+            
+        result_shape_dtype = jax.ShapeDtypeStruct(b.shape, b.dtype)
+        x = jax.pure_callback(cb, result_shape_dtype, b)
         return x, jnp.int32(1), jnp.float64(0.0)
         
     solve_linear.pardiso_obj = pardiso_obj
@@ -871,146 +855,5 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
 
 
 def make_jax_mkl_solve_linear(pyamg_hierarchy, cg_maxiter: int = 2000, cg_tol: float = 1e-8) -> callable:
-    if not HAS_MKL_FFI:
-        raise ImportError("mkl_ffi_lib was not compiled successfully.")
-
-    import ctypes
-    import os
-    import numpy as np
-    import scipy.sparse as sp_sparse
-    lib_path = os.path.join(os.path.dirname(__file__), "mkl_ffi_lib.so")
-    ffi_lib = ctypes.CDLL(lib_path)
-    
-    ffi_lib.init_amg_state.argtypes = [ctypes.c_int, ctypes.c_double]
-    ffi_lib.init_amg_state.restype = ctypes.c_int64
-    
-    ffi_lib.add_amg_level.argtypes = [
-        ctypes.c_int64, ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_double), ctypes.c_int64
-    ]
-    ffi_lib.add_amg_level.restype = ctypes.c_int
-    
-    ffi_lib.finalize_amg_state.argtypes = [ctypes.c_int64]
-    ffi_lib.finalize_amg_state.restype = ctypes.c_int
-    
-    ffi_lib.free_amg_state.argtypes = [ctypes.c_int64]
-    ffi_lib.free_amg_state.restype = None
-
-    print(f"Initializing MKL PCG/AMG for {len(pyamg_hierarchy.levels)} levels...")
-    handle_id = ffi_lib.init_amg_state(cg_maxiter, cg_tol)
-    if handle_id < 0:
-        raise RuntimeError(f"Failed to create AMG state")
-        
-    refs = [] # Keep arrays alive!
-    
-    from amg_utils import compute_spai0_diagonal
-
-    for i, level in enumerate(pyamg_hierarchy.levels):
-        A = level.A.tocsr()
-        n = A.shape[0]
-        n_c = 0
-        
-        a_data = A.data.astype(np.float64)
-        ia_data = A.indptr.astype(np.int32)
-        ja_data = A.indices.astype(np.int32)
-        refs.extend([a_data, ia_data, ja_data])
-        
-        a_ptr = a_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-        ia_ptr = ia_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-        ja_ptr = ja_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-        
-        p_ptr, ip_ptr, jp_ptr = None, None, None
-        r_ptr, ir_ptr, jr_ptr = None, None, None
-        
-        mdiag_spai0_data = compute_spai0_diagonal(A).astype(np.float64)
-        refs.append(mdiag_spai0_data)
-        mdiag_spai0_ptr = mdiag_spai0_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-        
-        pardiso_id = 0
-        
-        if i < len(pyamg_hierarchy.levels) - 1:
-            P = level.P.tocsr()
-            R = level.R.tocsr()
-            n_c = P.shape[1]
-            
-            p_data = P.data.astype(np.float64)
-            ip_data = P.indptr.astype(np.int32)
-            jp_data = P.indices.astype(np.int32)
-            refs.extend([p_data, ip_data, jp_data])
-            
-            p_ptr = p_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-            ip_ptr = ip_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-            jp_ptr = jp_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-            
-            r_data = R.data.astype(np.float64)
-            ir_data = R.indptr.astype(np.int32)
-            jr_data = R.indices.astype(np.int32)
-            refs.extend([r_data, ir_data, jr_data])
-            
-            r_ptr = r_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-            ir_ptr = ir_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-            jr_ptr = jr_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-        else:
-            # Coarsest level: initialize PARDISO
-            A_upper = sp_sparse.triu(A, format='csr')
-            a_u_data = A_upper.data.astype(np.float64)
-            ia_u_data = A_upper.indptr.astype(np.int32)
-            ja_u_data = A_upper.indices.astype(np.int32)
-            refs.extend([a_u_data, ia_u_data, ja_u_data])
-            
-            a_u_ptr = a_u_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-            ia_u_ptr = ia_u_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-            ja_u_ptr = ja_u_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-            
-            ffi_lib.init_pardiso.argtypes = [
-                ctypes.c_int, ctypes.POINTER(ctypes.c_double),
-                ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)
-            ]
-            ffi_lib.init_pardiso.restype = ctypes.c_int64
-            pardiso_id = ffi_lib.init_pardiso(n, a_u_ptr, ia_u_ptr, ja_u_ptr)
-            if pardiso_id < 0:
-                raise RuntimeError(f"PARDISO initialization failed for coarse level with error {-pardiso_id}")
-                
-        ret = ffi_lib.add_amg_level(
-            handle_id, n, n_c,
-            a_ptr, ja_ptr, ia_ptr,
-            p_ptr, jp_ptr, ip_ptr,
-            r_ptr, jr_ptr, ir_ptr,
-            mdiag_spai0_ptr, pardiso_id
-        )
-        if ret != 0:
-            raise RuntimeError(f"Failed to add AMG level {i}")
-            
-    if ffi_lib.finalize_amg_state(handle_id) != 0:
-        raise RuntimeError("Failed to finalize AMG state")
-        
-    print("MKL PCG/AMG initialization successful.")
-    
-    class AmgHandle:
-        def __init__(self, hid, refs):
-            self.handle_id = hid
-            self.refs = refs
-        def __del__(self):
-            ffi_lib.free_amg_state(self.handle_id)
-            
-    amg_obj = AmgHandle(handle_id, refs)
-    import jax.numpy as jnp
-    import jax
-    handle_id_val = jnp.asarray(handle_id, dtype=jnp.int64)
-    
-    @jax.jit
-    def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy=None):
-        out_shape = jax.ShapeDtypeStruct(b.shape, b.dtype)
-        import jax.ffi as ffi
-        x = ffi.ffi_call(
-            "jax_mkl_solve_ffi",
-            out_shape
-        )(b, handle_id_val)
-        return x, jnp.int32(1), jnp.float64(0.0)
-        
-    solve_linear.amg_obj = amg_obj
-    return solve_linear
+    raise NotImplementedError("make_jax_mkl_solve_linear was removed as JAX FFI is no longer supported.")
 

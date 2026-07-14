@@ -254,8 +254,8 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `--operator-mode` | SpMV execution mode: `matrix_free` (recompute on-the-fly) or `assembled` (sparse matrix format). | `assembled` |
-| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`, `jax_mkl`). | `auto` |
-| `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`, `mkl_ffi`). | `persistent_mkl` |
+| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
+| `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
 | `--chunk-elems` | Number of elements processed per chunk to control peak GPU memory. | `200000` |
 | `--geom-backend` | Strategy for providing shape gradients: `stored_JinvT`, `stored_grad_phi`, or `on_the_fly`. | `stored_JinvT` |

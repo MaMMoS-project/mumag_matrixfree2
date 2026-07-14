@@ -586,8 +586,7 @@ def make_solve_U(
         print(f"AMG hierarchy has {len(ml.levels)} levels.")
         
         if poisson_solver == "jax_mkl":
-            from amg_utils import make_jax_mkl_solve_linear
-            solve_linear = make_jax_mkl_solve_linear(ml, cg_maxiter=cg_maxiter, cg_tol=cg_tol)
+            raise ValueError("poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead.")
         else:
             levels_jax = []
             for i in range(len(ml.levels)):

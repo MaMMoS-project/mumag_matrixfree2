@@ -3,7 +3,7 @@ import numpy as np
 import scipy.sparse as sps
 import os
 
-lib_path = os.path.join(os.path.dirname(__file__), "libcpp_mkl_minimizer.so")
+lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
 if not os.path.exists(lib_path):
     raise FileNotFoundError(f"Could not find {lib_path}. Please compile the C++ minimizer.")
 

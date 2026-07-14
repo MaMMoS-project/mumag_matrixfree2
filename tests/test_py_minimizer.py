@@ -75,24 +75,24 @@ def test():
         conn32, volume, l_grad_phi, boundary_mask=np.zeros(knt.shape[0], dtype=np.int32), reg=1e-12
     )
     A_diag = jnp.asarray(A_scipy.diagonal())
-    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="mkl_ffi")
+    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="persistent_mkl")
     
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
     D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend="mkl_ffi")
+    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl")
     
     N = knt.shape[0]
     Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
     Gy_scipy = 2.0 * D_scipy[:, N:2*N].transpose()
     Gz_scipy = 2.0 * D_scipy[:, 2*N:].transpose()
     G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend="mkl_ffi")
+    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl")
     
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend="mkl_ffi")
+    K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl")
     
     # Setup Solve_U
     from poisson_solve import make_solve_U
@@ -109,7 +109,7 @@ def test():
         boundary_mask=None,
         mode="assembled",
         A_sparse=A_sparse,
-        cpu_spmv_backend="mkl_ffi",
+        cpu_spmv_backend="persistent_mkl",
         poisson_solver="pardiso",
     )
     
