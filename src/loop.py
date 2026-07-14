@@ -353,12 +353,30 @@ def main() -> None:
         action="store_true",
         help="Add an airbox shell around the core mesh.",
     )
-    ap.add_argument("--layers", type=int, default=4, help="Number of graded shell layers (>= 1).")
+    ap.add_argument(
+        "--shell-type",
+        type=str,
+        default="hull",
+        choices=["triangles", "hull"],
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+    )
+    ap.add_argument("--layers", type=int, default=None, help="Number of graded shell layers (>= 1).")
     ap.add_argument(
         "--K",
         type=float,
-        default=1.3,
+        default=1.5,
         help="Geometric growth factor for shell layer thickness (> 1).",
+    )
+    ap.add_argument(
+        "--KL",
+        type=float,
+        default=10.0,
+        help="Total outermost geometric scale relative to body (> 1).",
+    )
+    ap.add_argument(
+        "--auto-layers",
+        action="store_true",
+        help="Automatically compute the number of layers L given --KL and --K.",
     )
     ap.add_argument(
         "--beta",
@@ -789,6 +807,8 @@ def main() -> None:
             in_npz=str(tmp_npz),
             layers=args.layers,
             K=args.K,
+            KL=args.KL,
+            auto_layers=args.auto_layers,
             beta=args.beta,
             center=args.center,
             h0=args.h0,
@@ -797,6 +817,7 @@ def main() -> None:
             max_steiner=args.max_steiner,
             no_exact=args.no_exact,
             verbose=args.shell_verbose,
+            shell_type=args.shell_type,
         )
         # Cleanup temporary body file
         if tmp_npz.exists():

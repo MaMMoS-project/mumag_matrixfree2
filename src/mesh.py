@@ -1390,9 +1390,9 @@ def run_single_solid_mesher(
     verbose: bool = False,
     # Shell parameters
     add_shell: bool = False,
-    shell_layers: int | None = 4,
-    shell_K: float | None = 1.3,
-    shell_KL: float | None = None,
+    shell_layers: int | None = None,
+    shell_K: float | None = 1.5,
+    shell_KL: float | None = 10.0,
     shell_auto_layers: bool = False,
     shell_auto_K: bool = False,
     shell_beta: float = 1.0,
@@ -1404,7 +1404,7 @@ def run_single_solid_mesher(
     shell_max_steiner: int | None = None,
     shell_no_exact: bool = False,
     shell_verbose: bool = False,
-    shell_type: str = "triangles",
+    shell_type: str = "hull",
     # Neper CVT parameters
     neper_tol: float | None = None,
     neper_timeout: float | None = None,
@@ -2160,26 +2160,26 @@ def main() -> None:
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="triangles",
+        default="hull",
         choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' (default) or use convex 'hull'.",
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
     )
     ap.add_argument(
         "--layers",
         type=int,
-        default=4,
+        default=None,
         help="Number of graded tetrahedral shell layers L (>= 1).",
     )
     ap.add_argument(
         "--K",
         type=float,
-        default=1.3,
+        default=1.5,
         help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
     )
     ap.add_argument(
         "--KL",
         type=float,
-        default=None,
+        default=10.0,
         help="Total outermost geometric scale relative to body (> 1).",
     )
     ap.add_argument(

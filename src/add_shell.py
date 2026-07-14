@@ -217,6 +217,23 @@ def remove_degenerate_and_duplicate_tets(knt: np.ndarray, ijk: np.ndarray, vol_e
     return ijk_kept[np.sort(first_idx)]
 
 
+def compute_tet_quality(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
+    """Computes the normalized volume-to-edge ratio quality metric eta for each tetrahedron."""
+    if tets.size == 0:
+        return np.array([])
+    pts = knt[tets]
+    a, b, c, d = pts[:, 0], pts[:, 1], pts[:, 2], pts[:, 3]
+    ab, ac, ad, bc, bd, cd = b - a, c - a, d - a, c - b, d - b, d - c
+    vols6 = np.abs(np.einsum('ij,ij->i', np.cross(ab, ac), ad))
+    vols = vols6 / 6.0
+    l_ab, l_ac, l_ad = np.einsum('ij,ij->i', ab, ab), np.einsum('ij,ij->i', ac, ac), np.einsum('ij,ij->i', ad, ad)
+    l_bc, l_bd, l_cd = np.einsum('ij,ij->i', bc, bc), np.einsum('ij,ij->i', bd, bd), np.einsum('ij,ij->i', cd, cd)
+    S = l_ab + l_ac + l_ad + l_bc + l_bd + l_cd
+    rms = np.sqrt(np.maximum(S, 1e-12) / 6.0)
+    eta = (6.0 * np.sqrt(2.0) * vols) / (rms ** 3)
+    return np.clip(eta, 0.0, 1.0)
+
+
 # -------------------------- surface size estimate --------------------------
 
 
@@ -368,6 +385,7 @@ def make_shell_plc_from_surface(
     K: float,
     center: tuple[float, float, float],
     shell_type: str = "triangles",
+    target_h: float | None = None,
 ) -> tuple[np.ndarray, list[list[int]], np.ndarray, np.ndarray, dict, list]:
     """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
 
@@ -390,9 +408,25 @@ def make_shell_plc_from_surface(
     if shell_type == "hull":
         from scipy.spatial import ConvexHull
         hull = ConvexHull(knt0)
-        # Unique vertices on the convex hull
-        hull_verts = np.unique(hull.simplices.reshape(-1))
-        hull_tris = hull.simplices
+        hull_verts_orig = np.unique(hull.simplices.reshape(-1))
+        hull_V = knt0[hull_verts_orig].copy()
+        old_to_new = {old: new for new, old in enumerate(hull_verts_orig)}
+        hull_F = np.array([[old_to_new[v] for v in tri] for tri in hull.simplices], dtype=np.int32)
+
+        # Compute subdivision levels
+        levels = 0
+        if target_h is not None and target_h > 0:
+            edges = np.vstack([hull_F[:,[0,1]], hull_F[:,[1,2]], hull_F[:,[2,0]]])
+            lens = np.linalg.norm(hull_V[edges[:,1]] - hull_V[edges[:,0]], axis=1)
+            avg_len = np.mean(lens)
+            desired_len = target_h * 2.0  # Allow some coarseness
+            if avg_len > desired_len:
+                levels = int(np.ceil(np.log2(avg_len / desired_len)))
+                levels = min(levels, 4)  # Cap at 4 levels (256x triangles) to prevent explosion
+
+        hull_V, hull_F = subdivide_flat_mesh(hull_V, hull_F, levels)
+        hull_verts = np.arange(len(hull_V))
+        hull_tris = hull_F
 
         # Build node map & scaling copy for layers 1..L using hull_verts
         knt_all = knt0.copy()
@@ -405,7 +439,7 @@ def make_shell_plc_from_surface(
         ext = vmax - vmin
         Lmax = float(np.max(ext))
         c = center.reshape(1, 3)
-        v0 = knt0[hull_verts] - c  # rays from center to hull vertices
+        v0 = hull_V - c  # rays from center to hull vertices
 
         max_anisotropy = 5.0
         svecs_layer = []
@@ -557,7 +591,7 @@ def add_shell_with_meshpy(
 
     # PLC creation
     knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = make_shell_plc_from_surface(
-        knt0, tris0, layers=layers, K=K, center=center, shell_type=shell_type
+        knt0, tris0, layers=layers, K=K, center=center, shell_type=shell_type, target_h=h0
     )
 
     mi = MeshInfo()
@@ -579,11 +613,20 @@ def add_shell_with_meshpy(
     gms = [float(np.exp(np.log(sv).mean())) for sv in svecs_layer]  # geometric means (length 'layers')
 
     if hmax is None:
-        scale = 1.0
+        # Prevent explosion for large magnets with fine surface meshes (e.g. 200nm magnet with 2nm mesh)
+        # by ensuring the outer elements are at least a fraction of the total airbox size.
+        ext = np.max(knt0, axis=0) - np.min(knt0, axis=0)
+        Lmax = float(np.max(ext))
+        base_hmax = h0 * (gms[-1] ** beta)
+        # Auto hmax: 20% of the core size scaled by KL
+        auto_hmax = 0.2 * Lmax * gms[-1]
+        resolved_hmax = max(base_hmax, auto_hmax)
     else:
-        # ensure the *outermost* region hits hmax
-        denom = max(h0 * (gms[-1] ** beta), 1e-30)
-        scale = float(hmax) / denom
+        resolved_hmax = float(hmax)
+
+    # ensure the *outermost* region hits the resolved hmax
+    denom = max(h0 * (gms[-1] ** beta), 1e-30)
+    scale = resolved_hmax / denom
 
     mi.regions.resize(layers)
     for layer_idx in range(layers):
@@ -647,8 +690,8 @@ def run_add_shell_pipeline(
     in_npz: str,
     # Geometry controls
     layers: int | None = None,
-    K: float | None = None,
-    KL: float | None = None,
+    K: float | None = 1.5,
+    KL: float | None = 10.0,
     auto_layers: bool = False,
     auto_K: bool = False,
     # Mesh-size coupling
@@ -665,7 +708,7 @@ def run_add_shell_pipeline(
     max_steiner: int | None = None,
     no_exact: bool = False,
     verbose: bool = False,
-    shell_type: str = "triangles",
+    shell_type: str = "hull",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Programmatic entry point for adding graded shell layers.
 
@@ -716,6 +759,9 @@ def run_add_shell_pipeline(
     L = layers
     K_val = K
     KL_val = KL
+
+    if (L is None) and (KL_val is not None) and (K_val is not None) and not auto_K:
+        auto_layers = True
 
     if auto_layers:
         if (KL_val is None) or (K_val is None):
@@ -808,7 +854,43 @@ def run_add_shell_pipeline(
         same_scaling=bool(same_scaling),
         shell_type=shell_type,
     )
-    print("layers = ", L, " nodes = ", len(knt), " elements = ", len(ijk))
+    
+    # Analyze and print airbox mesh quality
+    if ijk.shape[1] >= 5:
+        max_mat = int(ijk[:, 4].max())
+        shell_mask = ijk[:, 4] == max_mat
+        tets_shell = ijk[shell_mask, :4].astype(np.int64)
+        tets_core = ijk[~shell_mask, :4].astype(np.int64)
+    else:
+        tets_shell = ijk[:, :4]
+        tets_core = np.array([])
+        
+    n_shell = tets_shell.shape[0]
+    n_core = tets_core.shape[0]
+    
+    if n_shell > 0:
+        shell_nids = np.unique(tets_shell)
+        shell_pts = knt[shell_nids]
+        mins = np.min(shell_pts, axis=0)
+        maxs = np.max(shell_pts, axis=0)
+        extents = maxs - mins
+        vol_airbox = float(np.prod(extents))
+        q_shell = compute_tet_quality(knt, tets_shell)
+        q_mean, q_min = float(np.mean(q_shell)), float(np.min(q_shell))
+        ext_str = f"[{extents[0]:.1f}, {extents[1]:.1f}, {extents[2]:.1f}]"
+        
+        log("\n" + "="*70)
+        log("=== AIRBOX MESH ANALYSIS ===")
+        log(f"Core Elements  : {n_core:,}")
+        log(f"Shell Elements : {n_shell:,} (Total: {ijk.shape[0]:,})")
+        log(f"Nodes          : {knt.shape[0]:,}")
+        log(f"Airbox Extents : {ext_str}")
+        log(f"Airbox Volume  : {vol_airbox:.2e}")
+        log(f"Shell Quality  : Mean = {q_mean:.4f}, Min = {q_min:.4f}")
+        log("="*70 + "\n")
+    else:
+        log(f"[info] No shell elements added. Core nodes = {knt.shape[0]}, elements = {ijk.shape[0]}")
+
     return knt, ijk
 
 
@@ -836,13 +918,13 @@ def main():
     ap.add_argument(
         "--K",
         type=float,
-        default=None,
+        default=1.5,
         help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
     )
     ap.add_argument(
         "--KL",
         type=float,
-        default=None,
+        default=10.0,
         help="Total outermost geometric scale relative to body (> 1).",
     )
     ap.add_argument(
@@ -907,9 +989,9 @@ def main():
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="triangles",
+        default="hull",
         choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' (default) or use convex 'hull'.",
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
     )
 
     # NEW: optional VTU export of the merged (body + shells) mesh

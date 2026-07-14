@@ -152,12 +152,17 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
 ```
 
-**2. Run a CPU Simulation with an Auto-Generated Airbox:**
+**2. Create a 20nm Cube Mesh with an Auto-Generated Airbox:**
 ```bash
-pixi run python3 src/loop.py cube_20nm --add-shell --layers 4
+pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
 ```
 
-**3. Run a Full Pipeline Example (Provided):**
+**3. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
+```bash
+pixi run python3 src/loop.py cube_20nm --add-shell
+```
+
+**4. Run a Full Pipeline Example (Provided):**
 ```bash
 pixi run sample
 ```
@@ -183,9 +188,11 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | :--- | :--- | :--- |
 | `modelname` | string | **Positional**. Base name. Looks for `<modelname>.npz`, `.krn`, and `.p2`. |
 | `--mesh` | string | Explicit path to the input mesh. Extension `.npz` is automatically resolved if omitted. |
-| `--add-shell` | flag | Automatically add a graded airbox shell around the core mesh. |
-| `--layers` | int | Number of graded shell layers (default: 4). |
-| `--K` | float | Geometric growth factor for shell layer thickness (default: 1.3). |
+| `--add-shell` | flag | Automatically add a graded airbox shell around the core mesh (default creates a high-quality, optimal element-count convex hull). |
+| `--KL` | float | Total outermost geometric scale relative to body (default: 10.0). |
+| `--K` | float | Geometric growth factor for shell layer thickness (default: 1.5). |
+| `--hmax` | float | Target edge length at the outermost shell boundary (default: auto scales with magnet size). |
+| `--shell-type`| choice | Outer boundary: `triangles` or `hull` (default: `hull`). |
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
@@ -204,6 +211,19 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--backend` | choice | Meshing engine: `meshpy` (TetGen) or `grid`. |
 | `--out-name` | string | Base name for output files. |
 | `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. |
+
+### `src/add_shell.py` (Standalone Airbox Tool)
+The airbox tool can be run independently to add a far-field vacuum region to an existing mesh. It is highly optimized to minimize the number of tetrahedrons using a convex hull.
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `--in` | string | **Required**. Input `.npz` mesh containing the core body. |
+| `--out-npz` | string | Optional path to save the merged mesh as an `.npz` file. |
+| `--out-vtu` | string | Optional path to save the merged mesh as a `.vtu` file for visualization. |
+| `--shell-type`| choice | Outer boundary geometry: `triangles` or `hull` (default: `hull`). The `hull` mode dramatically reduces element counts. |
+| `--KL` | float | Total outermost expansion distance relative to the core body (default: `10.0`). |
+| `--K` | float | Geometric growth factor for the thickness of each subsequent shell layer (default: `1.5`). |
+| `--hmax` | float | Target edge length at the outermost boundary. Defaults to `None` (intelligently auto-scales to 20% of the expanded airbox bounds to prevent element explosions on large models). |
+| `--auto-layers`| flag | Automatically compute the number of layers required to reach `KL` using growth rate `K`. This is intrinsically enabled if `--layers` is omitted. |
 
 ## 9. Appendix: Complete CLI Parameters for `src/loop.py`
 
@@ -239,12 +259,15 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `--add-shell` | Automatically add a graded airbox shell around the core mesh. | `False` |
-| `--layers` | Number of graded shell layers to generate ($\ge 1$). | `4` |
-| `--K` | Geometric growth factor for the shell layer thickness ($> 1$). | `1.3` |
+| `--shell-type`| Outer shell boundary type: copy original 'triangles' or use convex 'hull'. | `hull` |
+| `--KL` | Total outermost geometric scale relative to body ($> 1$). | `10.0` |
+| `--K` | Geometric growth factor for the shell layer thickness ($> 1$). | `1.5` |
+| `--layers` | Number of graded shell layers to generate (if omitted, auto derived from KL and K). | `None` |
+| `--auto-layers`| Automatically compute the number of layers given --KL and --K (enabled by default if --layers is None). | `True` |
 | `--beta` | Mesh-size/geometry coupling exponent (1.0 for linear scaling). | `1.0` |
 | `--center` | Ray origin for shell expansion as `"cx,cy,cz"` (in mesh units). | `"0,0,0"` |
 | `--h0` | Target edge length near the body surface (in mesh units). | `None` |
-| `--hmax` | Target edge length at the outermost shell boundary (in mesh units). | `None` |
+| `--hmax` | Target edge length at the outermost shell boundary (in mesh units). | `None` (auto scales) |
 | `--minratio` | TetGen quality `minratio` (`-q`) for the shell tetrahedra. | `1.4` |
 | `--max-steiner` | Limit the number of Steiner points added by TetGen. | `None` |
 | `--no-exact` | Suppress exact arithmetic in TetGen (`-X`). | `False` |
