@@ -296,6 +296,7 @@ void amg_vcycle_recursive(AmgState* state, int level_idx, const double* b, doubl
 void amg_vcycle_recursive(AmgState* state, int level_idx, const double* b, double* x) {
     AmgLevel& lvl = state->levels[level_idx];
     
+    // Base case: Coarsest level (Solve exactly with PARDISO)
     if (level_idx == state->levels.size() - 1) {
         int err = pardiso_solve_direct(lvl.pardiso_id, b, x);
         if (err != 0) {
@@ -411,13 +412,10 @@ xla::ffi::Error JaxMklSolveFFI(
             double r_norm = cblas_dnrm2(n, &tmp[2*n], 1);
             double b_norm = cblas_dnrm2(n, b_ptr, 1);
             if (b_norm == 0.0) b_norm = 1.0; // avoid division by zero if b=0
-            if (r_norm < state->tol * b_norm) {
+            if (r_norm / b_norm < state->tol) {
                 break;
-            } else {
-                continue;
             }
         } else {
-            std::cerr << "MKL Error rci_request = " << rci_request << std::endl;
             break; // Unexpected or error
         }
     }

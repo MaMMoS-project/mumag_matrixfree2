@@ -1388,6 +1388,26 @@ def run_single_solid_mesher(
     gb_h: float = 1.0,
     no_vis: bool = False,
     verbose: bool = False,
+    # Shell parameters
+    add_shell: bool = False,
+    shell_layers: int | None = 4,
+    shell_K: float | None = 1.3,
+    shell_KL: float | None = None,
+    shell_auto_layers: bool = False,
+    shell_auto_K: bool = False,
+    shell_beta: float = 1.0,
+    shell_same_scaling: bool = False,
+    shell_center: str | tuple[float, float, float] = "0,0,0",
+    shell_h0: float | None = None,
+    shell_hmax: float | None = None,
+    shell_body_h: float | None = None,
+    shell_max_steiner: int | None = None,
+    shell_no_exact: bool = False,
+    shell_verbose: bool = False,
+    shell_type: str = "triangles",
+    # Neper CVT parameters
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
     return_arrays: bool = True,  # NEW: set False to minimize memory
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, str | None]:
     """Build a single-solid tetrahedral mesh.
@@ -1549,6 +1569,8 @@ def run_single_solid_mesher(
             size_y=Ly,
             size_z=Lz,
             h=float(h),
+            neper_tol=neper_tol,
+            neper_timeout=neper_timeout,
         )
 
     elif geom == "poly_gb":
@@ -1563,7 +1585,44 @@ def run_single_solid_mesher(
             gb_h=float(gb_h),
             minratio=float(minratio),
             verbose=bool(verbose),
+            neper_tol=neper_tol,
+            neper_timeout=neper_timeout,
         )
+
+    if add_shell:
+        import tempfile
+        import os
+        import add_shell
+
+        fd, tmp_npz_path = tempfile.mkstemp(suffix=".tmp_body.npz")
+        try:
+            os.close(fd)
+            # Save core body mesh to temporary NPZ
+            np.savez(tmp_npz_path, knt=knt.astype(np.float64), ijk=ijk.astype(np.int32))
+
+            # Run shell addition pipeline
+            knt, ijk = add_shell.run_add_shell_pipeline(
+                in_npz=tmp_npz_path,
+                layers=shell_layers,
+                K=shell_K,
+                KL=shell_KL,
+                auto_layers=shell_auto_layers,
+                auto_K=shell_auto_K,
+                beta=shell_beta,
+                same_scaling=shell_same_scaling,
+                center=shell_center,
+                h0=shell_h0,
+                hmax=shell_hmax,
+                body_h=shell_body_h,
+                minratio=minratio,
+                max_steiner=shell_max_steiner,
+                no_exact=shell_no_exact,
+                verbose=shell_verbose,
+                shell_type=shell_type,
+            )
+        finally:
+            if os.path.exists(tmp_npz_path):
+                os.remove(tmp_npz_path)
 
     # Resolve output filenames
     base = (out_name or "single_solid").strip()
@@ -1609,6 +1668,8 @@ def mesh_backend_meshpy_poly_gb(
     gb_h: float,
     minratio: float,
     verbose: bool,
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume with a grain boundary phase using Neper and MeshPy.
 
@@ -1625,6 +1686,8 @@ def mesh_backend_meshpy_poly_gb(
         gb_h (float): target element size for the grain boundary phase.
         minratio (float): quality parameter.
         verbose (bool): logging.
+        neper_tol (float | None): stopping tolerance.
+        neper_timeout (float | None): stopping time limit in seconds.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
@@ -1637,6 +1700,13 @@ def mesh_backend_meshpy_poly_gb(
     if not HAVE_meshpy:
         raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
 
+    opt_stop_parts = []
+    val_to_use = neper_tol if neper_tol is not None else 1e-1
+    opt_stop_parts.append(f"val={val_to_use}")
+    if neper_timeout is not None:
+        opt_stop_parts.append(f"time={neper_timeout}")
+    morphooptistop_str = "||".join(opt_stop_parts)
+
     cmd_tess = [
         "neper",
         "-T",
@@ -1647,7 +1717,7 @@ def mesh_backend_meshpy_poly_gb(
         "-morpho",
         "gg",
         "-morphooptistop",
-        "val=1e-1",
+        morphooptistop_str,
         "-domain",
         f"cube({size_x},{size_y},{size_z}):translate(0,0,0)",
         "-format",
@@ -1795,7 +1865,14 @@ def mesh_backend_meshpy_poly_gb(
 
 
 def mesh_backend_neper_poly(
-    n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float
+    n: int,
+    seed: int,
+    size_x: float,
+    size_y: float,
+    size_z: float,
+    h: float,
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
@@ -1808,6 +1885,8 @@ def mesh_backend_neper_poly(
         size_y (float): physical dimension y.
         size_z (float): physical dimension z.
         h (float): target element size.
+        neper_tol (float | None): stopping tolerance.
+        neper_timeout (float | None): stopping time limit in seconds.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
@@ -1815,6 +1894,13 @@ def mesh_backend_neper_poly(
     import subprocess
 
     # 1) Generate tessellation
+    opt_stop_parts = []
+    val_to_use = neper_tol if neper_tol is not None else 1e-2
+    opt_stop_parts.append(f"val={val_to_use}")
+    if neper_timeout is not None:
+        opt_stop_parts.append(f"time={neper_timeout}")
+    morphooptistop_str = "||".join(opt_stop_parts)
+
     cmd_tess = [
         "neper",
         "-T",
@@ -1825,7 +1911,7 @@ def mesh_backend_neper_poly(
         "-morpho",
         "gg",
         "-morphooptistop",
-        "val=1e-2",
+        morphooptistop_str,
         "-domain",
         f"cube({size_x},{size_y},{size_z}):translate({-size_x / 2},{-size_y / 2},{-size_z / 2})",
         "-reg",
@@ -2052,6 +2138,112 @@ def main() -> None:
         help="(POLY_GB only) Target element size for the grain boundary phase.",
     )
 
+    ap.add_argument(
+        "--neper-tol",
+        type=float,
+        default=None,
+        help="Stopping tolerance for Neper morpho optimization (-morphooptistop val=VAL).",
+    )
+    ap.add_argument(
+        "--neper-timeout",
+        type=float,
+        default=None,
+        help="Stopping time limit in seconds for Neper morpho optimization (-morphooptistop time=TIMEOUT).",
+    )
+
+    # Shell parameters
+    ap.add_argument(
+        "--add-shell",
+        action="store_true",
+        help="Add graded exterior tetrahedral layers (airbox) around the core mesh.",
+    )
+    ap.add_argument(
+        "--shell-type",
+        type=str,
+        default="triangles",
+        choices=["triangles", "hull"],
+        help="Outer shell boundary type: copy original 'triangles' (default) or use convex 'hull'.",
+    )
+    ap.add_argument(
+        "--layers",
+        type=int,
+        default=4,
+        help="Number of graded tetrahedral shell layers L (>= 1).",
+    )
+    ap.add_argument(
+        "--K",
+        type=float,
+        default=1.3,
+        help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
+    )
+    ap.add_argument(
+        "--KL",
+        type=float,
+        default=None,
+        help="Total outermost geometric scale relative to body (> 1).",
+    )
+    ap.add_argument(
+        "--auto-layers",
+        action="store_true",
+        help="Automatically compute the number of layers L given --KL and --K.",
+    )
+    ap.add_argument(
+        "--auto-K",
+        action="store_true",
+        help="Automatically compute the per-layer factor K given --KL and --layers.",
+    )
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)).",
+    )
+    ap.add_argument(
+        "--same-scaling",
+        action="store_true",
+        help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K**L.",
+    )
+    ap.add_argument(
+        "--center",
+        type=str,
+        default="0,0,0",
+        help="Ray origin for homothetic expansion as 'cx,cy,cz' (mesh units).",
+    )
+    ap.add_argument(
+        "--h0",
+        type=float,
+        default=None,
+        help="Target edge length for first shell layer. Defaults to 1.5 * body_h.",
+    )
+    ap.add_argument(
+        "--hmax",
+        type=float,
+        default=None,
+        help="Target edge length at the outermost shell boundary (mesh units).",
+    )
+    ap.add_argument(
+        "--body-h",
+        type=float,
+        default=None,
+        help="Body mesh size override. If omitted, derived from surface edge length.",
+    )
+    ap.add_argument(
+        "--max-steiner",
+        type=int,
+        default=None,
+        help="Limit Steiner points added by TetGen (-S#) during shell generation.",
+    )
+    ap.add_argument(
+        "--no-exact",
+        action="store_true",
+        help="Suppress TetGen exact arithmetic (-X) during shell generation.",
+    )
+    ap.add_argument(
+        "--shell-verbose",
+        action="store_true",
+        help="Enable verbose TetGen output during shell generation.",
+    )
+
     # Output naming
     ap.add_argument(
         "--out-name",
@@ -2106,6 +2298,26 @@ def main() -> None:
             gb_h=float(args.gb_h),
             no_vis=bool(args.no_vis),
             verbose=bool(args.verbose),
+            # Shell parameters
+            add_shell=bool(args.add_shell),
+            shell_layers=args.layers,
+            shell_K=args.K,
+            shell_KL=args.KL,
+            shell_auto_layers=bool(args.auto_layers),
+            shell_auto_K=bool(args.auto_K),
+            shell_beta=float(args.beta),
+            shell_same_scaling=bool(args.same_scaling),
+            shell_center=args.center,
+            shell_h0=args.h0,
+            shell_hmax=args.hmax,
+            shell_body_h=args.body_h,
+            shell_max_steiner=args.max_steiner,
+            shell_no_exact=bool(args.no_exact),
+            shell_verbose=bool(args.shell_verbose),
+            shell_type=args.shell_type,
+            # Neper parameters
+            neper_tol=args.neper_tol,
+            neper_timeout=args.neper_timeout,
             # CLI uses default (return_arrays=True).
             # For memory-lean CLI, we could add a flag.
             return_arrays=True,
