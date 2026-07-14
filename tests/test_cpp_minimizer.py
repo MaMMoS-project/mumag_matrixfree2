@@ -19,7 +19,7 @@ from hysteresis_loop import LoopParams
 
 def test():
     # 1. Load mesh
-    mesh_path = os.path.join(os.path.dirname(__file__), "../single_solid.npz")
+    mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
     conn = np.asarray(data["ijk"][:, :4], dtype=np.int64)

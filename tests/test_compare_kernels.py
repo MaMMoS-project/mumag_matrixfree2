@@ -19,7 +19,7 @@ from minimizers import make_minimizer, tangent_grad
 
 def test_compare():
     # 1. Load mesh
-    mesh_path = os.path.join(os.path.dirname(__file__), "../single_solid.npz")
+    mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
     ijk = np.asarray(data["ijk"])
