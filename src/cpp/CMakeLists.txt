@@ -22,7 +22,7 @@ set(MKL_LIBRARIES "${CONDA_PREFIX_DIR}/lib/libmkl_rt.so")
 # Target: cpp_mkl_minimizer
 find_package(OpenMP REQUIRED)
 
-add_library(cpp_mkl_minimizer SHARED cpp_mkl_minimizer.cpp mkl_ffi.cpp)
+add_library(cpp_mkl_minimizer SHARED cpp_mkl_minimizer.cpp)
 target_compile_options(cpp_mkl_minimizer PRIVATE -O3 -march=native -ffast-math -funroll-loops)
 target_link_libraries(cpp_mkl_minimizer PRIVATE 
     ${MKL_LIBRARIES}
