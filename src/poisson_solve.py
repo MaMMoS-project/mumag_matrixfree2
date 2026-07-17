@@ -139,8 +139,9 @@ def make_poisson_ops(
     if mode == "assembled":
         def apply_A(sparse_ops: dict, U: Array) -> Array:
             y = sparse_ops["A_sparse"] @ U
-            if boundary_mask is not None:
-                y = y * boundary_mask
+            boundary_mask_dyn = sparse_ops.get("boundary_mask")
+            if boundary_mask_dyn is not None:
+                y = y * boundary_mask_dyn
             return y
 
         def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
@@ -149,8 +150,9 @@ def make_poisson_ops(
                 y = sparse_ops["D_sparse"] @ m_flat
             else:
                 y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
-            if boundary_mask is not None:
-                y = y * boundary_mask
+            boundary_mask_dyn = sparse_ops.get("boundary_mask")
+            if boundary_mask_dyn is not None:
+                y = y * boundary_mask_dyn
             return y
 
         def assemble_diag(sparse_ops: dict, N: int) -> Array:
@@ -233,8 +235,9 @@ def make_poisson_ops(
 
         # Choice: Dirichlet boundary conditions (U=0) are enforced by zeroing out
         # the corresponding rows of the operator.
-        if boundary_mask is not None:
-            y = y * boundary_mask
+        boundary_mask_dyn = sparse_ops.get("boundary_mask")
+        if boundary_mask_dyn is not None:
+            y = y * boundary_mask_dyn
         return y
 
     def rhs_from_m(sparse_ops, m: Array) -> Array:
@@ -366,9 +369,10 @@ def make_pcg_solve(
     default_tol = float(tol)
 
     def apply_Minv(sparse_ops: dict, r: Array, hierarchy: list | None = None) -> Array:
+        boundary_mask_dyn = sparse_ops.get("boundary_mask")
         if precond_type == "none":
-            if boundary_mask is not None:
-                return r * boundary_mask
+            if boundary_mask_dyn is not None:
+                return r * boundary_mask_dyn
             return r
 
         if precond_type in ["amg", "amgcl"] and apply_Minv_amg is not None:
@@ -376,9 +380,10 @@ def make_pcg_solve(
 
         dtype = r.dtype
         eps = jnp.asarray(1e-30, dtype=dtype)
+        Mdiag_dyn = sparse_ops.get("Mdiag", Mdiag)
 
         # Initial Jacobi guess
-        z0 = r / (Mdiag.astype(dtype) + eps)
+        z0 = r / (Mdiag_dyn.astype(dtype) + eps)
 
         if precond_type == "chebyshev" and order > 0:
             lam_max = l_max
@@ -391,9 +396,9 @@ def make_pcg_solve(
             curr_alpha = alpha
             for _k in range(1, order):
                 res = r - apply_A(sparse_ops, y)
-                if boundary_mask is not None:
-                    res = res * boundary_mask
-                z = res / (Mdiag.astype(dtype) + eps)
+                if boundary_mask_dyn is not None:
+                    res = res * boundary_mask_dyn
+                z = res / (Mdiag_dyn.astype(dtype) + eps)
                 beta = (c * curr_alpha / 2.0) ** 2
                 curr_alpha = 1.0 / (d - beta)
                 y_next = y + curr_alpha * z + curr_alpha * beta * (y - y_prev)
@@ -403,8 +408,8 @@ def make_pcg_solve(
         else:
             z = z0
 
-        if boundary_mask is not None:
-            z = z * boundary_mask
+        if boundary_mask_dyn is not None:
+            z = z * boundary_mask_dyn
         return z
 
     def solve(
@@ -418,15 +423,17 @@ def make_pcg_solve(
         eps = jnp.asarray(1e-30, dtype=dtype)
         current_tol = jnp.asarray(tol if tol is not None else default_tol, dtype=dtype)
 
-        if boundary_mask is not None:
-            b = b * boundary_mask
-            x = x0 * boundary_mask
+        boundary_mask_dyn = sparse_ops.get("boundary_mask")
+
+        if boundary_mask_dyn is not None:
+            b = b * boundary_mask_dyn
+            x = x0 * boundary_mask_dyn
         else:
             x = x0
 
         r = b - apply_A(sparse_ops, x)
-        if boundary_mask is not None:
-            r = r * boundary_mask
+        if boundary_mask_dyn is not None:
+            r = r * boundary_mask_dyn
 
         z = apply_Minv(sparse_ops, r, hierarchy)
         p = z
@@ -446,8 +453,8 @@ def make_pcg_solve(
         ) -> tuple[jnp.int32, Array, Array, Array, Array, Array, Array]:
             it, x, r, z, p, rz, r2 = state
             Ap = apply_A(sparse_ops, p)
-            if boundary_mask is not None:
-                Ap = Ap * boundary_mask
+            if boundary_mask_dyn is not None:
+                Ap = Ap * boundary_mask_dyn
             alpha = rz / (jnp.dot(p, Ap) + eps)
             x_new = x + alpha * p
             r_new = r - alpha * Ap
@@ -612,8 +619,9 @@ def make_solve_U(
 
             def apply_A_masked(sparse_ops, v: Array) -> Array:
                 res = apply_A(sparse_ops, v)
-                if boundary_mask is not None:
-                    res = res * boundary_mask
+                boundary_mask_dyn = sparse_ops.get("boundary_mask")
+                if boundary_mask_dyn is not None:
+                    res = res * boundary_mask_dyn
                 return res
 
             if precond_type == "amgcl":

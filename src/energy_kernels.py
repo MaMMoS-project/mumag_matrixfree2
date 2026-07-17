@@ -165,9 +165,11 @@ def make_energy_kernels(
 
             # 4. Zeeman gradient
             B_eff = B_ext[None, :]
-            if B_bias is not None:
-                B_eff = B_eff + B_bias
-            g_z = -2.0 * M_nodal[:, None] * B_eff
+            B_bias_dyn = sparse_ops.get("B_bias")
+            if B_bias_dyn is not None:
+                B_eff = B_eff + B_bias_dyn
+            M_nodal_dyn = sparse_ops["M_nodal"]
+            g_z = -2.0 * M_nodal_dyn[:, None] * B_eff
 
             # Total gradient
             g_total = g_ex_an + g_dem + g_z
@@ -434,10 +436,12 @@ def make_energy_kernels(
 
         # 4. Zeeman Gradient (Linear)
         B_eff = B_ext[None, :]
-        if B_bias is not None:
-            B_eff = B_eff + B_bias
+        B_bias_dyn = sparse_ops.get("B_bias")
+        if B_bias_dyn is not None:
+            B_eff = B_eff + B_bias_dyn
 
-        g_z = -2.0 * M_nodal[:, None] * B_eff
+        M_nodal_dyn = sparse_ops["M_nodal"]
+        g_z = -2.0 * M_nodal_dyn[:, None] * B_eff
 
         # Total Gradient
         g_total = g_quad + g_z
