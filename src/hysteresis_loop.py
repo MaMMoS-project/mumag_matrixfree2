@@ -288,6 +288,7 @@ def run_hysteresis_loop(  # noqa: D417
         mode (str): Operator mode ('matrix_free' or 'assembled').
         A_sparse: Assembled stiffness matrix.
         Dx_sparse, Dy_sparse, Dz_sparse: Assembled divergence component matrices.
+        Dz_sparse: Sparse difference matrix for z direction.
         A_diag: Precomputed diagonal of A.
         Kex_sparse: Assembled exchange matrix.
         Gx_sparse, Gy_sparse, Gz_sparse: Assembled demag gradient component matrices.
@@ -335,6 +336,20 @@ def run_hysteresis_loop(  # noqa: D417
         cpu_spmv_backend=cpu_spmv_backend,
         poisson_solver=params.poisson_solver,
     )
+
+    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
+    
+    from energy_kernels import compute_exchange_diagonal
+    d_diag = compute_exchange_diagonal(
+        geom,
+        jnp.asarray(A_lookup, dtype=jnp.float64),
+        V_mag,
+        chunk_elems=chunk_elems,
+        assembly=energy_assembly,
+        grad_backend=grad_backend,
+    )
+    inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
+    M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
 
     minimize = make_minimizer(
         geom,
@@ -418,8 +433,11 @@ def run_hysteresis_loop(  # noqa: D417
                 "Gz_sparse": Gz_sparse,
                 "D_sparse": D_sparse,
                 "G_sparse": G_sparse,
+                "inv_M_rel": inv_M_rel,
+                "inv_M_prec": inv_M_prec,
+                "M_rel": M_rel,
             },
-        )
+    )
         _m.block_until_ready()
         _U.block_until_ready()
         print("Warmup complete. Starting main loop...")
@@ -472,6 +490,9 @@ def run_hysteresis_loop(  # noqa: D417
                     "Gz_sparse": Gz_sparse,
                     "D_sparse": D_scipy if D_scipy is not None else D_sparse,
                     "G_sparse": G_scipy if G_scipy is not None else G_sparse,
+                    "inv_M_rel": inv_M_rel,
+                    "inv_M_prec": inv_M_prec,
+                    "M_rel": M_rel,
                 },
                 solve_U=solve_U,
                 boundary_mask=boundary_mask,
@@ -526,6 +547,9 @@ def run_hysteresis_loop(  # noqa: D417
                     "Gz_sparse": Gz_sparse,
                     "D_sparse": D_sparse,
                     "G_sparse": G_sparse,
+                    "inv_M_rel": inv_M_rel,
+                    "inv_M_prec": inv_M_prec,
+                    "M_rel": M_rel,
                 },
             )
             # Accurate timing: wait for GPU to finish
@@ -544,12 +568,12 @@ def run_hysteresis_loop(  # noqa: D417
         # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
             m,
-            geom.conn,
-            geom.volume,
-            geom.mat_id,
+        geom.conn,
+        geom.volume,
+        geom.mat_id,
             jnp.asarray(Js_lookup),
             jnp.asarray(h),
-        )
+    )
         m_avg = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
 
         B_tesla = float(Bmag) * params.Js_ref
@@ -596,7 +620,7 @@ def run_hysteresis_loop(  # noqa: D417
             J_tesla,
             float(info.get("E", np.nan)),
             float(info.get("gnorm", np.nan)),
-        )
+    )
 
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
@@ -605,7 +629,7 @@ def run_hysteresis_loop(  # noqa: D417
             f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
             f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
             f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
-        )
+    )
 
         # Early termination check
         if params.mfinal is not None and Jpar <= params.mfinal:

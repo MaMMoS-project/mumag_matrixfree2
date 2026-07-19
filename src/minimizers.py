@@ -304,10 +304,8 @@ def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
 # -----------------------------------------------------------------------------
 
 
-def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_prec: Array = None):
+def make_preconditioner_op(local_grad_only: Callable):
     """Create the Hessian-based preconditioner operation Py = g."""
-    if inv_M_prec is None:
-        inv_M_prec = _PRECOND_MAP.get(id(inv_M_rel), inv_M_rel)
 
     def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0, sparse_ops: dict = None) -> Array:
         """Action of the extensive Hessian P on vector v.
@@ -347,7 +345,7 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
 
         y = jnp.zeros_like(g_tan_ext)
         r = g_tan_ext
-        z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+        z = r * (sparse_ops["inv_M_prec"])
         p = z
         rho = jnp.vdot(r, z)
         target_rho = (tol**2) * rho
@@ -377,7 +375,7 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
 
             y_next = jnp.where(done_now, y_loop, y_loop + alpha * p_loop)
             r_next = jnp.where(done_now, r_loop, r_loop - alpha * Ap)
-            z_next = r_next * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+            z_next = r_next * (sparse_ops["inv_M_prec"])
 
             rho_next = jnp.vdot(r_next, z_next)
             # p_next only updates if not done
@@ -391,7 +389,7 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
         y_final = final_state[0]
 
         # Fallback direction (preconditioned gradient)
-        z_fallback = g_tan_ext * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+        z_fallback = g_tan_ext * (sparse_ops["inv_M_prec"])
 
         # Safety Clipping: prevent preconditioned direction from exploding
         y_norm = jnp.linalg.norm(y_final)
@@ -408,12 +406,9 @@ def make_preconditioner_op(local_grad_only: Callable, inv_M_rel: Array, inv_M_pr
     return apply_P, solve_Py_g
 
 
-def make_preconditioner_op_tr(local_grad_only: Callable, inv_M_rel: Array, inv_M_prec: Array = None):
+def make_preconditioner_op_tr(local_grad_only: Callable):
     """Create the Hessian-based preconditioner operation Py = g with Steihaug-Toint Trust Region."""
-    if inv_M_prec is None:
-        inv_M_prec = _PRECOND_MAP.get(id(inv_M_rel), inv_M_rel)
 
-    M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
 
     def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0, sparse_ops: dict = None) -> Array:
         Cv = local_grad_only(v, sparse_ops=sparse_ops)
@@ -438,11 +433,11 @@ def make_preconditioner_op_tr(local_grad_only: Callable, inv_M_rel: Array, inv_M
             return apply_P(m, g_ext, v, reg, sparse_ops=sparse_ops)
 
         def vdot_M(a, b):
-            return jnp.vdot(a * M_rel, b)
+            return jnp.vdot(a * sparse_ops["M_rel"], b)
 
         y = jnp.zeros_like(g_tan_ext)
         r = g_tan_ext
-        z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+        z = r * (sparse_ops["inv_M_prec"])
         p = z
         rho = jnp.vdot(r, z)
         target_rho = (tol**2) * rho
@@ -473,7 +468,7 @@ def make_preconditioner_op_tr(local_grad_only: Callable, inv_M_rel: Array, inv_M
 
             y_next = y_loop + alpha_final * p_loop
             r_next = r_loop - alpha * Ap
-            z_next = r_next * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+            z_next = r_next * (sparse_ops["inv_M_prec"])
 
             rho_next = jnp.vdot(r_next, z_next)
             beta = rho_next / (rho_loop + 1e-30)
@@ -486,7 +481,7 @@ def make_preconditioner_op_tr(local_grad_only: Callable, inv_M_rel: Array, inv_M
         y_final = final_state[0]
 
         # Safety Clipping: prevent preconditioned direction from exploding
-        z_fallback = g_tan_ext * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+        z_fallback = g_tan_ext * (sparse_ops["inv_M_prec"])
         y_norm = jnp.linalg.norm(y_final)
         z_norm = jnp.linalg.norm(z_fallback)
         y_final = jnp.where(y_norm > 10.0 * z_norm, y_final * (10.0 * z_norm / (y_norm + 1e-30)), y_final)
@@ -560,7 +555,7 @@ class CohenState:
 
 
 def make_cohen_minimizer(
-    energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, inv_M_rel: Array, cg_tol: float
+    energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, cg_tol: float
 ):
     """Create a Cohen Conjugate Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
@@ -578,7 +573,7 @@ def make_cohen_minimizer(
         )
 
         g_tan_ext = tangent_grad(m, g_raw)
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         y = g_tan
@@ -752,12 +747,11 @@ def make_pcg_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create a Preconditioned Conjugate Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         sparse_ops = params.get("sparse_ops")
@@ -771,7 +765,7 @@ def make_pcg_minimizer(
             state.E,
         )
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -875,13 +869,12 @@ def make_pcohen_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     beta_type: Literal["pr", "hs"] = "pr",
 ):
     """Create a Preconditioned Cohen Conjugate Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: PCGState, B_ext: Array, params: dict) -> PCGState:
         sparse_ops = params.get("sparse_ops")
@@ -895,7 +888,7 @@ def make_pcohen_minimizer(
             state.E,
         )
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -1007,13 +1000,12 @@ def make_pcohen_exact_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     beta_type: Literal["pr", "hs"] = "pr",
 ):
     """Create a Mathematically Rigorous Preconditioned Cohen CG minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: PCGExactState, B_ext: Array, params: dict) -> PCGExactState:
         sparse_ops = params.get("sparse_ops")
@@ -1027,7 +1019,7 @@ def make_pcohen_exact_minimizer(
             state.E,
         )
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
@@ -1192,7 +1184,6 @@ def make_lbfgs_minimizer(
     energy_and_grad: Callable,
     energy_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 10,
 ):
@@ -1203,7 +1194,7 @@ def make_lbfgs_minimizer(
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -1223,10 +1214,10 @@ def make_lbfgs_minimizer(
 
             last_idx = (it - 1) % memory
             y_last = Y[last_idx]
-            y_last_inv_M = y_last * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel)
+            y_last_inv_M = y_last * sparse_ops["inv_M_rel"]
             gamma = jnp.where(it > 0, jnp.vdot(S[last_idx], y_last) / (jnp.vdot(y_last, y_last_inv_M) + 1e-30), 1.0)
             gamma = jnp.clip(gamma, 1e-3, 1e3)
-            r = gamma * q_after_first * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel)
+            r = gamma * q_after_first * sparse_ops["inv_M_rel"]
 
             def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
@@ -1265,7 +1256,7 @@ def make_lbfgs_minimizer(
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf, params["tau_f"], params["eps_a"])
 
-        g_tan_new = tangent_grad(m_new, g_raw_new * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan_new = tangent_grad(m_new, g_raw_new * sparse_ops["inv_M_rel"])
         s_new = tangent_grad(m_new, d * tau)
         # Transport the old gradient to the new tangent space to compute the difference
         y_new = tangent_grad(m_new, g_raw_new) - tangent_grad(m_new, g_tan_ext)
@@ -1365,18 +1356,17 @@ def make_tn_split_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create a Split Truncated Newton minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: TNState, B_ext: Array, params: dict) -> TNState:
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
@@ -1455,13 +1445,12 @@ def make_plbfgs_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 10,
 ):
     """Create a Preconditioned Limited-memory BFGS minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    apply_P_local, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    apply_P_local, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         sparse_ops = params.get("sparse_ops")
@@ -1542,7 +1531,7 @@ def make_plbfgs_minimizer(
         )
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        g_tan_new = tangent_grad(m_new, g_raw_new * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan_new = tangent_grad(m_new, g_raw_new * sparse_ops["inv_M_rel"])
         s_new = tangent_grad(m_new, d * tau)
         y_new = tangent_grad(m_new, g_raw_new) - tangent_grad(m_new, g_tan_ext)
 
@@ -1635,7 +1624,6 @@ def make_wg_np_minimizer(
     energy_and_grad: Callable,
     energy_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create an unpreconditioned Wen and Goldfarb (2009) curvilinear search minimizer (Algorithm 2)."""
@@ -1645,7 +1633,7 @@ def make_wg_np_minimizer(
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         gnorm_inf = jnp.max(jnp.abs(g_tan))
 
         # Unpreconditioned: z is simply g_tan
@@ -1739,13 +1727,12 @@ def make_dplbfgs_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 10,
 ):
     """Create a Damped Preconditioned Limited-memory BFGS minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    apply_P_local, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    apply_P_local, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: LBFGSState, B_ext: Array, params: dict) -> LBFGSState:
         sparse_ops = params.get("sparse_ops")
@@ -1828,7 +1815,7 @@ def make_dplbfgs_minimizer(
         m_new = cayley_update(m, H, tau)
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        g_tan_new = tangent_grad(m_new, g_raw_new * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan_new = tangent_grad(m_new, g_raw_new * sparse_ops["inv_M_rel"])
         s_k = tangent_grad(m_new, d * tau)
         y_k = tangent_grad(m_new, g_raw_new) - tangent_grad(m_new, g_tan_ext)
 
@@ -1927,16 +1914,15 @@ def make_tr_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create a Trust-Region Newton-CG minimizer step function."""
-    apply_P_local, solve_P_tr = make_preconditioner_op_tr(local_grad_only, inv_M_rel)
+    apply_P_local, solve_P_tr = make_preconditioner_op_tr(local_grad_only)
 
     def step(state: TRState, B_ext: Array, params: dict) -> TRState:
         sparse_ops = params.get("sparse_ops")
         m, U, g_raw, E = state.m, state.U, state.g_raw, state.E
-        g_s = g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel)
+        g_s = g_raw * sparse_ops["inv_M_rel"]
         g_tan = tangent_grad(m, g_s)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
@@ -2063,17 +2049,15 @@ def make_ptr_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create a Preconditioned Trust-Region minimizer using the local Hessian as preconditioner."""
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
-    M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: PTRState, B_ext: Array, params: dict) -> PTRState:
         sparse_ops = params.get("sparse_ops")
         m, U, g_raw, E = state.m, state.U, state.g_raw, state.E
-        g_s = g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel)
+        g_s = g_raw * sparse_ops["inv_M_rel"]
         g_tan = tangent_grad(m, g_s)
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_inf = jnp.max(jnp.abs(g_tan))
@@ -2092,7 +2076,7 @@ def make_ptr_minimizer(
             return Cv_full - (v_dot_g * m + m_dot_g * v + m_dot_Cv * m), it_demag, U_v
 
         def vdot_M(a, b):
-            return jnp.vdot(a * M_rel, b)
+            return jnp.vdot(a * sparse_ops["M_rel"], b)
 
         def preconditioned_steihaug(delta, max_iter=5):
             d = jnp.zeros_like(g_tan)
@@ -2330,20 +2314,19 @@ def make_aapg_exact_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 1,
 ):
     """Create an Anderson Accelerated Preconditioned Gradient minimizer with Cayley transport."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: AAExactState, B_ext: Array, params: dict) -> AAExactState:
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
         # 1. Standard Step
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         g_tan_ext = tangent_grad(m, g_raw)
 
@@ -2443,19 +2426,18 @@ def make_aapg_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 5,
 ):
     """Create an Anderson Accelerated Preconditioned Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: AAState, B_ext: Array, params: dict) -> AAState:
         sparse_ops = params.get("sparse_ops")
         m, U, E_prev, g_raw = state.m, state.U, state.E, state.g_raw
 
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         g_tan_ext = tangent_grad(m, g_raw)
 
@@ -2652,12 +2634,11 @@ def make_pnag_minimizer(
     energy_only: Callable,
     local_grad_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
 ):
     """Create a Preconditioned Nesterov Accelerated Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
-    _, solve_P = make_preconditioner_op(local_grad_only, inv_M_rel)
+    _, solve_P = make_preconditioner_op(local_grad_only)
 
     def step(state: NAGState, B_ext: Array, params: dict) -> NAGState:
         sparse_ops = params.get("sparse_ops")
@@ -2672,7 +2653,7 @@ def make_pnag_minimizer(
             m_look, U_guess_look, params["phi_tol"], return_info=True, sparse_ops=sparse_ops
         )
         E_look, g_raw_look = energy_and_grad(m_look, U_look, B_ext, sparse_ops=sparse_ops)
-        tangent_grad(m_look, g_raw_look * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        tangent_grad(m_look, g_raw_look * sparse_ops["inv_M_rel"])
         g_tan_look_ext = tangent_grad(m_look, g_raw_look)
 
         # Preconditioned gradient at look-ahead
@@ -2743,7 +2724,6 @@ def make_pcohen_lbfgs_minimizer(
     energy_and_grad: Callable,
     energy_only: Callable,
     solve_U: Callable,
-    inv_M_rel: Array,
     cg_tol: float,
     memory: int = 10,
 ):
@@ -2773,10 +2753,10 @@ def make_pcohen_lbfgs_minimizer(
             last_idx = (it - 1) % memory
             gamma = jnp.where(
                 it > 0,
-                jnp.vdot(S[last_idx], Y[last_idx]) / (jnp.vdot(Y[last_idx], Y[last_idx] * inv_M_rel) + 1e-30),
+                jnp.vdot(S[last_idx], Y[last_idx]) / (jnp.vdot(Y[last_idx], Y[last_idx] * sparse_ops["inv_M_rel"]) + 1e-30),
                 1.0,
             )
-            r = gamma * q_after_first * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel)
+            r = gamma * q_after_first * sparse_ops["inv_M_rel"]
 
             def second_loop(i, r_inner):
                 idx = (it - n_history + i) % memory
@@ -2911,8 +2891,6 @@ def make_minimizer(
     energy_and_grad = _energy_and_grad_raw
     energy_only = _energy_only_raw
 
-    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-
     # Compute Jacobi preconditioner using the diagonal of the exchange matrix
     if kwargs.get("mode", "matrix_free") == "assembled" and Kex_diag is not None:
         d_diag = Kex_diag
@@ -2927,11 +2905,9 @@ def make_minimizer(
             assembly=kwargs.get("assembly", "segment_sum"),
             grad_backend=kwargs.get("grad_backend", "stored_grad_phi"),
         )
-    inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
-    _PRECOND_MAP[id(inv_M_rel)] = inv_M_prec
 
     if method == "cohen":
-        step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -2958,7 +2934,7 @@ def make_minimizer(
             )
 
     elif method == "pcg":
-        step_fn = make_pcg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_pcg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -2985,7 +2961,7 @@ def make_minimizer(
 
     elif method == "pcohen":
         step_fn = make_pcohen_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="pr"
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="pr"
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3013,7 +2989,7 @@ def make_minimizer(
 
     elif method == "pcohen_hs":
         step_fn = make_pcohen_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="hs"
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="hs"
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3041,7 +3017,7 @@ def make_minimizer(
 
     elif method == "lbfgs":
         memory = kwargs.get("memory", 10)
-        step_fn = make_lbfgs_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol, memory=memory)
+        step_fn = make_lbfgs_minimizer(energy_and_grad, energy_only, solve_U, cg_tol, memory=memory)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3067,7 +3043,7 @@ def make_minimizer(
     elif method == "plbfgs":
         memory = kwargs.get("memory", 10)
         step_fn = make_plbfgs_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, memory=memory
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3094,7 +3070,7 @@ def make_minimizer(
     elif method == "dplbfgs":
         memory = kwargs.get("memory", 10)
         step_fn = make_dplbfgs_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, memory=memory
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3119,7 +3095,7 @@ def make_minimizer(
             )
 
     elif method == "wg_np":
-        step_fn = make_wg_np_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_wg_np_minimizer(energy_and_grad, energy_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3144,7 +3120,7 @@ def make_minimizer(
             )
 
     elif method == "tn_split":
-        step_fn = make_tn_split_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_tn_split_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3152,7 +3128,7 @@ def make_minimizer(
 
     elif method == "tr":
         step_fn = make_tr_minimizer(
-            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol
+            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3161,7 +3137,7 @@ def make_minimizer(
 
     elif method == "ptr":
         step_fn = make_ptr_minimizer(
-            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol
+            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3171,7 +3147,7 @@ def make_minimizer(
     elif method == "aapg":
         memory = kwargs.get("memory", 5)
         step_fn = make_aapg_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, memory=memory
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3195,7 +3171,7 @@ def make_minimizer(
     elif method == "aapg_exact":
         memory = 1
         step_fn = make_aapg_exact_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, memory=memory
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3219,7 +3195,7 @@ def make_minimizer(
             )
 
     elif method == "pnag":
-        step_fn = make_pnag_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol)
+        step_fn = make_pnag_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3240,7 +3216,7 @@ def make_minimizer(
 
     elif method == "pcohen_lbfgs":
         memory = kwargs.get("memory", 10)
-        step_fn = make_pcohen_lbfgs_minimizer(energy_and_grad, energy_only, solve_U, inv_M_rel, cg_tol, memory=memory)
+        step_fn = make_pcohen_lbfgs_minimizer(energy_and_grad, energy_only, solve_U, cg_tol, memory=memory)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3268,7 +3244,7 @@ def make_minimizer(
 
     elif method == "pcohen_exact":
         step_fn = make_pcohen_exact_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="pr"
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="pr"
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3297,7 +3273,7 @@ def make_minimizer(
 
     elif method == "pcohen_hs_exact":
         step_fn = make_pcohen_exact_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, inv_M_rel, cg_tol, beta_type="hs"
+            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="hs"
         )
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
@@ -3338,9 +3314,6 @@ def make_minimizer(
         params_dict = dict(params_static)
         params_dict["sparse_ops"] = sparse_ops
         
-        # Inject dynamic arrays into sparse_ops to avoid capturing them as constants
-        sparse_ops["inv_M_rel"] = inv_M_rel
-        sparse_ops["inv_M_prec"] = inv_M_prec
         sparse_ops["M_nodal"] = M_nodal
         if kwargs.get("B_bias") is not None:
             sparse_ops["B_bias"] = jnp.asarray(kwargs["B_bias"], dtype=m0.dtype)
@@ -3348,7 +3321,7 @@ def make_minimizer(
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
         U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
         E, g_raw = energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops)
-        g_tan = tangent_grad(m, g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+        g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_init = jnp.max(jnp.abs(g_tan))
 
@@ -3509,7 +3482,7 @@ def make_minimizer(
 
                 y = jnp.zeros_like(g_tan_ext)
                 r = g_tan_ext
-                z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+                z = r * (sparse_ops["inv_M_prec"])
                 p = z
                 rho = float(jnp.vdot(r, z))
                 target_rho = (tol**2) * rho
@@ -3533,7 +3506,7 @@ def make_minimizer(
                     else:
                         y = y + alpha * p
                         r = r - alpha * Ap
-                        z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+                        z = r * (sparse_ops["inv_M_prec"])
                         rho_next = float(jnp.vdot(r, z))
                         p = z + (rho_next / (rho + 1e-30)) * p
                         rho = rho_next
@@ -3541,7 +3514,7 @@ def make_minimizer(
                         it += 1
 
                 y_norm = float(jnp.linalg.norm(y))
-                z_fallback = g_tan_ext * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+                z_fallback = g_tan_ext * (sparse_ops["inv_M_prec"])
                 z_norm = float(jnp.linalg.norm(z_fallback))
                 if y_norm > 10.0 * z_norm:
                     y = y * (10.0 * z_norm / (y_norm + 1e-30))
@@ -3561,7 +3534,7 @@ def make_minimizer(
 
                 y = jnp.zeros_like(g_tan_ext)
                 r = g_tan_ext
-                z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+                z = r * (sparse_ops["inv_M_prec"])
                 p = z
                 rho = float(jnp.vdot(r, z))
                 target_rho = (tol**2) * rho
@@ -3611,7 +3584,7 @@ def make_minimizer(
                         
                     y = y_next
                     r = r - alpha * Ap
-                    z = r * (sparse_ops.get("inv_M_prec", inv_M_prec) if sparse_ops is not None else inv_M_prec)
+                    z = r * (sparse_ops["inv_M_prec"])
                     rho_next = float(jnp.vdot(r, z))
                     p = z + (rho_next / (rho + 1e-30)) * p
                     rho = rho_next
@@ -3711,9 +3684,6 @@ def make_minimizer(
                 return s_final, E_final, g_raw_final, U_final, m_final
 
             def solve_and_minimize_multigpu(m0, B_ext_vec, U_init, sparse_ops):
-                # Inject dynamic arrays into sparse_ops to avoid capturing them as constants
-                sparse_ops["inv_M_rel"] = inv_M_rel
-                sparse_ops["inv_M_prec"] = inv_M_prec
                 sparse_ops["M_nodal"] = M_nodal
                 if B_bias is not None:
                     sparse_ops["B_bias"] = B_bias
@@ -3722,7 +3692,7 @@ def make_minimizer(
                 U_local, init_demag, _ = solve_U(m_local, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
                 E_local, g_raw_local = energy_and_grad_multigpu(m_local, U_local, B_ext_vec, sparse_ops=sparse_ops)
                 
-                g_tan_local = tangent_grad_jit(m_local, g_raw_local * inv_M_rel)
+                g_tan_local = tangent_grad_jit(m_local, g_raw_local * sparse_ops["inv_M_rel"])
                 g_tan_ext_local = tangent_grad_jit(m_local, g_raw_local)
                 gnorm_init_local = jnp.max(jnp.abs(g_tan_local))
 
@@ -3747,7 +3717,7 @@ def make_minimizer(
                     if method in ["tr", "ptr"]:
                         s_m, s_U, s_g_raw, s_E, s_delta = state_local.m, state_local.U, state_local.g_raw, state_local.E, state_local.delta
                         
-                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * sparse_ops["inv_M_rel"])
                         s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
                         s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
                         
@@ -3829,7 +3799,7 @@ def make_minimizer(
                             state_local.E,
                         )
                         
-                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * params.get("sparse_ops", {}).get("inv_M_rel", inv_M_rel))
+                        s_g_tan = tangent_grad_jit(s_m, s_g_raw * sparse_ops["inv_M_rel"])
                         s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
                         s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
                         
