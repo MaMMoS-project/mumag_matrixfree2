@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 
 # Temporary/Output files
+*.out
 *.vtu
 *.npz
 *.csv
