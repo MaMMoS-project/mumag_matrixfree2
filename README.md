@@ -41,44 +41,41 @@ pixi run -e cuda python3 src/loop.py <modelname> [options]
 
 ## 3. How to Submit Jobs with Slurm
 
-### Slurm Job for CPU
-To run a multi-core CPU job (e.g., on a `Gd` node), use the `cpu` environment. The C++ shared library is compiled automatically if it doesn't exist, and the CPU threading variables are strictly managed for performance.
+### Included Slurm Pipeline Examples
 
-Create a file `run_cpu.slurm`:
+The repository includes complete end-to-end pipeline examples located in the `slurm/` directory. These scripts automatically handle mesh generation, parameter setup, execution, and plotting for typical Nd2Fe14B configurations.
+
+**1. `slurm/run_cpu.slurm`**
+- **Hardware**: Reserves 8 CPUs on the CPU nodes (e.g., `dissSims`). Sets all critical thread pinning, OpenMP, and MKL environment variables to guarantee optimal bare-metal performance.
+- **Workflow**: 
+  - Compiles the C++ MKL backend optimized for the scheduled node.
+  - Generates a $(20\text{ nm})^3$ Nd2Fe14B cubic mesh.
+  - Dynamically builds the `.krn` (material) and `.p2` (config) files.
+  - Runs a demagnetization curve sweep to $-8.0\text{ T}$ oriented $1^\circ$ off the easy axis.
+  - Plots the hysteresis results to `demag_curve_cpu.png`.
+
+**2. `slurm/run_gpu.slurm`**
+- **Hardware**: Reserves 1 GPU and 4 CPU cores, configuring XLA memory allocation safely.
+- **Workflow**:
+  - Generates a 10-grain Voronoi polycrystalline mesh ($100\times 100\times 100\text{ nm}^3$) with a grain boundary phase.
+  - Dynamically generates the `.krn` file using Python (main Nd2Fe14B grains with Gaussian orientation distribution, plus Nd0.5Fe0.5 grain boundary phases).
+  - Sweeps the external field down to $-8.0\text{ T}$ entirely on the GPU backend.
+  - Plots the hysteresis results to `demag_curve_gpu.png`.
+
+**Cleanup Scripts**
+If you wish to remove the generated meshes, configs, and Slurm logs, you can run the accompanying cleanup scripts:
 ```bash
-#!/bin/bash
-#SBATCH --job-name=mumag_cpu
-#SBATCH --partition=dissSims
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-
-export JAX_ENABLE_X64=True
-export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-
-# The environment handles compilation automatically.
-pixi run -e cpu python3 ../src/loop.py my_model --add-shell --verbose
+cd slurm
+./clean_cpu_run.sh
+./clean_gpu_run.sh
 ```
-Submit with: `sbatch run_cpu.slurm`
 
-### Slurm Job for GPU
-To run a GPU job (e.g., on an `A100` node), explicitly target the `cuda` environment.
-
-Create a file `run_gpu.slurm`:
+To submit either job, simply `cd` into the `slurm` directory and use `sbatch`:
 ```bash
-#!/bin/bash
-#SBATCH --job-name=mumag_gpu
-#SBATCH --partition=dissSims
-#SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=4
-
-export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
-
-# Ensure the -e cuda flag is present!
-pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
+cd slurm
+sbatch run_cpu.slurm
+sbatch run_gpu.slurm
 ```
-Submit with: `sbatch run_gpu.slurm`
 
 ### Slurm Job for Multi-GPU
 To run a multi-GPU job (e.g., on a node with multiple `L40S` or `A100` GPUs), explicitly target the `cuda` environment and request more than one GPU in the SLURM headers. The codebase automatically detects the number of available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
@@ -207,6 +204,8 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. |
 | `--extent` | CSV | Full dimensions `Lx,Ly,Lz` of the core mesh. |
 | `--h` | float | Target characteristic edge length. |
+| `--n` | int | (Poly / Poly_GB only) Number of grains for the polycrystalline generation. |
+| `--neper-timeout` | int | Timeout in seconds for the Neper Voronoi tessellation. |
 | `--gb-thickness` | float | (Poly_GB only) Total thickness of the grain boundary phase. |
 | `--backend` | choice | Meshing engine: `meshpy` (TetGen) or `grid`. |
 | `--out-name` | string | Base name for output files. |
