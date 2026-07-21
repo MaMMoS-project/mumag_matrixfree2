@@ -3684,9 +3684,19 @@ def make_minimizer(
                 return s_final, E_final, g_raw_final, U_final, m_final
 
             def solve_and_minimize_multigpu(m0, B_ext_vec, U_init, sparse_ops):
-                sparse_ops["M_nodal"] = M_nodal
+                # --- Explicitly pin all primary arrays to master device ---
+                m0 = jax.device_put(m0, master_device)
+                B_ext_vec = jax.device_put(B_ext_vec, master_device)
+                U_init = jax.device_put(U_init, master_device)
+
+                sparse_ops["M_nodal"] = jax.device_put(M_nodal, master_device)
                 if B_bias is not None:
-                    sparse_ops["B_bias"] = B_bias
+                    sparse_ops["B_bias"] = jax.device_put(B_bias, master_device)
+                
+                for key in ["inv_M_prec", "inv_M_rel", "M_rel", "A_diag"]:
+                    if key in sparse_ops and sparse_ops[key] is not None:
+                        sparse_ops[key] = jax.device_put(sparse_ops[key], master_device)
+                # ----------------------------------------------------------
 
                 m_local = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
                 U_local, init_demag, _ = solve_U(m_local, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
