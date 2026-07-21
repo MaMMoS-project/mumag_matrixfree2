@@ -21,8 +21,14 @@ License: MIT
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
+
+# Workaround for older conda-forge libblas/mkl packages that incorrectly set this as a comma-separated string
+if os.environ.get("MKL_INTERFACE_LAYER", "") == "LP64,GNU":
+    os.environ["MKL_INTERFACE_LAYER"] = "LP64"
+    os.environ["MKL_THREADING_LAYER"] = "GNU"
 
 import jax
 import jax.numpy as jnp

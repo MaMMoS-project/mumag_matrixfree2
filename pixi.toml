@@ -51,8 +51,11 @@ cpu = ["cpu"]
 cuda = ["cuda"]
 
 [tasks]
-# Compile all C++ extension libraries. Usage: pixi run compile
-compile = "mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
+# Compile locally to /tmp/ to avoid Slurm filesystem race conditions
+compile = "bash compile_local.sh"
+
+# Compile globally to the shared ../lib/ folder on Ceph
+compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
 
 # Run unit tests. Usage: pixi run test
 test = "JAX_ENABLE_X64=True pytest tests/"

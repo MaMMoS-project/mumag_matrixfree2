@@ -43,64 +43,33 @@ pixi run -e cuda python3 src/loop.py <modelname> [options]
 
 ### Included Slurm Pipeline Examples
 
-The repository includes complete end-to-end pipeline examples located in the `slurm/` directory. These scripts automatically handle mesh generation, parameter setup, execution, and plotting for typical Nd2Fe14B configurations.
+The repository includes complete end-to-end pipeline examples located in the `../test_matrixfree2/Nd0.5Fe0.5/` directory (assuming your simulation workspaces are structured side-by-side). These scripts automatically handle the execution and performance environment tuning for different hardware profiles.
 
-**1. `slurm/run_cpu.slurm`**
-- **Hardware**: Reserves 8 CPUs on the CPU nodes (e.g., `dissSims`). Sets all critical thread pinning, OpenMP, and MKL environment variables to guarantee optimal bare-metal performance.
+**1. `test_cpu.slurm`** (High-Performance CPU)
+- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node). Sets critical thread pinning (OpenMP) environment variables to guarantee optimal bare-metal CPU performance (MKL variables are now securely handled automatically in Python).
 - **Workflow**: 
-  - Compiles the C++ MKL backend optimized for the scheduled node.
-  - Generates a $(20\text{ nm})^3$ Nd2Fe14B cubic mesh.
-  - Dynamically builds the `.krn` (material) and `.p2` (config) files.
-  - Runs a demagnetization curve sweep to $-8.0\text{ T}$ oriented $1^\circ$ off the easy axis.
-  - Plots the hysteresis results to `demag_curve_cpu.png`.
+  - Triggers a secure, isolated local compilation of the C++ MKL backend directly into `/tmp/` to avoid network filesystem race conditions.
+  - Runs the demagnetization simulation using the generated cubic mesh.
+  - Safely deletes the `/tmp/` build artifacts upon completion to leave the node clean.
 
-**2. `slurm/run_gpu.slurm`**
-- **Hardware**: Reserves 1 GPU and 4 CPU cores, configuring XLA memory allocation safely.
+**2. `test_a100.slurm`** (Single GPU)
+- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores, configuring XLA memory allocation safely to prevent out-of-memory errors (`XLA_PYTHON_CLIENT_MEM_FRACTION`).
 - **Workflow**:
-  - Generates a 10-grain Voronoi polycrystalline mesh ($100\times 100\times 100\text{ nm}^3$) with a grain boundary phase.
-  - Dynamically generates the `.krn` file using Python (main Nd2Fe14B grains with Gaussian orientation distribution, plus Nd0.5Fe0.5 grain boundary phases).
-  - Sweeps the external field down to $-8.0\text{ T}$ entirely on the GPU backend.
-  - Plots the hysteresis results to `demag_curve_gpu.png`.
+  - Sweeps the external field entirely on the extremely fast GPU backend (no C++ compilation required).
 
-**Cleanup Scripts**
-If you wish to remove the generated meshes, configs, and Slurm logs, you can run the accompanying cleanup scripts:
+**3. `test_multi_gpu.slurm`** (Multi-GPU)
+- **Hardware**: Reserves 4 L40s GPUs. 
+- **Workflow**:
+  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
+  - **Crucial Setting**: Includes `export JAX_DISABLE_P2P=1`. When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely or silently fail. This forces JAX to route cross-device memory transfers safely through host RAM.
+
+To submit any job, simply `cd` into the test directory and use `sbatch`:
 ```bash
-cd slurm
-./clean_cpu_run.sh
-./clean_gpu_run.sh
+cd ../test_matrixfree2/Nd0.5Fe0.5
+sbatch test_cpu.slurm
+sbatch test_a100.slurm
+sbatch test_multi_gpu.slurm
 ```
-
-To submit either job, simply `cd` into the `slurm` directory and use `sbatch`:
-```bash
-cd slurm
-sbatch run_cpu.slurm
-sbatch run_gpu.slurm
-```
-
-### Slurm Job for Multi-GPU
-To run a multi-GPU job (e.g., on a node with multiple `L40S` or `A100` GPUs), explicitly target the `cuda` environment and request more than one GPU in the SLURM headers. The codebase automatically detects the number of available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
-
-Create a file `run_multigpu.slurm`:
-```bash
-#!/bin/bash
-#SBATCH --job-name=mumag_multigpu
-#SBATCH --partition=dissSims
-#SBATCH --gres=gpu:l40s:4
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
-
-export JAX_ENABLE_X64=True
-# Limit memory fraction per GPU to avoid overallocation
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
-# Disable P2P transfers if running on non-NVLink cluster nodes (e.g. PCIe with strict ACS limits)
-export JAX_DISABLE_P2P=1
-
-# Run the simulation. The code automatically distributes operators across all available GPUs!
-pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
-```
-Submit with: `sbatch run_multigpu.slurm`
-
-> **Note on `JAX_DISABLE_P2P=1`**: When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely. Exporting `JAX_DISABLE_P2P=1` forces JAX to route cross-device memory transfers safely through host RAM, preventing hard lockups during the simulation loop.
 
 ## 4. Required Input
 
