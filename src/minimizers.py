@@ -85,6 +85,50 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
     """Project a raw gradient onto the tangent space of the unit sphere."""
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
 
+# -----------------------------------------------------------------------------
+# JIT-compiled Helper Functions (Extracted to global scope to prevent recompilation)
+# -----------------------------------------------------------------------------
+
+@jax.jit
+def mvp_Keff(K_op, m_vec):
+    return K_op @ m_vec
+
+@jax.jit
+def mvp_K_component(K_comp, m_vec):
+    return K_comp @ m_vec
+
+@jax.jit
+def mvp_G(G_op, U_vec):
+    return G_op @ U_vec
+
+@jax.jit
+def tangent_grad_jit(m_vec, g_vec):
+    return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
+
+@jax.jit
+def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
+    m_norm_inf = 1.0
+    diff_m_norm_inf = jnp.max(jnp.abs(m_new_vec - m_vec))
+    u1 = (E_prev - E) < tau_f * (1.0 + jnp.abs(E))
+    u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
+    u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + jnp.abs(E))
+    u4 = gnorm_inf < eps_a
+    return jnp.where(it > 0, (u1 & u2 & u3) | u4, False)
+
+@jax.jit
+def update_m_jit(m_vec, H_vec, s_step):
+    return cayley_update(m_vec, H_vec, s_step)
+
+@jax.jit
+def d_update_jit(y_vec, beta_val, d_prev_proj):
+    return -y_vec + beta_val * d_prev_proj
+
+@jax.jit
+def H_pg_jit(m_vec, d_vec, g_raw_vec):
+    H_vec = -jnp.cross(m_vec, -d_vec)
+    pg_val = jnp.vdot(g_raw_vec, d_vec)
+    return H_vec, pg_val
+
 
 def check_convergence(
     it: int, E: Array, E_prev: Array, m: Array, m_new: Array, gnorm_inf: Array, tau_f: float, eps_a: float
@@ -3386,46 +3430,6 @@ def make_minimizer(
             master_device = gpus[0]
             dev_g = assignments["G"]
 
-            # Multi-GPU JIT SpMV wrappers
-            @jax.jit
-            def mvp_Keff(K_op, m_vec):
-                return K_op @ m_vec
-
-            @jax.jit
-            def mvp_K_component(K_comp, m_vec):
-                return K_comp @ m_vec
-
-            @jax.jit
-            def mvp_G(G_op, U_vec):
-                return G_op @ U_vec
-
-            @jax.jit
-            def tangent_grad_jit(m_vec, g_vec):
-                return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
-
-            @jax.jit
-            def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
-                m_norm_inf = 1.0
-                diff_m_norm_inf = jnp.max(jnp.abs(m_new_vec - m_vec))
-                u1 = (E_prev - E) < tau_f * (1.0 + jnp.abs(E))
-                u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
-                u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + jnp.abs(E))
-                u4 = gnorm_inf < eps_a
-                return jnp.where(it > 0, (u1 & u2 & u3) | u4, False)
-
-            @jax.jit
-            def update_m_jit(m_vec, H_vec, s_step):
-                return cayley_update(m_vec, H_vec, s_step)
-
-            @jax.jit
-            def d_update_jit(y_vec, beta_val, d_prev_proj):
-                return -y_vec + beta_val * d_prev_proj
-
-            @jax.jit
-            def H_pg_jit(m_vec, d_vec, g_raw_vec):
-                H_vec = -jnp.cross(m_vec, -d_vec)
-                pg_val = jnp.vdot(g_raw_vec, d_vec)
-                return H_vec, pg_val
 
             def K_mvp(v_flat, sparse_ops):
                 if num_gpus == 2:

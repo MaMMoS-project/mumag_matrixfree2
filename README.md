@@ -92,11 +92,15 @@ Create a file `run_multigpu.slurm`:
 export JAX_ENABLE_X64=True
 # Limit memory fraction per GPU to avoid overallocation
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+# Disable P2P transfers if running on non-NVLink cluster nodes (e.g. PCIe with strict ACS limits)
+export JAX_DISABLE_P2P=1
 
 # Run the simulation. The code automatically distributes operators across all available GPUs!
 pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
 ```
 Submit with: `sbatch run_multigpu.slurm`
+
+> **Note on `JAX_DISABLE_P2P=1`**: When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely. Exporting `JAX_DISABLE_P2P=1` forces JAX to route cross-device memory transfers safely through host RAM, preventing hard lockups during the simulation loop.
 
 ## 4. Required Input
 
