@@ -377,3 +377,28 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
 | `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` | `--cg-tol` |
 | `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
+
+## 11. Evaluate Materials Workflow
+
+The `examples/evaluate_materials` directory provides an automated pipeline for generating fixed sets of granular structures and evaluating different intrinsic magnetic properties across them.
+
+**1. Generate Base Structures:**
+```bash
+cd examples/evaluate_materials
+python generate_structures.py --extent 80,80,80 --grains 8 --num-structures 10
+```
+This generates 10 fixed meshes with their random easy-axis orientations permanently seeded in `isotrop.krn`.
+
+**2. Evaluate Magnetic Properties:**
+```bash
+python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
+```
+This evaluates the specified intrinsic properties on all 10 structures. It overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, runs `loop.py` for each, and appends the coercivity and remanence data to:
+- `evaluation_results_individual.csv`: Per-structure data.
+- `evaluation_results_average.csv`: Computed from the element-wise average curve of the 10 runs.
+
+**3. Clean Up Data:**
+```bash
+./clean_evaluations.sh
+```
+Safely deletes the heavy simulation output directories while preserving your evaluation CSV results.

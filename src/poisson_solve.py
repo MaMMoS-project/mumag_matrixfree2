@@ -33,6 +33,21 @@ GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 PrecondType = Literal["none", "jacobi", "chebyshev", "amg", "amgcl"]
 Assembly = Literal["scatter", "segment_sum"]
 
+import os
+_DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
+
+def safe_device_put(x, target_device):
+    """Safely transfer data to a device.
+    If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
+    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance."""
+    if _DISABLE_P2P:
+        try:
+            cpu_dev = jax.devices("cpu")[0]
+            return jax.device_put(jax.device_put(x, cpu_dev), target_device)
+        except Exception:
+            pass
+    return jax.device_put(x, target_device)
+
 _GRAD_HAT = jnp.array(
     [
         [-1.0, -1.0, -1.0],
@@ -692,9 +707,9 @@ def make_solve_U(
             m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
         ) -> Array | tuple[Array, int, float]:
             m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
-            m_flat_gpu = jax.device_put(m_flat, dev_d)
+            m_flat_gpu = safe_device_put(m_flat, dev_d)
             y_gpu = mvp_D(sparse_ops["D_sparse"], m_flat_gpu)
-            b = jax.device_put(y_gpu, master_device)
+            b = safe_device_put(y_gpu, master_device)
             if boundary_mask is not None:
                 b = b * boundary_mask
             bnorm2 = jnp.vdot(b, b)
