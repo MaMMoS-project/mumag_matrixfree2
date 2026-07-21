@@ -338,8 +338,9 @@ def run_hysteresis_loop(  # noqa: D417
     )
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    
+
     from energy_kernels import compute_exchange_diagonal
+
     d_diag = compute_exchange_diagonal(
         geom,
         jnp.asarray(A_lookup, dtype=jnp.float64),
@@ -437,7 +438,7 @@ def run_hysteresis_loop(  # noqa: D417
                 "inv_M_prec": inv_M_prec,
                 "M_rel": M_rel,
             },
-    )
+        )
         _m.block_until_ready()
         _U.block_until_ready()
         print("Warmup complete. Starting main loop...")
@@ -455,11 +456,13 @@ def run_hysteresis_loop(  # noqa: D417
 
         if params.cpp_mkl:
             from cpp_minimizer import cpp_minimize
+
             # Add parameters needed by C++ wrapper
             params.M_nodal = M_nodal
             params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
             params.V_mag = V_mag
             from energy_kernels import compute_exchange_diagonal
+
             d_diag = compute_exchange_diagonal(
                 geom,
                 jnp.asarray(A_lookup, dtype=jnp.float64),
@@ -568,12 +571,12 @@ def run_hysteresis_loop(  # noqa: D417
         # Compute volume averages
         Jpar = jax_compute_volume_averaged_J_parallel(
             m,
-        geom.conn,
-        geom.volume,
-        geom.mat_id,
+            geom.conn,
+            geom.volume,
+            geom.mat_id,
             jnp.asarray(Js_lookup),
             jnp.asarray(h),
-    )
+        )
         m_avg = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
 
         B_tesla = float(Bmag) * params.Js_ref
@@ -620,7 +623,7 @@ def run_hysteresis_loop(  # noqa: D417
             J_tesla,
             float(info.get("E", np.nan)),
             float(info.get("gnorm", np.nan)),
-    )
+        )
 
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
@@ -629,7 +632,7 @@ def run_hysteresis_loop(  # noqa: D417
             f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
             f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
             f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
-    )
+        )
 
         # Early termination check
         if params.mfinal is not None and Jpar <= params.mfinal:

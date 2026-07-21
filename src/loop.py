@@ -744,13 +744,14 @@ def main() -> None:
 
     try:
         import ctypes
+
         ctypes.CDLL("libmkl_rt.so")
         has_mkl = True
     except OSError:
         has_mkl = False
 
     if args.cpp_mkl is None:
-        args.cpp_mkl = (not has_gpu and has_mkl)
+        args.cpp_mkl = not has_gpu and has_mkl
 
     if args.poisson_solver == "auto":
         args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
@@ -1084,8 +1085,8 @@ def main() -> None:
         from amg_utils import (
             assemble_divergence_matrices_cpu,
             assemble_poisson_matrix_cpu,
-            make_sparse_operator,
             get_gpu_assignments,
+            make_sparse_operator,
         )
 
         # Ensure grad_phi is computed
@@ -1118,8 +1119,9 @@ def main() -> None:
         A_sparse = jax.device_put(A_sparse, dev_amg)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
-        
+
         import scipy.sparse as sp
+
         if args.cpp_mkl:
             Dx_coo = Dx_scipy.tocoo()
             Dy_coo = Dy_scipy.tocoo()
@@ -1131,7 +1133,7 @@ def main() -> None:
             D_scipy.sort_indices()
             D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
             D_sparse = jax.device_put(D_sparse, dev_d)
-            
+
             Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
             Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
             Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
@@ -1148,8 +1150,8 @@ def main() -> None:
             D_sparse = jax.device_put(D_sparse, dev_d)
             N = knt.shape[0]
             Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-            Gy_scipy = 2.0 * D_scipy[:, N:2*N].transpose()
-            Gz_scipy = 2.0 * D_scipy[:, 2*N:].transpose()
+            Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
+            Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
             G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
             G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
             G_sparse = jax.device_put(G_sparse, dev_g)
@@ -1171,20 +1173,20 @@ def main() -> None:
             N = knt.shape[0]
             P_idx_row = (K_eff_coo.row % 3) * N + (K_eff_coo.row // 3)
             P_idx_col = (K_eff_coo.col % 3) * N + (K_eff_coo.col // 3)
-            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3*N, 3*N))
+            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3 * N, 3 * N))
             Kx_scipy = K_eff_blocked[:N, :]
-            Ky_scipy = K_eff_blocked[N:2*N, :]
-            Kz_scipy = K_eff_blocked[2*N:, :]
-            
+            Ky_scipy = K_eff_blocked[N : 2 * N, :]
+            Kz_scipy = K_eff_blocked[2 * N :, :]
+
             Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Kx_sparse = jax.device_put(Kx_sparse, assignments["Kx"])
-            
+
             Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Ky_sparse = jax.device_put(Ky_sparse, assignments["Ky"])
-            
+
             Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Kz_sparse = jax.device_put(Kz_sparse, assignments["Kz"])
-            
+
             K_eff_sparse = None
         else:
             K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)

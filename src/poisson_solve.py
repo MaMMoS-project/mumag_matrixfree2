@@ -21,11 +21,11 @@ from jax import lax  # noqa: E402
 
 from fem_utils import (  # noqa: E402
     TetGeom,
+    _B_split_from_JinvT,
+    _compute_JinvT_from_coords,
     assemble_scatter,
     assemble_segment_sum,
     pad_geom_for_chunking,
-    _B_split_from_JinvT,
-    _compute_JinvT_from_coords,
 )
 
 Array = jnp.ndarray
@@ -137,6 +137,7 @@ def make_poisson_ops(
             assemble_diag: Computes the diagonal of A.
     """
     if mode == "assembled":
+
         def apply_A(sparse_ops: dict, U: Array) -> Array:
             y = sparse_ops["A_sparse"] @ U
             boundary_mask_dyn = sparse_ops.get("boundary_mask")
@@ -149,7 +150,11 @@ def make_poisson_ops(
                 m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
                 y = sparse_ops["D_sparse"] @ m_flat
             else:
-                y = sparse_ops["Dx_sparse"] @ m[:, 0] + sparse_ops["Dy_sparse"] @ m[:, 1] + sparse_ops["Dz_sparse"] @ m[:, 2]
+                y = (
+                    sparse_ops["Dx_sparse"] @ m[:, 0]
+                    + sparse_ops["Dy_sparse"] @ m[:, 1]
+                    + sparse_ops["Dz_sparse"] @ m[:, 2]
+                )
             boundary_mask_dyn = sparse_ops.get("boundary_mask")
             if boundary_mask_dyn is not None:
                 y = y * boundary_mask_dyn
@@ -198,31 +203,12 @@ def make_poisson_ops(
             # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
             # Manual unrolling here minimizes temporary array creation and
             # improves register allocation in the XLA-compiled kernel.
-            grad_Ux = (
-                Bx[:, 0] * U_e[:, 0]
-                + Bx[:, 1] * U_e[:, 1]
-                + Bx[:, 2] * U_e[:, 2]
-                + Bx[:, 3] * U_e[:, 3]
-            )
-            grad_Uy = (
-                By[:, 0] * U_e[:, 0]
-                + By[:, 1] * U_e[:, 1]
-                + By[:, 2] * U_e[:, 2]
-                + By[:, 3] * U_e[:, 3]
-            )
-            grad_Uz = (
-                Bz[:, 0] * U_e[:, 0]
-                + Bz[:, 1] * U_e[:, 1]
-                + Bz[:, 2] * U_e[:, 2]
-                + Bz[:, 3] * U_e[:, 3]
-            )
+            grad_Ux = Bx[:, 0] * U_e[:, 0] + Bx[:, 1] * U_e[:, 1] + Bx[:, 2] * U_e[:, 2] + Bx[:, 3] * U_e[:, 3]
+            grad_Uy = By[:, 0] * U_e[:, 0] + By[:, 1] * U_e[:, 1] + By[:, 2] * U_e[:, 2] + By[:, 3] * U_e[:, 3]
+            grad_Uz = Bz[:, 0] * U_e[:, 0] + Bz[:, 1] * U_e[:, 1] + Bz[:, 2] * U_e[:, 2] + Bz[:, 3] * U_e[:, 3]
 
             # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
-            contrib = Ve_c[:, None] * (
-                Bx * grad_Ux[:, None]
-                + By * grad_Uy[:, None]
-                + Bz * grad_Uz[:, None]
-            )
+            contrib = Ve_c[:, None] * (Bx * grad_Ux[:, None] + By * grad_Uy[:, None] + Bz * grad_Uz[:, None])
 
             if assembly == "scatter":
                 return assemble_scatter(y_acc, conn_c, contrib)
@@ -257,11 +243,7 @@ def make_poisson_ops(
             my_sum = m_e[:, 0, 1] + m_e[:, 1, 1] + m_e[:, 2, 1] + m_e[:, 3, 1]
             mz_sum = m_e[:, 0, 2] + m_e[:, 1, 2] + m_e[:, 2, 2] + m_e[:, 3, 2]
 
-            dot_term = 0.25 * (
-                Bx * mx_sum[:, None]
-                + By * my_sum[:, None]
-                + Bz * mz_sum[:, None]
-            )
+            dot_term = 0.25 * (Bx * mx_sum[:, None] + By * my_sum[:, None] + Bz * mz_sum[:, None])
 
             contrib = (Ve_c * Js_c)[:, None] * dot_term
             if assembly == "scatter":
@@ -281,7 +263,7 @@ def make_poisson_ops(
             Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
             Bx, By, Bz = _get_B(conn_c, s, dtype)
             # Unrolled norm squared: |grad_phi_a|^2
-            local = Ve_c[:, None] * (Bx ** 2 + By ** 2 + Bz ** 2)
+            local = Ve_c[:, None] * (Bx**2 + By**2 + Bz**2)
             if assembly == "scatter":
                 return assemble_scatter(d_acc, conn_c, local)
             else:
@@ -591,9 +573,11 @@ def make_solve_U(
         )
 
         print(f"AMG hierarchy has {len(ml.levels)} levels.")
-        
+
         if poisson_solver == "jax_mkl":
-            raise ValueError("poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead.")
+            raise ValueError(
+                "poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead."
+            )
         else:
             levels_jax = []
             for i in range(len(ml.levels)):
@@ -631,14 +615,16 @@ def make_solve_U(
 
     if poisson_solver == "pardiso":
         import numpy as np
+
         from amg_utils import assemble_poisson_matrix_cpu, make_pardiso_solve_linear
-        
+
         if geom.grad_phi is not None:
             gp = np.array(geom.grad_phi)
         else:
             from loop import compute_grad_phi_from_JinvT
+
             gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
-            
+
         A_cpu = assemble_poisson_matrix_cpu(
             np.array(geom.conn),
             np.array(geom.volume),
@@ -646,7 +632,7 @@ def make_solve_U(
             boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
             reg=poisson_reg,
         )
-        
+
         solve_linear = make_pardiso_solve_linear(A_cpu)
     elif poisson_solver != "jax_mkl":
         solve_linear = make_pcg_solve(
@@ -670,6 +656,7 @@ def make_solve_U(
 
     if num_gpus >= 2:
         from amg_utils import get_gpu_assignments
+
         assignments = get_gpu_assignments(num_gpus, gpus)
         master_device = gpus[0]
         dev_d = assignments["D"]
@@ -698,11 +685,11 @@ def make_solve_U(
             if boundary_mask is not None:
                 b = b * boundary_mask
             bnorm2 = jnp.vdot(b, b)
-            
+
             poisson_keys = ["A_sparse", "A_diag", "Dx_sparse", "Dy_sparse", "Dz_sparse"]
             poisson_ops = {k: sparse_ops[k] for k in poisson_keys if k in sparse_ops}
             U, it, r2 = solve_linear_step(poisson_ops, b, x0, tol, hierarchy_jax)
-            
+
             if return_info:
                 rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
                 return U, it, rel_res
@@ -711,6 +698,7 @@ def make_solve_U(
         solve_U = solve_U_multigpu
     else:
         if hierarchy_jax is None:
+
             @partial(jax.jit, static_argnums=(3,))
             def solve_U(
                 m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None
@@ -731,9 +719,15 @@ def make_solve_U(
                     return U, it, rel_res
                 return U
         else:
+
             @partial(jax.jit, static_argnums=(3,))
             def solve_U(
-                m: Array, x0: Array, tol: float | None = None, return_info: bool = False, sparse_ops: dict = None, hierarchy_dyn=hierarchy_jax
+                m: Array,
+                x0: Array,
+                tol: float | None = None,
+                return_info: bool = False,
+                sparse_ops: dict = None,
+                hierarchy_dyn=hierarchy_jax,
             ) -> Array | tuple[Array, int, float]:
                 b = rhs_from_m(sparse_ops, m)
                 bnorm2 = jnp.vdot(b, b)
@@ -751,7 +745,7 @@ def make_solve_U(
                     return U, it, rel_res
                 return U
 
-    if hasattr(solve_linear, 'pardiso_obj'):
+    if hasattr(solve_linear, "pardiso_obj"):
         solve_U.pardiso_obj = solve_linear.pardiso_obj
 
     return solve_U

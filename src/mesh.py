@@ -1590,8 +1590,9 @@ def run_single_solid_mesher(
         )
 
     if add_shell:
-        import tempfile
         import os
+        import tempfile
+
         import add_shell
 
         fd, tmp_npz_path = tempfile.mkstemp(suffix=".tmp_body.npz")

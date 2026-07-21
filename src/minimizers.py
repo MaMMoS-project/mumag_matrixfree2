@@ -409,7 +409,6 @@ def make_preconditioner_op(local_grad_only: Callable):
 def make_preconditioner_op_tr(local_grad_only: Callable):
     """Create the Hessian-based preconditioner operation Py = g with Steihaug-Toint Trust Region."""
 
-
     def apply_P(m: Array, g_ext: Array, v: Array, reg: float = 0.0, sparse_ops: dict = None) -> Array:
         Cv = local_grad_only(v, sparse_ops=sparse_ops)
         m_dot_Cv = jnp.sum(m * Cv, axis=1, keepdims=True)
@@ -554,9 +553,7 @@ class CohenState:
         return cls(*children)
 
 
-def make_cohen_minimizer(
-    energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, cg_tol: float
-):
+def make_cohen_minimizer(energy_and_grad: Callable, energy_only: Callable, solve_U: Callable, cg_tol: float):
     """Create a Cohen Conjugate Gradient minimizer step function."""
     ls = make_armijo_ls_v2(energy_and_grad, solve_U)
 
@@ -2753,7 +2750,8 @@ def make_pcohen_lbfgs_minimizer(
             last_idx = (it - 1) % memory
             gamma = jnp.where(
                 it > 0,
-                jnp.vdot(S[last_idx], Y[last_idx]) / (jnp.vdot(Y[last_idx], Y[last_idx] * sparse_ops["inv_M_rel"]) + 1e-30),
+                jnp.vdot(S[last_idx], Y[last_idx])
+                / (jnp.vdot(Y[last_idx], Y[last_idx] * sparse_ops["inv_M_rel"]) + 1e-30),
                 1.0,
             )
             r = gamma * q_after_first * sparse_ops["inv_M_rel"]
@@ -2921,8 +2919,8 @@ def make_minimizer(
                 U,
                 g_tan_ext,
                 g_raw,
-                g,         # y = g_tan
-                -g,        # d = -g_tan
+                g,  # y = g_tan
+                -g,  # d = -g_tan
                 E,
                 E,  # E_last_step initialized to E
                 gnorm,
@@ -2960,9 +2958,7 @@ def make_minimizer(
             )
 
     elif method == "pcohen":
-        step_fn = make_pcohen_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="pr"
-        )
+        step_fn = make_pcohen_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="pr")
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -2988,9 +2984,7 @@ def make_minimizer(
             )
 
     elif method == "pcohen_hs":
-        step_fn = make_pcohen_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="hs"
-        )
+        step_fn = make_pcohen_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, beta_type="hs")
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3042,9 +3036,7 @@ def make_minimizer(
 
     elif method == "plbfgs":
         memory = kwargs.get("memory", 10)
-        step_fn = make_plbfgs_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
-        )
+        step_fn = make_plbfgs_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3069,9 +3061,7 @@ def make_minimizer(
 
     elif method == "dplbfgs":
         memory = kwargs.get("memory", 10)
-        step_fn = make_dplbfgs_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
-        )
+        step_fn = make_dplbfgs_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3127,28 +3117,48 @@ def make_minimizer(
             return TNState(m, U, U, g, g_raw, -g, E, gnorm, 0, jnp.array(False))
 
     elif method == "tr":
-        step_fn = make_tr_minimizer(
-            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol
-        )
+        step_fn = make_tr_minimizer(energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
-            return TRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False), evals=kwargs.get("evals", jnp.int32(0)), preco_iters=kwargs.get("preco_iters", jnp.int32(0)), demag_iters=kwargs.get("demag_iters", jnp.int32(0)))
+            return TRState(
+                m,
+                U,
+                U,
+                g_raw,
+                E,
+                jnp.array(10.0, dtype=m.dtype),
+                gnorm,
+                0,
+                jnp.array(False),
+                evals=kwargs.get("evals", jnp.int32(0)),
+                preco_iters=kwargs.get("preco_iters", jnp.int32(0)),
+                demag_iters=kwargs.get("demag_iters", jnp.int32(0)),
+            )
 
     elif method == "ptr":
-        step_fn = make_ptr_minimizer(
-            energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol
-        )
+        step_fn = make_ptr_minimizer(energy_and_grad, grad_only, energy_only, local_grad_only, solve_U, cg_tol)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
-            return PTRState(m, U, U, g_raw, E, jnp.array(10.0, dtype=m.dtype), gnorm, 0, jnp.array(False), evals=kwargs.get("evals", jnp.int32(0)), preco_iters=kwargs.get("preco_iters", jnp.int32(0)), demag_iters=kwargs.get("demag_iters", jnp.int32(0)))
+            return PTRState(
+                m,
+                U,
+                U,
+                g_raw,
+                E,
+                jnp.array(10.0, dtype=m.dtype),
+                gnorm,
+                0,
+                jnp.array(False),
+                evals=kwargs.get("evals", jnp.int32(0)),
+                preco_iters=kwargs.get("preco_iters", jnp.int32(0)),
+                demag_iters=kwargs.get("demag_iters", jnp.int32(0)),
+            )
 
     elif method == "aapg":
         memory = kwargs.get("memory", 5)
-        step_fn = make_aapg_minimizer(
-            energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory
-        )
+        step_fn = make_aapg_minimizer(energy_and_grad, energy_only, local_grad_only, solve_U, cg_tol, memory=memory)
 
         def init_state_fn(m, U, E, g, gnorm, **kwargs):
             g_raw = kwargs.get("g_raw")
@@ -3313,11 +3323,11 @@ def make_minimizer(
     def solve_and_minimize(m0, B_ext, U_init, params_static, sparse_ops):
         params_dict = dict(params_static)
         params_dict["sparse_ops"] = sparse_ops
-        
+
         sparse_ops["M_nodal"] = M_nodal
         if kwargs.get("B_bias") is not None:
             sparse_ops["B_bias"] = jnp.asarray(kwargs["B_bias"], dtype=m0.dtype)
-            
+
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
         U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
         E, g_raw = energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops)
@@ -3363,7 +3373,9 @@ def make_minimizer(
 
         if num_gpus >= 2:
             import numpy as np
+
             from amg_utils import get_gpu_assignments
+
             B_bias = kwargs.get("B_bias")
             inv_Vmag = 1.0 / V_mag
 
@@ -3421,11 +3433,11 @@ def make_minimizer(
                     vx = jax.device_put(v_flat, assignments["Kx"])
                     vy = jax.device_put(v_flat, assignments["Ky"])
                     vz = jax.device_put(v_flat, assignments["Kz"])
-                    
+
                     gx_gpu = mvp_K_component(sparse_ops["Kx_sparse"], vx)
                     gy_gpu = mvp_K_component(sparse_ops["Ky_sparse"], vy)
                     gz_gpu = mvp_K_component(sparse_ops["Kz_sparse"], vz)
-                    
+
                     gx = jax.device_put(gx_gpu, master_device)
                     gy = jax.device_put(gy_gpu, master_device)
                     gz = jax.device_put(gz_gpu, master_device)
@@ -3440,14 +3452,14 @@ def make_minimizer(
                 else:
                     v_flat = jnp.concatenate([v[:, 0], v[:, 1], v[:, 2]])
                     g_flat = K_mvp(v_flat, sparse_ops)
-                    g_ex_an = jnp.stack([g_flat[:N], g_flat[N:2*N], g_flat[2*N:]], axis=1)
+                    g_ex_an = jnp.stack([g_flat[:N], g_flat[N : 2 * N], g_flat[2 * N :]], axis=1)
                 return g_ex_an * inv_Vmag
 
             def energy_and_grad_multigpu(m_vec, U_vec, B_ext_vec, sparse_ops=None):
                 N = m_vec.shape[0]
                 dtype = m_vec.dtype
                 B_ext_vec = jnp.asarray(B_ext_vec, dtype=dtype)
-                
+
                 if num_gpus == 2:
                     m_flat = m_vec.reshape(-1)
                     g_ex_an_flat = K_mvp(m_flat, sparse_ops)
@@ -3455,7 +3467,7 @@ def make_minimizer(
                 else:
                     m_flat = jnp.concatenate([m_vec[:, 0], m_vec[:, 1], m_vec[:, 2]])
                     g_ex_an_flat = K_mvp(m_flat, sparse_ops)
-                    g_ex_an = jnp.stack([g_ex_an_flat[:N], g_ex_an_flat[N:2*N], g_ex_an_flat[2*N:]], axis=1)
+                    g_ex_an = jnp.stack([g_ex_an_flat[:N], g_ex_an_flat[N : 2 * N], g_ex_an_flat[2 * N :]], axis=1)
 
                 U_gpu = jax.device_put(U_vec, dev_g)
                 g_dem_flat_gpu = mvp_G(sparse_ops["G_sparse"], U_gpu)
@@ -3471,7 +3483,17 @@ def make_minimizer(
                 E = 0.5 * jnp.sum(m_vec * (g_total + g_z))
                 return E * inv_Vmag, g_total * inv_Vmag
 
-            def solve_Py_g_multigpu(m_vec, g_raw_vec, g_tan_ext, max_iter=10, tol=0.0, reg=0.0, stagnation_nu=1e-3, return_info=False, sparse_ops=None):
+            def solve_Py_g_multigpu(
+                m_vec,
+                g_raw_vec,
+                g_tan_ext,
+                max_iter=10,
+                tol=0.0,
+                reg=0.0,
+                stagnation_nu=1e-3,
+                return_info=False,
+                sparse_ops=None,
+            ):
                 def apply_P(v):
                     Cv = local_grad_only_multigpu(v, sparse_ops=sparse_ops)
                     m_dot_Cv = jnp.sum(m_vec * Cv, axis=1, keepdims=True)
@@ -3496,10 +3518,10 @@ def make_minimizer(
                     pAp = float(jnp.vdot(p, Ap))
                     neg_curv = pAp <= 0.0
                     alpha = rho / (pAp + 1e-30)
-                    
+
                     dq = 0.5 * alpha * rho
                     stagnated = (it > 0) and (dq <= stagnation_nu * Q)
-                    
+
                     done_now = neg_curv or stagnated
                     if done_now:
                         done = True
@@ -3523,7 +3545,17 @@ def make_minimizer(
                     return y_ret, it
                 return y_ret
 
-            def solve_Py_g_tr_multigpu(m_vec, g_raw_vec, g_tan_ext, delta_val, max_iter=20, tol=0.0, reg=0.0, return_info=False, sparse_ops=None):
+            def solve_Py_g_tr_multigpu(
+                m_vec,
+                g_raw_vec,
+                g_tan_ext,
+                delta_val,
+                max_iter=20,
+                tol=0.0,
+                reg=0.0,
+                return_info=False,
+                sparse_ops=None,
+            ):
                 def apply_P(v):
                     Cv = local_grad_only_multigpu(v, sparse_ops=sparse_ops)
                     m_dot_Cv = jnp.sum(m_vec * Cv, axis=1, keepdims=True)
@@ -3545,14 +3577,14 @@ def make_minimizer(
                 while (it < max_iter) and (rho > target_rho) and (rho > 1e-25) and (rho < 1e20) and not done:
                     Ap = apply_P(p)
                     pAp = float(jnp.vdot(p, Ap))
-                    
+
                     if pAp <= 0.0:
                         p_norm2 = float(jnp.vdot(p, p))
                         y_norm2 = float(jnp.vdot(y, y))
                         yp = float(jnp.vdot(y, p))
                         a = p_norm2
                         b = 2.0 * yp
-                        c = y_norm2 - float(delta_val)**2
+                        c = y_norm2 - float(delta_val) ** 2
                         det = b**2 - 4.0 * a * c
                         tau_val = 1.0
                         if det > 0.0:
@@ -3566,14 +3598,14 @@ def make_minimizer(
                     alpha = rho / (pAp + 1e-30)
                     y_next = y + alpha * p
                     y_next_norm = float(jnp.linalg.norm(y_next))
-                    
+
                     if y_next_norm >= float(delta_val):
                         p_norm2 = float(jnp.vdot(p, p))
                         y_norm2 = float(jnp.vdot(y, y))
                         yp = float(jnp.vdot(y, p))
                         a = p_norm2
                         b = 2.0 * yp
-                        c = y_norm2 - float(delta_val)**2
+                        c = y_norm2 - float(delta_val) ** 2
                         det = b**2 - 4.0 * a * c
                         tau_val = alpha
                         if det > 0.0:
@@ -3581,7 +3613,7 @@ def make_minimizer(
                         y = y + tau_val * p
                         done = True
                         break
-                        
+
                     y = y_next
                     r = r - alpha * Ap
                     z = r * (sparse_ops["inv_M_prec"])
@@ -3594,40 +3626,57 @@ def make_minimizer(
                     return y, it
                 return y
 
-            def ls_multigpu(m_vec, pg, H_vec, E0, U_base, g_raw_init, B_ext_vec, phi_tol, eta1, eta2, C, c_fact, s0, max_evals, return_info=False, sparse_ops=None):
+            def ls_multigpu(
+                m_vec,
+                pg,
+                H_vec,
+                E0,
+                U_base,
+                g_raw_init,
+                B_ext_vec,
+                phi_tol,
+                eta1,
+                eta2,
+                C,
+                c_fact,
+                s0,
+                max_evals,
+                return_info=False,
+                sparse_ops=None,
+            ):
                 s = float(s0)
                 s_min = 0.0
                 it_exp = 0
                 done_exp = False
-                
+
                 E_exp = E0
                 g_raw_exp = g_raw_init
                 U_exp = U_base
                 m_exp = m_vec
                 d_exp = 0.0
                 demag_exp = 0
-                
+
                 # Expansion loop
                 while (it_exp < max_evals) and not done_exp:
                     m_trial = update_m_jit(m_vec, H_vec, s)
                     U_trial, it_demag, _ = solve_U(m_trial, U_exp, phi_tol, return_info=True, sparse_ops=sparse_ops)
                     E_trial, g_trial = energy_and_grad_multigpu(m_trial, U_trial, B_ext_vec, sparse_ops=sparse_ops)
-                    
+
                     E_trial_val = float(E_trial)
                     if not np.isfinite(E_trial_val):
                         E_trial_val = 1e20
                         E_trial = jnp.asarray(1e20, dtype=m_vec.dtype)
-                        
+
                     d_next = (E_trial_val - float(E0)) / (s * float(pg) + 1e-30)
                     demag_exp += int(it_demag)
-                    
+
                     E_exp = E_trial
                     g_raw_exp = g_trial
                     U_exp = U_trial
                     m_exp = m_trial
                     d_exp = d_next
                     it_exp += 1
-                    
+
                     stop = (abs(1.0 - d_next) >= eta2) or (d_next < 0)
                     if stop:
                         done_exp = True
@@ -3645,42 +3694,50 @@ def make_minimizer(
                 m_con = m_exp
                 d_con = d_exp
                 demag_con = 0
-                
+
                 while (it_exp + it_con < max_evals) and not con_done:
                     s_con = s_min + c_fact * (s_con - s_min)
-                    
+
                     m_trial = update_m_jit(m_vec, H_vec, s_con)
                     U_trial, it_demag, _ = solve_U(m_trial, U_con, phi_tol, return_info=True, sparse_ops=sparse_ops)
                     E_trial, g_trial = energy_and_grad_multigpu(m_trial, U_trial, B_ext_vec, sparse_ops=sparse_ops)
-                    
+
                     E_trial_val = float(E_trial)
                     if not np.isfinite(E_trial_val):
                         E_trial_val = 1e20
                         E_trial = jnp.asarray(1e20, dtype=m_vec.dtype)
-                        
+
                     d_next = (E_trial_val - float(E0)) / (s_con * float(pg) + 1e-30)
                     demag_con += int(it_demag)
-                    
+
                     E_con = E_trial
                     g_raw_con = g_trial
                     U_con = U_trial
                     m_con = m_trial
                     d_con = d_next
                     it_con += 1
-                    
+
                     if (d_next >= eta1) and (d_next < 1e10):
                         con_done = True
 
                 is_safe = d_con >= 0
-                
+
                 s_final = s_con if is_safe else 0.0
                 E_final = E_con if is_safe else E0
                 g_raw_final = g_raw_con if is_safe else g_raw_init
                 U_final = U_con if is_safe else U_base
                 m_final = m_con if is_safe else m_vec
-                
+
                 if return_info:
-                    return s_final, E_final, g_raw_final, U_final, m_final, jnp.int32(it_exp + it_con), jnp.int32(demag_exp + demag_con)
+                    return (
+                        s_final,
+                        E_final,
+                        g_raw_final,
+                        U_final,
+                        m_final,
+                        jnp.int32(it_exp + it_con),
+                        jnp.int32(demag_exp + demag_con),
+                    )
                 return s_final, E_final, g_raw_final, U_final, m_final
 
             def solve_and_minimize_multigpu(m0, B_ext_vec, U_init, sparse_ops):
@@ -3691,7 +3748,7 @@ def make_minimizer(
                 m_local = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
                 U_local, init_demag, _ = solve_U(m_local, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
                 E_local, g_raw_local = energy_and_grad_multigpu(m_local, U_local, B_ext_vec, sparse_ops=sparse_ops)
-                
+
                 g_tan_local = tangent_grad_jit(m_local, g_raw_local * sparse_ops["inv_M_rel"])
                 g_tan_ext_local = tangent_grad_jit(m_local, g_raw_local)
                 gnorm_init_local = jnp.max(jnp.abs(g_tan_local))
@@ -3715,15 +3772,21 @@ def make_minimizer(
 
                 while (not bool(state_local.converged)) and (it_count < max_it):
                     if method in ["tr", "ptr"]:
-                        s_m, s_U, s_g_raw, s_E, s_delta = state_local.m, state_local.U, state_local.g_raw, state_local.E, state_local.delta
-                        
+                        s_m, s_U, s_g_raw, s_E, s_delta = (
+                            state_local.m,
+                            state_local.U,
+                            state_local.g_raw,
+                            state_local.E,
+                            state_local.delta,
+                        )
+
                         s_g_tan = tangent_grad_jit(s_m, s_g_raw * sparse_ops["inv_M_rel"])
                         s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
                         s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
-                        
+
                         eta_base = params.get("pc_force_eta", 0.5)
                         alpha_val = params.get("pc_force_alpha", 0.5)
-                        pc_t = min(eta_base, s_gnorm_inf ** alpha_val) if params.get("pc_auto", True) else 0.0
+                        pc_t = min(eta_base, s_gnorm_inf**alpha_val) if params.get("pc_auto", True) else 0.0
 
                         s_d, s_preco_it = solve_Py_g_tr_multigpu(
                             s_m,
@@ -3739,13 +3802,21 @@ def make_minimizer(
 
                         # Predicted reduction
                         Pd_val = local_grad_only_multigpu(s_d, sparse_ops=sparse_ops)
-                        Pd_val = Pd_val - jnp.sum(s_m * Pd_val, axis=1, keepdims=True) * s_m - jnp.sum(s_m * s_g_raw, axis=1, keepdims=True) * s_d
+                        Pd_val = (
+                            Pd_val
+                            - jnp.sum(s_m * Pd_val, axis=1, keepdims=True) * s_m
+                            - jnp.sum(s_m * s_g_raw, axis=1, keepdims=True) * s_d
+                        )
                         pred_reduction = float(-(jnp.vdot(s_g_raw, s_d) + 0.5 * jnp.vdot(s_d, Pd_val)))
 
                         # Evaluate step
                         m_trial = update_m_jit(s_m, -jnp.cross(s_m, -s_d), 1.0)
-                        U_trial, it_demag, _ = solve_U(m_trial, s_U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops)
-                        E_trial, g_raw_trial = energy_and_grad_multigpu(m_trial, U_trial, B_ext_vec, sparse_ops=sparse_ops)
+                        U_trial, it_demag, _ = solve_U(
+                            m_trial, s_U, params["phi_tol"], return_info=True, sparse_ops=sparse_ops
+                        )
+                        E_trial, g_raw_trial = energy_and_grad_multigpu(
+                            m_trial, U_trial, B_ext_vec, sparse_ops=sparse_ops
+                        )
                         E_trial_val = float(E_trial)
                         if not np.isfinite(E_trial_val):
                             E_trial_val = 1e20
@@ -3762,16 +3833,20 @@ def make_minimizer(
                             delta_next = float(s_delta)
 
                         accept = rho_tr > 0.01
-                        
+
                         s_m_new = m_trial if accept else s_m
                         s_U_new = U_trial if accept else s_U
                         s_E_new = E_trial if accept else s_E
                         s_g_raw_new = g_raw_trial if accept else s_g_raw
-                        
-                        s_conv = check_convergence_jit(state_local.it, s_E_new, s_E, s_m, s_m_new, s_gnorm_inf, params["tau_f"], params["eps_a"])
-                        
+
+                        s_conv = check_convergence_jit(
+                            state_local.it, s_E_new, s_E, s_m, s_m_new, s_gnorm_inf, params["tau_f"], params["eps_a"]
+                        )
+
                         if params.get("verbose", False):
-                            print(f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf):.3e} rho={rho_tr:.3f} dlt={delta_next:.3e} conv={bool(s_conv)}")
+                            print(
+                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf):.3e} rho={rho_tr:.3f} dlt={delta_next:.3e} conv={bool(s_conv)}"
+                            )
 
                         state_class = PTRState if method == "ptr" else TRState
                         state_local = state_class(
@@ -3798,15 +3873,15 @@ def make_minimizer(
                             state_local.d,
                             state_local.E,
                         )
-                        
+
                         s_g_tan = tangent_grad_jit(s_m, s_g_raw * sparse_ops["inv_M_rel"])
                         s_g_tan_ext = tangent_grad_jit(s_m, s_g_raw)
                         s_gnorm_inf = float(jnp.max(jnp.abs(s_g_tan)))
-                        
+
                         eta_base = params.get("pc_force_eta", 0.5)
                         alpha_val = params.get("pc_force_alpha", 0.5)
-                        pc_t = min(eta_base, s_gnorm_inf ** alpha_val) if params.get("pc_auto", True) else 0.0
-    
+                        pc_t = min(eta_base, s_gnorm_inf**alpha_val) if params.get("pc_auto", True) else 0.0
+
                         s_y, s_preco_it = solve_Py_g_multigpu(
                             s_m,
                             s_g_raw,
@@ -3818,24 +3893,32 @@ def make_minimizer(
                             return_info=True,
                             sparse_ops=sparse_ops,
                         )
-                        
+
                         s_gnorm_inf_smooth = jnp.max(jnp.abs(s_y))
-                        
+
                         if beta_style == "pr":
                             num = float(jnp.vdot(s_y, s_g_tan_ext - s_g_prev))
                             den = float(jnp.vdot(s_y_prev, s_g_prev)) + 1e-30
-                            beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
+                            beta = (
+                                0.0
+                                if (state_local.it % (params.get("L") or s_m.shape[0]) == 0)
+                                else max(0.0, num / den)
+                            )
                         else:
                             diff_g = s_g_tan_ext - s_g_prev
                             num = float(jnp.vdot(s_y, diff_g))
                             den = float(jnp.vdot(s_d_prev, diff_g)) + 1e-30
-                            beta = 0.0 if (state_local.it % (params.get("L") or s_m.shape[0]) == 0) else max(0.0, num / den)
-    
+                            beta = (
+                                0.0
+                                if (state_local.it % (params.get("L") or s_m.shape[0]) == 0)
+                                else max(0.0, num / den)
+                            )
+
                         s_d = d_update_jit(s_y, beta, tangent_grad_jit(s_m, s_d_prev))
                         s_d = jnp.where(jnp.vdot(s_d, s_g_tan_ext) > 0, -s_y, s_d)
-                        
+
                         s_H, s_pg = H_pg_jit(s_m, s_d, s_g_raw)
-                        
+
                         s_tau, s_E_new, s_g_raw_new, s_U_new, s_m_new, s_ls_evals, s_ls_demag = ls_multigpu(
                             s_m,
                             s_pg,
@@ -3854,12 +3937,23 @@ def make_minimizer(
                             return_info=True,
                             sparse_ops=sparse_ops,
                         )
-                        
-                        s_conv = check_convergence_jit(state_local.it, s_E_new, s_E_prev, s_m, s_m_new, s_gnorm_inf_smooth, params["tau_f"], params["eps_a"])
-                        
+
+                        s_conv = check_convergence_jit(
+                            state_local.it,
+                            s_E_new,
+                            s_E_prev,
+                            s_m,
+                            s_m_new,
+                            s_gnorm_inf_smooth,
+                            params["tau_f"],
+                            params["eps_a"],
+                        )
+
                         if params.get("verbose", False):
-                            print(f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}")
-    
+                            print(
+                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}"
+                            )
+
                         state_local = PCGState(
                             s_m_new,
                             s_U_new,

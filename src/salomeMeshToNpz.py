@@ -14,7 +14,6 @@ def knt_ijk_to_npz(knt_path: str, ijk_path: str, npz_path: str) -> None:
     Raises:
         ValueError: If input format is invalid.
     """
-
     # ---- Load points (.knt) ----
     try:
         pts = np.loadtxt(knt_path, dtype=np.float64)

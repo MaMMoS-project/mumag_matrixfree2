@@ -224,13 +224,13 @@ def compute_tet_quality(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
     pts = knt[tets]
     a, b, c, d = pts[:, 0], pts[:, 1], pts[:, 2], pts[:, 3]
     ab, ac, ad, bc, bd, cd = b - a, c - a, d - a, c - b, d - b, d - c
-    vols6 = np.abs(np.einsum('ij,ij->i', np.cross(ab, ac), ad))
+    vols6 = np.abs(np.einsum("ij,ij->i", np.cross(ab, ac), ad))
     vols = vols6 / 6.0
-    l_ab, l_ac, l_ad = np.einsum('ij,ij->i', ab, ab), np.einsum('ij,ij->i', ac, ac), np.einsum('ij,ij->i', ad, ad)
-    l_bc, l_bd, l_cd = np.einsum('ij,ij->i', bc, bc), np.einsum('ij,ij->i', bd, bd), np.einsum('ij,ij->i', cd, cd)
+    l_ab, l_ac, l_ad = np.einsum("ij,ij->i", ab, ab), np.einsum("ij,ij->i", ac, ac), np.einsum("ij,ij->i", ad, ad)
+    l_bc, l_bd, l_cd = np.einsum("ij,ij->i", bc, bc), np.einsum("ij,ij->i", bd, bd), np.einsum("ij,ij->i", cd, cd)
     S = l_ab + l_ac + l_ad + l_bc + l_bd + l_cd
     rms = np.sqrt(np.maximum(S, 1e-12) / 6.0)
-    eta = (6.0 * np.sqrt(2.0) * vols) / (rms ** 3)
+    eta = (6.0 * np.sqrt(2.0) * vols) / (rms**3)
     return np.clip(eta, 0.0, 1.0)
 
 
@@ -407,6 +407,7 @@ def make_shell_plc_from_surface(
 
     if shell_type == "hull":
         from scipy.spatial import ConvexHull
+
         hull = ConvexHull(knt0)
         hull_verts_orig = np.unique(hull.simplices.reshape(-1))
         hull_V = knt0[hull_verts_orig].copy()
@@ -416,8 +417,8 @@ def make_shell_plc_from_surface(
         # Compute subdivision levels
         levels = 0
         if target_h is not None and target_h > 0:
-            edges = np.vstack([hull_F[:,[0,1]], hull_F[:,[1,2]], hull_F[:,[2,0]]])
-            lens = np.linalg.norm(hull_V[edges[:,1]] - hull_V[edges[:,0]], axis=1)
+            edges = np.vstack([hull_F[:, [0, 1]], hull_F[:, [1, 2]], hull_F[:, [2, 0]]])
+            lens = np.linalg.norm(hull_V[edges[:, 1]] - hull_V[edges[:, 0]], axis=1)
             avg_len = np.mean(lens)
             desired_len = target_h * 2.0  # Allow some coarseness
             if avg_len > desired_len:
@@ -496,6 +497,7 @@ def make_shell_plc_from_surface(
 
         # Subsequent regions: between hull layer l and l+1
         hull_tri0 = hull_tris[0]
+
         def hull_centroid_at(layer: int) -> np.ndarray:
             vids = [node_map[(int(v), layer)] for v in hull_tri0]
             return knt_all[vids].mean(axis=0)
@@ -520,6 +522,7 @@ def make_shell_plc_from_surface(
                 facets.append(v)
 
         tri0 = tris0[0]
+
         def centroid_at(layer: int) -> np.ndarray:
             vids = [node_map[(int(v), layer)] for v in tri0]
             return knt_all[vids].mean(axis=0)
@@ -854,7 +857,7 @@ def run_add_shell_pipeline(
         same_scaling=bool(same_scaling),
         shell_type=shell_type,
     )
-    
+
     # Analyze and print airbox mesh quality
     if ijk.shape[1] >= 5:
         max_mat = int(ijk[:, 4].max())
@@ -864,10 +867,10 @@ def run_add_shell_pipeline(
     else:
         tets_shell = ijk[:, :4]
         tets_core = np.array([])
-        
+
     n_shell = tets_shell.shape[0]
     n_core = tets_core.shape[0]
-    
+
     if n_shell > 0:
         shell_nids = np.unique(tets_shell)
         shell_pts = knt[shell_nids]
@@ -878,8 +881,8 @@ def run_add_shell_pipeline(
         q_shell = compute_tet_quality(knt, tets_shell)
         q_mean, q_min = float(np.mean(q_shell)), float(np.min(q_shell))
         ext_str = f"[{extents[0]:.1f}, {extents[1]:.1f}, {extents[2]:.1f}]"
-        
-        log("\n" + "="*70)
+
+        log("\n" + "=" * 70)
         log("=== AIRBOX MESH ANALYSIS ===")
         log(f"Core Elements  : {n_core:,}")
         log(f"Shell Elements : {n_shell:,} (Total: {ijk.shape[0]:,})")
@@ -887,7 +890,7 @@ def run_add_shell_pipeline(
         log(f"Airbox Extents : {ext_str}")
         log(f"Airbox Volume  : {vol_airbox:.2e}")
         log(f"Shell Quality  : Mean = {q_mean:.4f}, Min = {q_min:.4f}")
-        log("="*70 + "\n")
+        log("=" * 70 + "\n")
     else:
         log(f"[info] No shell elements added. Core nodes = {knt.shape[0]}, elements = {ijk.shape[0]}")
 

@@ -4,6 +4,7 @@ Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
 """
 
+import os
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -13,8 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 import pyamg
 import scipy.sparse as sp
-import os
-import sys
 
 HAS_MKL_FFI = False
 
@@ -60,7 +59,7 @@ def assemble_poisson_matrix_cpu(
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
         mask = np.array(boundary_mask)
         boundary_nodes = np.where(mask == 0)[0]
-        is_boundary = (mask == 0)
+        is_boundary = mask == 0
 
         # Zero out rows and columns to maintain symmetry
         # 1. Zero rows (vectorized)
@@ -102,10 +101,10 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
     """
     # Square of each element
     A_sq = sp.csr_matrix((A.data**2, A.indices, A.indptr), shape=A.shape)
-    
+
     # Sum over rows
     row_sum_sq = np.array(A_sq.sum(axis=1)).ravel()
-    
+
     # Diagonal elements A_ii
     a_ii = A.diagonal()
 
@@ -171,6 +170,7 @@ class SparseOperator:
     """A wrapper for sparse matrix operations that overrides the matmul (@) operator.
     This allows JAX to trace both CPU and GPU execution paths cleanly.
     """
+
     def __init__(self, apply_fn, pytree_parts=()):
         self.apply_fn = apply_fn
         self.pytree_parts = pytree_parts
@@ -186,19 +186,21 @@ class SparseOperator:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        apply_fn, = aux_data
+        (apply_fn,) = aux_data
         return cls(apply_fn, pytree_parts=children)
 
 
 class PersistentMKLOperator:
     """A persistent MKL sparse matrix handle that utilizes the Inspector-Executor API.
-    
+
     This avoids creating, optimizing, and destroying the MKL handle on every SpMV iteration.
     """
+
     def __init__(self, scipy_csr_mat: sp.csr_matrix):
         import ctypes
         import ctypes.util
-        from sparse_dot_mkl._mkl_interface import _create_mkl_sparse, _output_dtypes, MKL, matrix_descr
+
+        from sparse_dot_mkl._mkl_interface import MKL, _create_mkl_sparse, _output_dtypes, matrix_descr
 
         self.scipy_csr_mat = scipy_csr_mat  # IMPORTANT: Keep reference to prevent GC of underlying arrays!
         self.shape = scipy_csr_mat.shape
@@ -221,10 +223,11 @@ class PersistentMKLOperator:
         # 4. Cache necessary execution arguments
         self.output_dtype = _output_dtypes[(self.dbl, self.cplx)]
         from sparse_dot_mkl._mkl_interface import _mkl_scalar
+
         self.scalar = _mkl_scalar(1.0, self.cplx, self.dbl)
         self.out_scalar = _mkl_scalar(0.0, self.cplx, self.dbl)
         self.matrix_desc = matrix_descr()
-        
+
         funcs = {
             (False, False): MKL._mkl_sparse_s_mv,
             (True, False): MKL._mkl_sparse_d_mv,
@@ -235,11 +238,12 @@ class PersistentMKLOperator:
 
     def apply(self, x_val):
         from sparse_dot_mkl._mkl_interface import _out_matrix
+
         x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
-        
+
         # Allocate output array (must be dense contiguous)
         output_arr = _out_matrix((self.shape[0],), self.output_dtype)
-        
+
         # 10 is SPARSE_OPERATION_NON_TRANSPOSE
         self.func(10, self.scalar, self.mkl_a, self.matrix_desc, x_np_val, self.out_scalar, output_arr)
         return output_arr
@@ -247,6 +251,7 @@ class PersistentMKLOperator:
     def __del__(self):
         try:
             from sparse_dot_mkl._mkl_interface import _destroy_mkl_handle
+
             _destroy_mkl_handle(self.mkl_a)
         except Exception:
             pass
@@ -260,6 +265,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
         except ImportError:
             raise ImportError("sparse_dot_mkl is required for persistent_mkl.")
         persistent_op = PersistentMKLOperator(scipy_csr_mat)
+
         def spmv_callback(x_val, **kwargs):
             return persistent_op.apply(x_val)
     elif cpu_spmv_backend == "dot_product_mkl":
@@ -267,10 +273,12 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
             from sparse_dot_mkl import dot_product_mkl
         except ImportError:
             raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")
+
         def spmv_callback(x_val, **kwargs):
             x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
             return dot_product_mkl(scipy_csr_mat, x_np_val)
     elif cpu_spmv_backend == "scipy":
+
         def spmv_callback(x_val, **kwargs):
             x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
             return scipy_csr_mat @ x_np_val
@@ -280,12 +288,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
     @jax.jit
     def fast_cpu_spmv(x_val):
         result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
-        return jax.pure_callback(
-            spmv_callback,
-            result_shape_dtype,
-            x_val,
-            vectorized=False
-        )
+        return jax.pure_callback(spmv_callback, result_shape_dtype, x_val, vectorized=False)
 
     return fast_cpu_spmv
 
@@ -318,7 +321,7 @@ def get_gpu_assignments(num_gpus, devices):
         assignments["Kx"] = devices[2]
         assignments["Ky"] = devices[3]
         assignments["Kz"] = devices[4]
-    else: # 6 or more
+    else:  # 6 or more
         assignments["AMG"] = devices[0]
         assignments["G"] = devices[1]
         assignments["D"] = devices[2]
@@ -347,7 +350,7 @@ def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "
                 d, idx, r_idx = parts
                 vals = d * x[idx]
                 return jax.ops.segment_sum(vals, r_idx, num_segments=num_rows)
-            
+
             return SparseOperator(custom_spmv, ((data, indices, row_indices),))
         elif cpu_spmv_backend == "mkl_ffi":
             raise ValueError("mkl_ffi backend was removed. Use persistent_mkl instead.")
@@ -601,7 +604,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             return x_curr
 
-        # Start with a dynamically-shielded zero vector to prevent XLA from 
+        # Start with a dynamically-shielded zero vector to prevent XLA from
         # treating `x_curr` as a static constant and unrolling/folding apply_A_fine.
         x_start = jax.lax.cond(r[0] == 12345.6789, lambda: r, lambda: jnp.zeros_like(r))
         return vcycle_recursive(0, r, x_start)
@@ -724,7 +727,6 @@ def assemble_anisotropy_matrix_cpu(
     return Kan
 
 
-
 def assemble_exchange_anisotropy_matrix_cpu(
     conn: np.ndarray,
     volume: np.ndarray,
@@ -741,28 +743,28 @@ def assemble_exchange_anisotropy_matrix_cpu(
     A_elem = A_lookup[mat_id - 1]
     K1_elem = K1_lookup[mat_id - 1]
     k_elem = k_easy_lookup[mat_id - 1]  # (E, 3)
-    
+
     # Kex part (E, 4, 4)
     Kex_e = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
-    
+
     # Kan part (E, 4, 4)
     val_elem = -2.0 * K1_elem * volume / 20.0
     Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
-    
+
     # Kex_block: (E, 4, 4, 3, 3)
     I3 = np.eye(3, dtype=np.float64)
     Kex_block = Kex_e[:, :, :, None, None] * I3[None, None, None, :, :]
-    
+
     # Kan_block: (E, 4, 4, 3, 3)
-    kkT = np.einsum('eu,ev->euv', k_elem, k_elem)
+    kkT = np.einsum("eu,ev->euv", k_elem, k_elem)
     Kan_block = Kan_e[:, :, :, None, None] * kkT[:, None, None, :, :]
-    
+
     K_block = Kex_block + Kan_block  # (E, 4, 4, 3, 3)
-    
+
     # Global rows and cols
     row_nodes = np.repeat(conn, 4, axis=1).flatten()  # (E*16,)
-    col_nodes = np.tile(conn, (1, 4)).flatten()       # (E*16,)
-    
+    col_nodes = np.tile(conn, (1, 4)).flatten()  # (E*16,)
+
     # We expand to 3x3 components for each element in the 16 pairs
     r = 3 * row_nodes[:, None, None] + np.arange(3)[None, :, None]
     c = 3 * col_nodes[:, None, None] + np.arange(3)[None, None, :]
@@ -770,8 +772,8 @@ def assemble_exchange_anisotropy_matrix_cpu(
     rows = rows.flatten()
     cols = cols.flatten()
     data = K_block.flatten()
-    
-    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3*N, 3*N)).tocsr()
+
+    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3 * N, 3 * N)).tocsr()
     K_eff.sum_duplicates()
     return K_eff
 
@@ -779,17 +781,17 @@ def assemble_exchange_anisotropy_matrix_cpu(
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
     import ctypes
-    import os
+
     lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
     if not os.path.exists(lib_path):
         raise ImportError("libcpp_mkl_minimizer.so was not compiled successfully.")
     ffi_lib = ctypes.CDLL(lib_path)
-    
+
     ffi_lib.init_pardiso.argtypes = [
         ctypes.c_int,
         ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_int)
+        ctypes.POINTER(ctypes.c_int),
     ]
     ffi_lib.init_pardiso.restype = ctypes.c_int64
     ffi_lib.free_pardiso.argtypes = [ctypes.c_int64]
@@ -797,27 +799,28 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
 
     # PARDISO mtype=2 requires Upper Triangular
     import scipy.sparse as sp_sparse
-    A_upper = sp_sparse.triu(scipy_csr_mat, format='csr')
-    
+
+    A_upper = sp_sparse.triu(scipy_csr_mat, format="csr")
+
     n = A_upper.shape[0]
     a_data = A_upper.data.astype(np.float64)
     ia_data = A_upper.indptr.astype(np.int32)
     ja_data = A_upper.indices.astype(np.int32)
-    
+
     a_ptr = a_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
     ia_ptr = ia_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
     ja_ptr = ja_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-    
+
     print(f"Initializing MKL PARDISO for {n}x{n} matrix with {a_data.size} nonzeros...")
     handle_id = ffi_lib.init_pardiso(n, a_ptr, ia_ptr, ja_ptr)
     if handle_id < 0:
         raise RuntimeError(f"PARDISO initialization failed with error code {-handle_id}")
     print("PARDISO initialization successful.")
-    
+
     ffi_lib.pardiso_solve_direct.argtypes = [
         ctypes.c_int64,
         ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double)
+        ctypes.POINTER(ctypes.c_double),
     ]
     ffi_lib.pardiso_solve_direct.restype = ctypes.c_int
 
@@ -827,12 +830,13 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
             self.a = a
             self.ia = ia
             self.ja = ja
+
         def __del__(self):
             ffi_lib.free_pardiso(self.handle_id)
-            
+
     pardiso_obj = PardisoHandle(handle_id, a_data, ia_data, ja_data)
     handle_id_val = jnp.asarray(handle_id, dtype=jnp.int64)
-    
+
     @jax.jit
     def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy: Any = None):
         def cb(b_val):
@@ -844,16 +848,14 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
             if error != 0:
                 raise RuntimeError(f"PARDISO solve failed with error {error}")
             return x_np
-            
+
         result_shape_dtype = jax.ShapeDtypeStruct(b.shape, b.dtype)
         x = jax.pure_callback(cb, result_shape_dtype, b)
         return x, jnp.int32(1), jnp.float64(0.0)
-        
+
     solve_linear.pardiso_obj = pardiso_obj
     return solve_linear
 
 
-
 def make_jax_mkl_solve_linear(pyamg_hierarchy, cg_maxiter: int = 2000, cg_tol: float = 1e-8) -> callable:
     raise NotImplementedError("make_jax_mkl_solve_linear was removed as JAX FFI is no longer supported.")
-
