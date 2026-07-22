@@ -61,6 +61,9 @@ compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/b
 
 # Run unit tests. Usage: pixi run test
 test = "JAX_ENABLE_X64=True pytest tests/"
+# Clean temporary mesh files
+clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
+
 
 [target.linux-64.tasks]
 # Run the demagnetization curve sample on Linux (uses MKL). CPU: pixi run sample, GPU: pixi run -e cuda sample
@@ -74,11 +77,6 @@ sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-
 # Run the demagnetization curve sample on Windows (bypasses MKL)
 sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
 
-
-
-[tasks]
-# Clean temporary mesh files
-clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
 
 [feature.cuda.tasks]
 # Run the demagnetization curve sample on GPU.
