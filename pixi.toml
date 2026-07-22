@@ -76,6 +76,7 @@ sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-
 
 
 
+[tasks]
 # Clean temporary mesh files
 clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
 

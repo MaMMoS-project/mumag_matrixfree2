@@ -1,5 +1,6 @@
 import ctypes
 import os
+import numpy as np
 
 lib_path = None
 # 1. Try local compute node temporary directory first (Slurm Job ID)
