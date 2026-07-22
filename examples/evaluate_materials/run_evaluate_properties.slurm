@@ -1,11 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=eval_props
+#SBATCH --partition=dissSims
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:a100:1
+#SBATCH --mem=128G
 #SBATCH --time=04:00:00
 
 cd $SLURM_SUBMIT_DIR
@@ -20,8 +22,10 @@ Js=${2:-0.8}
 A=${3:-7.6e-11}
 HSTART=${4:-2.0}
 HFINAL=${5:--2.0}
-HSTEP=${6:-0.01}
+HSTEP=${6:--0.01}
 
 echo "Starting evaluation for K1=$K1, Js=$Js, A=$A..."
-pixi run python evaluate_properties.py --K1 $K1 --Js $Js --A $A --hstart $HSTART --hfinal $HFINAL --hstep $HSTEP
+export JAX_ENABLE_X64=True
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+pixi run -e cuda python evaluate_properties.py --K1 $K1 --Js $Js --A $A --hstart $HSTART --hfinal $HFINAL --hstep $HSTEP
 echo "Done."
