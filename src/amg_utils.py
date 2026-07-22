@@ -339,7 +339,9 @@ def get_gpu_assignments(num_gpus, devices):
     return assignments
 
 
-def make_sparse_operator(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl") -> SparseOperator:
+def make_sparse_operator(
+    scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy"
+) -> SparseOperator:
     """Dynamically creates the optimal sparse operator depending on the active platform."""
     device = jax.devices()[0]
 

@@ -500,7 +500,7 @@ def make_solve_U(  # noqa: D417
     Dy_sparse: Any = None,  # noqa: F821
     Dz_sparse: Any = None,  # noqa: F821
     A_diag: Any = None,  # noqa: F821
-    cpu_spmv_backend: str = "persistent_mkl",
+    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
     poisson_solver: str = "jax",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.

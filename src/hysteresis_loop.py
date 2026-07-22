@@ -262,7 +262,7 @@ def run_hysteresis_loop(  # noqa: D417
     K_eff_scipy: Any = None,
     D_scipy: Any = None,
     G_scipy: Any = None,
-    cpu_spmv_backend: str = "persistent_mkl",
+    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 

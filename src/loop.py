@@ -494,7 +494,7 @@ def main() -> None:
     ap.add_argument(
         "--cpu-spmv-backend",
         type=str,
-        default="persistent_mkl",
+        default="persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
         choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax", "mkl_ffi"],
         help="Backend for SpMV operations when running on CPU in assembled mode.",
     )
