@@ -1,14 +1,11 @@
 """Test standard problem 3."""
 
-from pathlib import Path
-import shlex
-import subprocess
 import sys
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
@@ -17,7 +14,6 @@ import mesh
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom, compute_node_volumes
 from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials_krn, load_params_p2
-from poisson_solve import make_solve_U
 
 jax.config.update("jax_enable_x64", True)
 
@@ -32,7 +28,7 @@ def test_standard_problem_3(loop_bin, mesh_bin, tmp_path):
     lex = _write_krn_file(tmp_path / "std3.krn")
     params = load_params_p2(tmp_path / "std3.p2")
     A, K1, Js, k_easy = load_materials_krn(
-        tmp_path/"std3.krn",
+        tmp_path / "std3.krn",
         G=1,  # magnetic regions
         mesh_unit=params["mesh_unit"],
     )
@@ -42,10 +38,10 @@ def test_standard_problem_3(loop_bin, mesh_bin, tmp_path):
     h = 0.2
     for L in L_array:
         print(f"{L=}")
-        knt, geom, vol, mat_id = _get_mesh(L*lex, h*lex, tmp_path)
+        knt, geom, vol, mat_id = _get_mesh(L * lex, h * lex, tmp_path)
         m_vortex = _get_vortex(knt)
         m_flower = _get_flower(knt)
-        V_mag_nm = np.sum(vol[mat_id==1])
+        V_mag_nm = np.sum(vol[mat_id == 1])
         vol_Js = vol * np.array(Js[mat_id - 1])
         M_nodal = compute_node_volumes(
             TetGeom(conn=geom.conn, volume=jnp.asarray(vol_Js), mat_id=geom.mat_id),
@@ -93,22 +89,22 @@ def _write_krn_file(filename):
 
 def _get_vortex(knt):
     m = np.zeros_like(knt)
-    m[:,1] = np.sin(np.pi / 2 * (knt[:,0] - 0.5))
-    m[:,2] = np.cos(np.pi / 2 * (knt[:,0] - 0.5))
+    m[:, 1] = np.sin(np.pi / 2 * (knt[:, 0] - 0.5))
+    m[:, 2] = np.cos(np.pi / 2 * (knt[:, 0] - 0.5))
     return m
 
 
 def _get_flower(knt):
     m = np.zeros_like(knt)
-    m[:,0] = knt[:,0]
-    m[:,1] = 2 * knt[:,2] - 1
-    m[:,2] = - 2 * knt[:,1] + 1
+    m[:, 0] = knt[:, 0]
+    m[:, 1] = 2 * knt[:, 2] - 1
+    m[:, 2] = -2 * knt[:, 1] + 1
     m /= np.linalg.norm(m, axis=1).reshape(-1, 1)  # normalize
     return m
 
 
 def _get_mesh(L, h, tmp_path):
-    mesh_filename = str(tmp_path/"std3.npz")
+    mesh_filename = str(tmp_path / "std3.npz")
     knt, ijk, *_ = mesh.run_single_solid_mesher(
         geom="box",
         extent=f"{L},{L},{L}",
@@ -148,7 +144,7 @@ def _evaluate_crossing(L, energy_diff):
 def _write_p2_file(filename):
     p2_file = Path(filename)
     p2_file.write_text(
-        f"""\
+        """\
 [mesh]
 size = 1e-9
 \
