@@ -38,6 +38,8 @@ scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
 jaxopt = "*"
+mammos-entity = "*"
+mammos-analysis = "*"
 
 [feature.cpu.pypi-dependencies]
 jax = "*"
@@ -69,9 +71,5 @@ sample = { cmd = "cd samples && ./run_cube.sh" }
 # Usage: pixi run sample-gpu
 sample-gpu = { cmd = "cd samples && ./run_cube.sh", default-environment = "cuda" }
 
-# Submit the sphere sample on GPU.
-# Usage: pixi run submit-sphere-gpu
-submit-sphere-gpu = { cmd = "cd samples && sbatch run_sphere.slurm", default-environment = "cuda" }
-
 # Clean temporary mesh files
-clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/hyst_sphere_40nm samples/*.vtu samples/*.log"
+clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
