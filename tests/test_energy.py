@@ -51,6 +51,7 @@ def test_micromagnetic_energies():
         volume=jnp.asarray(volume, dtype=jnp.float64),
         mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
         grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
+        JinvT=jnp.asarray(JinvT, dtype=jnp.float64),
     )
 
     # 2. Material Properties (Normalized NdFeB-like)
@@ -116,18 +117,20 @@ def test_micromagnetic_energies():
     )
 
     # 5. Verification
+    sparse_ops = {"M_nodal": M_nodal}
+    
     # --- Exchange ---
-    e_ex, _ = energy_and_grad(m_hel, jnp.zeros(knt.shape[0]), jnp.zeros(3))
+    e_ex, _ = energy_and_grad(m_hel, jnp.zeros(knt.shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
     E_ex_calc_si = float(e_ex) * SI_FACTOR
     assert abs(E_ex_calc_si - E_ex_analytic_si) / E_ex_analytic_si < 0.02
 
     # --- Zeeman ---
-    e_z, _ = energy_and_grad(m_unif_x, jnp.zeros(knt.shape[0]), jnp.array([b_red, 0, 0]))
+    e_z, _ = energy_and_grad(m_unif_x, jnp.zeros(knt.shape[0]), jnp.array([b_red, 0, 0]), sparse_ops=sparse_ops)
     E_z_calc_si = float(e_z) * SI_FACTOR
     assert abs(E_z_calc_si - E_z_analytic_si) / abs(E_z_analytic_si) < 1e-6
 
     # --- Anisotropy ---
-    e_an, _ = energy_and_grad(m_45, jnp.zeros(knt.shape[0]), jnp.zeros(3))
+    e_an, _ = energy_and_grad(m_45, jnp.zeros(knt.shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
     # Note: E_an = K1 * sin^2(theta)
     # Dimensionless: E_an_red = K1_red * sin^2(theta)
     E_an_calc_si = float(e_an) * SI_FACTOR
@@ -137,6 +140,6 @@ def test_micromagnetic_energies():
     # For a cube, N_x \approx 1/3
     # E_dem \approx 0.5 * (1/3) * (Js^2/mu0) * V
     # Dimensionless: E_dem \approx (1/3)
-    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]))
-    e_dem, _ = energy_and_grad(m_unif_x, u, jnp.zeros(3))
+    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]), sparse_ops={})
+    e_dem, _ = energy_and_grad(m_unif_x, u, jnp.zeros(3), sparse_ops=sparse_ops)
     assert abs(float(e_dem) - 1.0 / 3.0) < 0.05

@@ -40,6 +40,12 @@ def safe_device_put(x, target_device):
     """Safely transfer data to a device.
     If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
     Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance."""
+    try:
+        if hasattr(x, "device") and x.device() == target_device:
+            return x
+    except Exception:
+        pass
+
     if _DISABLE_P2P:
         try:
             cpu_dev = jax.devices("cpu")[0]

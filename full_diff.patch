@@ -1,0 +1,149 @@
+diff --git a/README.md b/README.md
+index eda661b..9f07eef 100644
+--- a/README.md
++++ b/README.md
+@@ -92,12 +92,16 @@ Create a file `run_multigpu.slurm`:
+ export JAX_ENABLE_X64=True
+ # Limit memory fraction per GPU to avoid overallocation
+ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
++# Disable P2P transfers if running on non-NVLink cluster nodes (e.g. PCIe with strict ACS limits)
++export JAX_DISABLE_P2P=1
+ 
+ # Run the simulation. The code automatically distributes operators across all available GPUs!
+ pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
+ ```
+ Submit with: `sbatch run_multigpu.slurm`
+ 
++> **Note on `JAX_DISABLE_P2P=1`**: When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely. Exporting `JAX_DISABLE_P2P=1` forces JAX to route cross-device memory transfers safely through host RAM, preventing hard lockups during the simulation loop.
++
+ ## 4. Required Input
+ 
+ A simulation requires three primary input files, usually sharing the same `<modelname>` prefix:
+diff --git a/src/minimizers.py b/src/minimizers.py
+index d524b1a..fc96864 100644
+--- a/src/minimizers.py
++++ b/src/minimizers.py
+@@ -85,6 +85,50 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
+     """Project a raw gradient onto the tangent space of the unit sphere."""
+     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
+ 
++# -----------------------------------------------------------------------------
++# JIT-compiled Helper Functions (Extracted to global scope to prevent recompilation)
++# -----------------------------------------------------------------------------
++
++@jax.jit
++def mvp_Keff(K_op, m_vec):
++    return K_op @ m_vec
++
++@jax.jit
++def mvp_K_component(K_comp, m_vec):
++    return K_comp @ m_vec
++
++@jax.jit
++def mvp_G(G_op, U_vec):
++    return G_op @ U_vec
++
++@jax.jit
++def tangent_grad_jit(m_vec, g_vec):
++    return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
++
++@jax.jit
++def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
++    m_norm_inf = 1.0
++    diff_m_norm_inf = jnp.max(jnp.abs(m_new_vec - m_vec))
++    u1 = (E_prev - E) < tau_f * (1.0 + jnp.abs(E))
++    u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
++    u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + jnp.abs(E))
++    u4 = gnorm_inf < eps_a
++    return jnp.where(it > 0, (u1 & u2 & u3) | u4, False)
++
++@jax.jit
++def update_m_jit(m_vec, H_vec, s_step):
++    return cayley_update(m_vec, H_vec, s_step)
++
++@jax.jit
++def d_update_jit(y_vec, beta_val, d_prev_proj):
++    return -y_vec + beta_val * d_prev_proj
++
++@jax.jit
++def H_pg_jit(m_vec, d_vec, g_raw_vec):
++    H_vec = -jnp.cross(m_vec, -d_vec)
++    pg_val = jnp.vdot(g_raw_vec, d_vec)
++    return H_vec, pg_val
++
+ 
+ def check_convergence(
+     it: int, E: Array, E_prev: Array, m: Array, m_new: Array, gnorm_inf: Array, tau_f: float, eps_a: float
+@@ -3386,46 +3430,6 @@ def make_minimizer(
+             master_device = gpus[0]
+             dev_g = assignments["G"]
+ 
+-            # Multi-GPU JIT SpMV wrappers
+-            @jax.jit
+-            def mvp_Keff(K_op, m_vec):
+-                return K_op @ m_vec
+-
+-            @jax.jit
+-            def mvp_K_component(K_comp, m_vec):
+-                return K_comp @ m_vec
+-
+-            @jax.jit
+-            def mvp_G(G_op, U_vec):
+-                return G_op @ U_vec
+-
+-            @jax.jit
+-            def tangent_grad_jit(m_vec, g_vec):
+-                return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
+-
+-            @jax.jit
+-            def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
+-                m_norm_inf = 1.0
+-                diff_m_norm_inf = jnp.max(jnp.abs(m_new_vec - m_vec))
+-                u1 = (E_prev - E) < tau_f * (1.0 + jnp.abs(E))
+-                u2 = diff_m_norm_inf < jnp.sqrt(tau_f) * (1.0 + m_norm_inf)
+-                u3 = gnorm_inf <= (tau_f ** (1 / 3.0)) * (1.0 + jnp.abs(E))
+-                u4 = gnorm_inf < eps_a
+-                return jnp.where(it > 0, (u1 & u2 & u3) | u4, False)
+-
+-            @jax.jit
+-            def update_m_jit(m_vec, H_vec, s_step):
+-                return cayley_update(m_vec, H_vec, s_step)
+-
+-            @jax.jit
+-            def d_update_jit(y_vec, beta_val, d_prev_proj):
+-                return -y_vec + beta_val * d_prev_proj
+-
+-            @jax.jit
+-            def H_pg_jit(m_vec, d_vec, g_raw_vec):
+-                H_vec = -jnp.cross(m_vec, -d_vec)
+-                pg_val = jnp.vdot(g_raw_vec, d_vec)
+-                return H_vec, pg_val
+ 
+             def K_mvp(v_flat, sparse_ops):
+                 if num_gpus == 2:
+diff --git a/src/poisson_solve.py b/src/poisson_solve.py
+index a13e8f1..3f0dda0 100644
+--- a/src/poisson_solve.py
++++ b/src/poisson_solve.py
+@@ -712,13 +712,19 @@ def make_solve_U(
+             b = safe_device_put(y_gpu, master_device)
+             if boundary_mask is not None:
+                 b = b * boundary_mask
+-            bnorm2 = jnp.vdot(b, b)
+-            
++            tol = cg_tol if tol is None else tol
+             poisson_keys = ["A_sparse", "A_diag", "Dx_sparse", "Dy_sparse", "Dz_sparse"]
+             poisson_ops = {k: sparse_ops[k] for k in poisson_keys if k in sparse_ops}
++            
++            bnorm2_before = jnp.vdot(b, b)
++            jax.debug.print("b norm2 before solve: {b2}, tol={t}", b2=bnorm2_before, t=tol)
++            
+             U, it, r2 = solve_linear_step(poisson_ops, b, x0, tol, hierarchy_jax)
+             
++            jax.debug.print("solve_linear_step returned it={i}, r2={r}", i=it, r=r2)
++            
+             if return_info:
++                bnorm2 = jnp.vdot(b, b)
+                 rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
+                 return U, it, rel_res
+             return U
