@@ -126,7 +126,7 @@ def test():
         mode="assembled",
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
-        poisson_solver="pardiso",
+        poisson_solver="pardiso" if sys.platform.startswith("linux") else "jax",
     )
 
     # Setup JAX minimizer
