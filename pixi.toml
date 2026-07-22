@@ -67,9 +67,12 @@ test = "JAX_ENABLE_X64=True pytest tests/"
 # GPU: pixi run -e cuda sample
 sample = { cmd = "cd samples && ./run_cube.sh" }
 
-# Run the demagnetization curve sample on GPU.
-# Usage: pixi run sample-gpu
-sample-gpu = { cmd = "cd samples && ./run_cube.sh", default-environment = "cuda" }
+
 
 # Clean temporary mesh files
 clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
+
+[feature.cuda.tasks]
+# Run the demagnetization curve sample on GPU.
+# Usage: pixi run sample-gpu (will automatically use cuda env if default-environment is set, or pixi run -e cuda sample-gpu)
+sample-gpu = { cmd = "cd samples && ./run_cube.sh" }

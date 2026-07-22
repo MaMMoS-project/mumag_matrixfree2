@@ -19,6 +19,7 @@ mstep = 0.4
 mfinal = -2.0
 
 [minimizer]
+method = pcohen_hs
 tol_fun = 1e-10
-tol_hmag_factor = 1
+eps_a = 1e-12
 

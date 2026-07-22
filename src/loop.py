@@ -1247,6 +1247,13 @@ def main() -> None:
     write_mh(Path(args.out_dir) / mh_name, res["history"])
     print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
 
+    # Convert the raw simulation CSV to mammos_entity format
+    from io_utils import convert_sim_csv_to_mammos
+    csv_name = params_dict.get("csv_name", "hysteresis.csv")
+    csv_path = Path(args.out_dir) / csv_name
+    mammos_csv_path = Path(args.out_dir) / f"mammos_{csv_name}"
+    convert_sim_csv_to_mammos(csv_path, out_path=mammos_csv_path, Js_ref=params.Js_ref)
+    print(f"[ok] Converted {csv_name} to mammos_entity format at {mammos_csv_path}")
 
 if __name__ == "__main__":
     main()
