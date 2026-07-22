@@ -60,7 +60,7 @@ compile = "bash compile_local.sh"
 compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
 
 # Run unit tests. Usage: pixi run test
-test = "JAX_ENABLE_X64=True pytest tests/"
+test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/" }
 # Clean temporary mesh files
 clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
 

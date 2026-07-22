@@ -8,6 +8,7 @@ import pytest
 import scipy.sparse as sp
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
+sparse_dot_mkl = pytest.importorskip("sparse_dot_mkl")
 
 from sparse_dot_mkl._mkl_interface import MKL as MKL_wrapper
 from sparse_dot_mkl._mkl_interface import (

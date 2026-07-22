@@ -2,6 +2,10 @@
 set -e
 
 # Use Slurm job ID to create a unique local folder, or fallback to PID
+if [[ "$OSTYPE" != "linux-gnu"* ]]; then
+    echo "Skipping C++ minimizer compilation on non-Linux platform."
+    exit 0
+fi
 if [ -n "$SLURM_JOB_ID" ]; then
     LOCAL_BUILD_DIR="/tmp/mumag_build_${SLURM_JOB_ID}"
     # Slurm users build output directly into the isolated tmp folder

@@ -23,60 +23,62 @@ if not lib_path and "MUMAG_LIB_OUT" in os.environ:
 if not lib_path:
     lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
 
-if not os.path.exists(lib_path):
-    raise FileNotFoundError(f"Could not find {lib_path}. Please compile the C++ minimizer.")
+if not lib_path or not os.path.exists(lib_path):
+    lib = None
+else:
+    lib = ctypes.CDLL(lib_path)
 
-lib = ctypes.CDLL(lib_path)
-
-lib.run_cpp_pcohen_hs_minimization.argtypes = [
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_int,
-    ctypes.c_double,
-    ctypes.c_int64,
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double),  # m, B_ext, U, M_nodal
-    ctypes.POINTER(ctypes.c_double),  # boundary_mask
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double),  # inv_M_rel, inv_M_prec
-    ctypes.c_int,
-    ctypes.c_double,
-    ctypes.c_double,  # pc_auto, pc_force_eta, pc_force_alpha
-    ctypes.c_double,
-    ctypes.c_int,
-    ctypes.c_double,
-    ctypes.c_double,
-    ctypes.c_int,
-    ctypes.c_int,  # cg_tol, pc_iters, pc_reg, pc_stagnation_nu, L, beta_type
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.POINTER(ctypes.c_int),  # out_iters, out_evals, out_demag, out_preco
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_double),
-]
-lib.run_cpp_pcohen_hs_minimization.restype = ctypes.c_int
+    lib.run_cpp_pcohen_hs_minimization.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),  # m, B_ext, U, M_nodal
+        ctypes.POINTER(ctypes.c_double),  # boundary_mask
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),  # inv_M_rel, inv_M_prec
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,  # pc_auto, pc_force_eta, pc_force_alpha
+        ctypes.c_double,
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_int,
+        ctypes.c_int,  # cg_tol, pc_iters, pc_reg, pc_stagnation_nu, L, beta_type
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),  # out_iters, out_evals, out_demag, out_preco
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    lib.run_cpp_pcohen_hs_minimization.restype = ctypes.c_int
 
 
 def cpp_minimize(m, B_ext, U0, params, sparse_ops, solve_U=None, **kwargs):
     """Run minimization using C++ backend."""
+    if lib is None:
+        raise FileNotFoundError("Could not find libcpp_mkl_minimizer.so. Please compile the C++ minimizer.")
     N = U0.shape[0]
 
     m_arr = np.ascontiguousarray(m.reshape(-1), dtype=np.float64)
