@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate intrinsic properties (wrapper script).")
     parser.add_argument("--K1", type=float, required=True, help="Anisotropy constant K1 [J/m^3]")
@@ -25,12 +26,18 @@ def main():
         sys.exit(1)
 
     cmd_args = [
-        "--K1", str(args.K1),
-        "--Js", str(args.Js),
-        "--A", str(args.A),
-        "--hstart", str(args.hstart),
-        "--hfinal", str(args.hfinal),
-        "--hstep", str(args.hstep),
+        "--K1",
+        str(args.K1),
+        "--Js",
+        str(args.Js),
+        "--A",
+        str(args.A),
+        "--hstart",
+        str(args.hstart),
+        "--hfinal",
+        str(args.hfinal),
+        "--hstep",
+        str(args.hstep),
     ]
 
     print("=== Step 1: Computing Evaluations ===")
@@ -42,6 +49,7 @@ def main():
     subprocess.run(analyze_cmd, check=True)
 
     print("\n=== Pipeline Complete ===")
+
 
 if __name__ == "__main__":
     main()

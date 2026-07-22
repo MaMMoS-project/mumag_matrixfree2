@@ -697,7 +697,7 @@ def main() -> None:
         "--cpp-mkl",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Use the pure C++ MKL minimizer backend for the entire field step (default: True on CPU with MKL, False otherwise).",
+        help="Use the pure C++ MKL minimizer backend for the entire field step (default: True on CPU with MKL, False otherwise).",  # noqa: E501
     )
     ap.add_argument(
         "--no-phi-extrapolate",

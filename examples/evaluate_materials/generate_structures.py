@@ -1,8 +1,9 @@
 import argparse
-import subprocess
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+
 
 def main():
     parser = argparse.ArgumentParser(description="Generate base granular structures.")
@@ -31,30 +32,42 @@ def main():
         struct_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n--- Processing {struct_name} ---")
-        
+
         # 1. Generate Mesh
         mesh_cmd = [
-            sys.executable, str(mesh_script),
-            "--geom", "poly", "--n", str(args.grains),
-            "--id", str(123 + i), # Vary seed so each structure is unique
-            "--extent", args.extent
+            sys.executable,
+            str(mesh_script),
+            "--geom",
+            "poly",
+            "--n",
+            str(args.grains),
+            "--id",
+            str(123 + i),  # Vary seed so each structure is unique
+            "--extent",
+            args.extent,
         ]
-        print(f"Running mesh generation...")
+        print("Running mesh generation...")
         subprocess.run(mesh_cmd, cwd=struct_dir, check=True)
         shutil.move(struct_dir / "single_solid.npz", struct_dir / "isotrop.npz")
-        
+
         # 2. Generate KRN with defaults just to set the fixed easy axes
         krn_cmd = [
-            sys.executable, str(make_krn_script),
-            "--mesh", "isotrop.npz",
-            "--out", "isotrop.krn",
-            "--tol", "0.05", # Loose tol to avoid infinite loops with random seeds
-            "--seed", str(1000 + i)
+            sys.executable,
+            str(make_krn_script),
+            "--mesh",
+            "isotrop.npz",
+            "--out",
+            "isotrop.krn",
+            "--tol",
+            "0.05",  # Loose tol to avoid infinite loops with random seeds
+            "--seed",
+            str(1000 + i),
         ]
-        print(f"Running easy-axis generation...")
+        print("Running easy-axis generation...")
         subprocess.run(krn_cmd, cwd=struct_dir, check=True)
-        
+
     print("\n✓ Base structures generated successfully.")
+
 
 if __name__ == "__main__":
     main()

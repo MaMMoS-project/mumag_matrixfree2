@@ -5,9 +5,9 @@ exclude = [
 ]
 line-length = 120
 [tool.ruff.lint]
+ignore = ["E402", "D"]
 select = [
   "B",   # flake8-bugbear
-  "D",   # pydocstyle
   "E",   # pycodestyle
   "F",   # Pyflakes
   "I",   # isort

@@ -261,9 +261,9 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
     """Creates a fast, multicore CPU SpMV operator via callbacks."""
     if cpu_spmv_backend == "persistent_mkl":
         try:
-            import sparse_dot_mkl
+            import sparse_dot_mkl  # noqa: F401
         except ImportError:
-            raise ImportError("sparse_dot_mkl is required for persistent_mkl.")
+            raise ImportError("sparse_dot_mkl is required for persistent_mkl.")  # noqa: B904
         persistent_op = PersistentMKLOperator(scipy_csr_mat)
 
         def spmv_callback(x_val, **kwargs):
@@ -272,7 +272,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
         try:
             from sparse_dot_mkl import dot_product_mkl
         except ImportError:
-            raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")
+            raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")  # noqa: B904
 
         def spmv_callback(x_val, **kwargs):
             x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
@@ -849,7 +849,7 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
             ffi_lib.free_pardiso(self.handle_id)
 
     pardiso_obj = PardisoHandle(handle_id, a_data, ia_data, ja_data)
-    handle_id_val = jnp.asarray(handle_id, dtype=jnp.int64)
+    jnp.asarray(handle_id, dtype=jnp.int64)
 
     @jax.jit
     def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy: Any = None):

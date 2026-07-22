@@ -1,5 +1,4 @@
-"""
-Benchmark 1 Workflow - Polycrystal Micromagnetic Hysteresis Loop Simulation
+"""Benchmark 1 Workflow - Polycrystal Micromagnetic Hysteresis Loop Simulation.
 
 This script automates the complete benchmark 1 workflow for micromagnetic simulations
 of polycrystalline materials using Neper mesh generation and JAX-based computations.
@@ -44,11 +43,10 @@ Stability tips for make_krn:
 """
 
 import argparse
-import subprocess
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -72,8 +70,8 @@ def step1_generate_mesh(
     base: Path,
     benchmark_dir: Path,
     neper_minimal: int = 1,
-    grains_override: Optional[int] = None,
-    extent_override: Optional[str] = None,
+    grains_override: int | None = None,
+    extent_override: str | None = None,
 ) -> None:
     """Generate polycrystal mesh using Neper.
 
@@ -135,7 +133,7 @@ def step1_generate_mesh(
         dst_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_file), str(dst_file))
 
-        print(f"\n[RESULT] ✓ Mesh generation complete")
+        print("\n[RESULT] ✓ Mesh generation complete")
         print(f"[OUTPUT] {dst_file}")
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] ✗ Mesh generation failed: {e}", file=sys.stderr)
@@ -178,7 +176,7 @@ def step2_build_krn(base: Path, benchmark_dir: Path, tol: float = 0.01) -> None:
         if not mesh_path.exists():
             raise FileNotFoundError(f"Mesh file not found: {mesh_path}")
 
-        print(f"\n[CONFIG] Material: Isotropic (K1 = 700 kJ/m³, Js = 0.8 T)")
+        print("\n[CONFIG] Material: Isotropic (K1 = 700 kJ/m³, Js = 0.8 T)")
         print(f"[CONFIG] Tolerance: {tol}")
 
         make_krn_script = (base / "src/make_krn.py").resolve()
@@ -201,7 +199,7 @@ def step2_build_krn(base: Path, benchmark_dir: Path, tol: float = 0.01) -> None:
         print("[SIMULATION] Building krn file for isotropic material...")
         subprocess.run(krn_cmd, check=True)
 
-        print(f"\n[RESULT] ✓ KRN file generation complete")
+        print("\n[RESULT] ✓ KRN file generation complete")
         print(f"[OUTPUT] {krn_path}")
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] ✗ KRN generation failed: {e}", file=sys.stderr)
@@ -240,7 +238,7 @@ def step2b_copy_to_isotrop_up(benchmark_dir: Path) -> None:
         # Always copy mesh + krn; never touch isotrop_up/isotrop.p2 (user-provided)
         files_to_copy = ["isotrop.npz", "isotrop.krn"]
 
-        print(f"\n[CONFIG] Copying files from isotrop_down to isotrop_up")
+        print("\n[CONFIG] Copying files from isotrop_down to isotrop_up")
         for filename in files_to_copy:
             src = isotrop_down / filename
             dst = isotrop_up / filename
@@ -260,7 +258,7 @@ def step2b_copy_to_isotrop_up(benchmark_dir: Path) -> None:
                 file=sys.stderr,
             )
 
-        print(f"\n[RESULT] ✓ Files prepared in isotrop_up")
+        print("\n[RESULT] ✓ Files prepared in isotrop_up")
         print(f"[OUTPUT] {isotrop_up}/")
     except Exception as e:
         print(f"\n[ERROR] ✗ File copy failed: {e}", file=sys.stderr)
@@ -302,13 +300,13 @@ def step3_run_loop(base: Path, benchmark_dir: Path, num_loops: int = 1) -> None:
         # Check if p2 file exists
         if not p2_file.exists():
             print(f"\n[ERROR] ✗ Configuration file not found: {p2_file}", file=sys.stderr)
-            print(f"[ERROR] Please create the isotrop.p2 file with hysteresis loop parameters.", file=sys.stderr)
+            print("[ERROR] Please create the isotrop.p2 file with hysteresis loop parameters.", file=sys.stderr)
             raise FileNotFoundError(f"Configuration file required: {p2_file}")
 
-        print(f"\n[CONFIG] Hysteresis loop parameters (DOWNWARD):")
-        print(f"  Field: hstart = 2.0 T, hfinal = -2.0 T, hstep = 0.01 T")
-        print(f"  Initial state: mx = 0, my = 0, mz = 1")
-        print(f"  Direction: Hz (along z-axis)")
+        print("\n[CONFIG] Hysteresis loop parameters (DOWNWARD):")
+        print("  Field: hstart = 2.0 T, hfinal = -2.0 T, hstep = 0.01 T")
+        print("  Initial state: mx = 0, my = 0, mz = 1")
+        print("  Direction: Hz (along z-axis)")
         print(f"  Number of runs: {num_loops}")
 
         loop_script = (base / "src/loop.py").resolve()
@@ -368,13 +366,13 @@ def step3b_run_loop_up(base: Path, benchmark_dir: Path, num_loops: int = 1) -> N
         # Check if p2 file exists
         if not p2_file.exists():
             print(f"\n[ERROR] ✗ Configuration file not found: {p2_file}", file=sys.stderr)
-            print(f"[ERROR] Please create the isotrop.p2 file with hysteresis loop parameters.", file=sys.stderr)
+            print("[ERROR] Please create the isotrop.p2 file with hysteresis loop parameters.", file=sys.stderr)
             raise FileNotFoundError(f"Configuration file required: {p2_file}")
 
-        print(f"\n[CONFIG] Hysteresis loop parameters (UPWARD):")
-        print(f"  Field: hstart = -2.0 T, hfinal = 2.0 T, hstep = 0.01 T")
-        print(f"  Initial state: mx = 0, my = 0, mz = -1")
-        print(f"  Direction: Hz (along z-axis)")
+        print("\n[CONFIG] Hysteresis loop parameters (UPWARD):")
+        print("  Field: hstart = -2.0 T, hfinal = 2.0 T, hstep = 0.01 T")
+        print("  Initial state: mx = 0, my = 0, mz = -1")
+        print("  Direction: Hz (along z-axis)")
         print(f"  Number of runs: {num_loops}")
 
         loop_script = (base / "src/loop.py").resolve()
@@ -407,15 +405,15 @@ def step3b_run_loop_up(base: Path, benchmark_dir: Path, num_loops: int = 1) -> N
 def plot_hysteresis_loop(
     data_file: Path,
     output_file: Path,
-    overlay_down_files: Optional[List[Path]] = None,
-    overlay_up_files: Optional[List[Path]] = None,
-    num_runs: Optional[int] = None,
-    grains: Optional[int] = None,
-    extent: Optional[str] = None,
-    num_down: Optional[int] = None,
-    num_up: Optional[int] = None,
-    hc_A_per_m: Optional[float] = None,
-    jr_T: Optional[float] = None,
+    overlay_down_files: list[Path] | None = None,
+    overlay_up_files: list[Path] | None = None,
+    num_runs: int | None = None,
+    grains: int | None = None,
+    extent: str | None = None,
+    num_down: int | None = None,
+    num_up: int | None = None,
+    hc_A_per_m: float | None = None,
+    jr_T: float | None = None,
 ) -> None:
     """Plot hysteresis loop from .mh file.
 
@@ -568,21 +566,21 @@ def plot_hysteresis_loop(
         # Physical relationship: Magnetic polarization J = µ0 * M
         # where µ0 = 4π×10⁻⁷ T·m/A is the permeability of free space
         def M_to_J(M_kA_per_m):
-            """Convert magnetization from kA/m to Tesla (J = µ0 * M)"""
+            """Convert magnetization from kA/m to Tesla (J = µ0 * M)."""
             return M_kA_per_m * mu0 * 1e3
 
         def J_to_M(J_T):
-            """Convert magnetization from Tesla to kA/m (M = J / µ0)"""
+            """Convert magnetization from Tesla to kA/m (M = J / µ0)."""
             return J_T / (mu0 * 1e3)
 
         # Define conversion functions for applied field: µ0*Hext (T) ↔ Hext (kA/m)
         # Physical relationship: µ0*H is the magnetic flux density in Tesla
         def H_T_to_kA_per_m(H_T):
-            """Convert applied field from Tesla to kA/m"""
+            """Convert applied field from Tesla to kA/m."""
             return H_T / (mu0 * 1e3)
 
         def H_kA_per_m_to_T(H_kA_per_m):
-            """Convert applied field from kA/m to Tesla"""
+            """Convert applied field from kA/m to Tesla."""
             return H_kA_per_m * mu0 * 1e3
 
         # RIGHT Y-AXIS: Magnetization in Tesla using transformation functions
@@ -679,7 +677,7 @@ def plot_hysteresis_loop(
 # =============================================================================
 
 
-def compute_hc_from_dat(dat_path: Path, demag: Optional[float] = None) -> Optional[float]:
+def compute_hc_from_dat(dat_path: Path, demag: float | None = None) -> float | None:
     """Compute coercivity Hc (A/m) using mammos-analysis from a hysteresis .mh file.
 
     The definition used: The magnetic field −Hc at which magnetic polarization
@@ -726,17 +724,17 @@ def compute_hc_from_dat(dat_path: Path, demag: Optional[float] = None) -> Option
         )
 
         # Robust numeric extraction in A/m from quantity
-        def _to_scalar_A_per_m(hc_obj) -> Optional[float]:
+        def _to_scalar_A_per_m(hc_obj) -> float | None:
             try:
                 return float(hc_obj.q.m)  # pint-like magnitude
             except Exception:
                 pass
             try:
-                return float(getattr(hc_obj.q, "magnitude"))
+                return float(hc_obj.q.magnitude)
             except Exception:
                 pass
             try:
-                return float(getattr(hc_obj.q, "value"))
+                return float(hc_obj.q.value)
             except Exception:
                 pass
             try:
@@ -745,15 +743,15 @@ def compute_hc_from_dat(dat_path: Path, demag: Optional[float] = None) -> Option
             except Exception:
                 pass
             try:
-                return float(getattr(hc_obj, "m"))
+                return float(hc_obj.m)
             except Exception:
                 pass
             try:
-                return float(getattr(hc_obj, "magnitude"))
+                return float(hc_obj.magnitude)
             except Exception:
                 pass
             try:
-                return float(getattr(hc_obj, "value"))
+                return float(hc_obj.value)
             except Exception:
                 pass
             return None
@@ -768,8 +766,8 @@ def compute_hc_from_dat(dat_path: Path, demag: Optional[float] = None) -> Option
 def compute_hc_from_arrays(
     Hext_T: np.ndarray,
     J_T: np.ndarray,
-    demag: Optional[float] = None,
-) -> Optional[float]:
+    demag: float | None = None,
+) -> float | None:
     """Compute coercivity Hc (A/m) from arrays µ0Hext (T) and J (T).
 
     This avoids any file I/O by taking the averaged data directly.
@@ -802,11 +800,11 @@ def compute_hc_from_arrays(
         except Exception:
             pass
         try:
-            return float(getattr(extrinsic.Hc.q, "magnitude"))
+            return float(extrinsic.Hc.q.magnitude)
         except Exception:
             pass
         try:
-            return float(getattr(extrinsic.Hc.q, "value"))
+            return float(extrinsic.Hc.q.value)
         except Exception:
             pass
         try:
@@ -814,15 +812,15 @@ def compute_hc_from_arrays(
         except Exception:
             pass
         try:
-            return float(getattr(extrinsic.Hc, "m"))
+            return float(extrinsic.Hc.m)
         except Exception:
             pass
         try:
-            return float(getattr(extrinsic.Hc, "magnitude"))
+            return float(extrinsic.Hc.magnitude)
         except Exception:
             pass
         try:
-            return float(getattr(extrinsic.Hc, "value"))
+            return float(extrinsic.Hc.value)
         except Exception:
             pass
         return None
@@ -834,8 +832,8 @@ def compute_hc_from_arrays(
 def compute_jr_from_arrays(
     Hext_T: np.ndarray,
     J_T: np.ndarray,
-    demag: Optional[float] = None,
-) -> Optional[float]:
+    demag: float | None = None,
+) -> float | None:
     """Compute remanent polarization Jr (Tesla) from arrays µ0Hext (T) and J (T).
 
     Definition: remanent polarization Jr in Tesla is the intersection point of the
@@ -877,7 +875,7 @@ def compute_jr_from_arrays(
 
         if jr_attr is None:
             print(
-                f"  [WARNING] No remanent property found. Available attributes: {[a for a in available_attrs if not a.startswith('_')]}",
+                f"  [WARNING] No remanent property found. Available attributes: {[a for a in available_attrs if not a.startswith('_')]}",  # noqa: E501
                 file=sys.stderr,
             )
             return None
@@ -890,12 +888,12 @@ def compute_jr_from_arrays(
         except Exception:
             pass
         try:
-            jr_A_per_m = float(getattr(jr_attr.q, "magnitude"))
+            jr_A_per_m = float(jr_attr.q.magnitude)
             return jr_A_per_m * mu0
         except Exception:
             pass
         try:
-            jr_A_per_m = float(getattr(jr_attr.q, "value"))
+            jr_A_per_m = float(jr_attr.q.value)
             return jr_A_per_m * mu0
         except Exception:
             pass
@@ -905,17 +903,17 @@ def compute_jr_from_arrays(
         except Exception:
             pass
         try:
-            jr_A_per_m = float(getattr(jr_attr, "m"))
+            jr_A_per_m = float(jr_attr.m)
             return jr_A_per_m * mu0
         except Exception:
             pass
         try:
-            jr_A_per_m = float(getattr(jr_attr, "magnitude"))
+            jr_A_per_m = float(jr_attr.magnitude)
             return jr_A_per_m * mu0
         except Exception:
             pass
         try:
-            jr_A_per_m = float(getattr(jr_attr, "value"))
+            jr_A_per_m = float(jr_attr.value)
             return jr_A_per_m * mu0
         except Exception:
             pass
@@ -928,8 +926,8 @@ def compute_jr_from_arrays(
 def compute_bhmax_from_arrays(
     Hext_T: np.ndarray,
     J_T: np.ndarray,
-    demag: Optional[float] = None,
-) -> Optional[float]:
+    demag: float | None = None,
+) -> float | None:
     """Compute maximum energy product (BH)max (J/m³) from arrays µ0Hext (T) and J (T).
 
     Definition: The maximum energy product (BH)max in units of J/m³ is represented by
@@ -971,7 +969,7 @@ def compute_bhmax_from_arrays(
 
         if bhmax_attr is None:
             print(
-                f"  [WARNING] No BHmax property found. Available attributes: {[a for a in available_attrs if not a.startswith('_')]}",
+                f"  [WARNING] No BHmax property found. Available attributes: {[a for a in available_attrs if not a.startswith('_')]}",  # noqa: E501
                 file=sys.stderr,
             )
             return None
@@ -982,11 +980,11 @@ def compute_bhmax_from_arrays(
         except Exception:
             pass
         try:
-            return float(getattr(bhmax_attr.q, "magnitude"))
+            return float(bhmax_attr.q.magnitude)
         except Exception:
             pass
         try:
-            return float(getattr(bhmax_attr.q, "value"))
+            return float(bhmax_attr.q.value)
         except Exception:
             pass
         try:
@@ -994,15 +992,15 @@ def compute_bhmax_from_arrays(
         except Exception:
             pass
         try:
-            return float(getattr(bhmax_attr, "m"))
+            return float(bhmax_attr.m)
         except Exception:
             pass
         try:
-            return float(getattr(bhmax_attr, "magnitude"))
+            return float(bhmax_attr.magnitude)
         except Exception:
             pass
         try:
-            return float(getattr(bhmax_attr, "value"))
+            return float(bhmax_attr.value)
         except Exception:
             pass
         return None
@@ -1021,13 +1019,13 @@ def step4_repeat_and_average(
     benchmark_dir: Path,
     neper_minimal: int = 1,
     num_repeats: int = 1,
-    grains_override: Optional[int] = None,
-    extent_override: Optional[str] = None,
+    grains_override: int | None = None,
+    extent_override: str | None = None,
     tol: float = 0.01,
     average_only: bool = False,
     backup_existing: bool = False,
     clean_results: bool = False,
-    demag: Optional[float] = 1.0 / 3.0,
+    demag: float | None = 1.0 / 3.0,
 ) -> None:
     """Repeat Steps 1-3 multiple times and compute averaged hysteresis loop.
 
@@ -1172,14 +1170,14 @@ def step4_repeat_and_average(
                             file=sys.stderr,
                         )
                         if backup_existing:
-                            print(f"[INFO] Backing up existing files to .mh.bak", file=sys.stderr)
+                            print("[INFO] Backing up existing files to .mh.bak", file=sys.stderr)
                             for existing_file in existing_files:
                                 backup_file = existing_file.with_suffix(".mh.bak")
                                 shutil.move(str(existing_file), str(backup_file))
                                 print(f"  ✓ Backed up {existing_file.name} → {backup_file.name}")
                         else:
                             print(
-                                f"[INFO] Existing files will be overwritten (use --backup to preserve them)",
+                                "[INFO] Existing files will be overwritten (use --backup to preserve them)",
                                 file=sys.stderr,
                             )
 
@@ -1218,11 +1216,11 @@ def step4_repeat_and_average(
 
         if num_repeats == 1 and not average_only:
             print(
-                f"\n[INFO] Single run: averaging trivial (1 file), but will create average file and plot for consistency"
+                "\n[INFO] Single run: averaging trivial (1 file), but will create average file and plot for consistency"
             )
         if average_only:
             print(
-                f"\n[INFO] Average-only mode: using existing isotrop_down_run*.mh and isotrop_up_run*.mh files in results/"
+                "\n[INFO] Average-only mode: using existing isotrop_down_run*.mh and isotrop_up_run*.mh files in results/"  # noqa: E501
             )
 
         # Discover downward and upward .mh files separately
@@ -1232,11 +1230,11 @@ def step4_repeat_and_average(
 
         if not dat_files_down and not dat_files_up:
             print("[WARNING] No hysteresis loop data files found for averaging")
-            print(f"\n[RESULT] ✓ Repeat workflow complete (no averaging performed)")
+            print("\n[RESULT] ✓ Repeat workflow complete (no averaging performed)")
             print(f"[OUTPUT] Results directory: {results_dir}/")
             return
 
-        print(f"\n[B.1] DISCOVERY")
+        print("\n[B.1] DISCOVERY")
         print(f"  Found {len(dat_files_down)} downward .mh files in {results_dir}/")
         for f in dat_files_down:
             print(f"    • {f.name}")
@@ -1248,7 +1246,7 @@ def step4_repeat_and_average(
         # Remove files whose number of data rows differs from the mode to prevent shape errors.
         def _count_data_rows(p: Path) -> int:
             try:
-                with open(p, "r") as fh:
+                with open(p) as fh:
                     # subtract 1 for header
                     n = sum(1 for _ in fh) - 1
                     return max(n, 0)
@@ -1292,7 +1290,7 @@ def step4_repeat_and_average(
             dat_files_up = _prune_mismatched(dat_files_up, "upward")
 
         # Validate run indices consistency
-        print(f"\n[B.2] VALIDATION")
+        print("\n[B.2] VALIDATION")
 
         def validate_indices(dat_files, label):
             run_indices = []
@@ -1326,7 +1324,7 @@ def step4_repeat_and_average(
             validate_indices(dat_files_up, "Upward")
 
         # Load and average downward data
-        print(f"\n[B.3] DATA LOADING AND AVERAGING - DOWNWARD")
+        print("\n[B.3] DATA LOADING AND AVERAGING - DOWNWARD")
         header_line = None
         data_average_down = None
 
@@ -1335,7 +1333,7 @@ def step4_repeat_and_average(
             all_data_down = []
 
             for dat_file in dat_files_down:
-                with open(dat_file, "r") as f:
+                with open(dat_file) as f:
                     header_line = f.readline().strip()
                 data = np.loadtxt(dat_file, skiprows=1)
                 all_data_down.append(data)
@@ -1344,17 +1342,17 @@ def step4_repeat_and_average(
             if len(all_data_down) > 1:
                 shapes = [d.shape for d in all_data_down]
                 if not all(s == shapes[0] for s in shapes):
-                    print(f"  [WARNING] ⚠ Downward data files have different shapes!", file=sys.stderr)
+                    print("  [WARNING] ⚠ Downward data files have different shapes!", file=sys.stderr)
 
             data_stack_down = np.stack(all_data_down, axis=0)
             data_average_down = np.mean(data_stack_down, axis=0)
 
-            print(f"\n  ✓ Downward data averaging completed")
+            print("\n  ✓ Downward data averaging completed")
             print(f"    Input shape:  {data_stack_down.shape}")
             print(f"    Output shape: {data_average_down.shape}")
 
         # Load and average upward data
-        print(f"\n[B.4] DATA LOADING AND AVERAGING - UPWARD")
+        print("\n[B.4] DATA LOADING AND AVERAGING - UPWARD")
         data_average_up = None
 
         if dat_files_up:
@@ -1362,7 +1360,7 @@ def step4_repeat_and_average(
             all_data_up = []
 
             for dat_file in dat_files_up:
-                with open(dat_file, "r") as f:
+                with open(dat_file) as f:
                     header_line = f.readline().strip()
                 data = np.loadtxt(dat_file, skiprows=1)
                 all_data_up.append(data)
@@ -1371,34 +1369,34 @@ def step4_repeat_and_average(
             if len(all_data_up) > 1:
                 shapes = [d.shape for d in all_data_up]
                 if not all(s == shapes[0] for s in shapes):
-                    print(f"  [WARNING] ⚠ Upward data files have different shapes!", file=sys.stderr)
+                    print("  [WARNING] ⚠ Upward data files have different shapes!", file=sys.stderr)
 
             data_stack_up = np.stack(all_data_up, axis=0)
             data_average_up = np.mean(data_stack_up, axis=0)
 
-            print(f"\n  ✓ Upward data averaging completed")
+            print("\n  ✓ Upward data averaging completed")
             print(f"    Input shape:  {data_stack_up.shape}")
             print(f"    Output shape: {data_average_up.shape}")
 
         # Combine downward and upward averages
-        print(f"\n[B.5] COMBINING AVERAGES")
+        print("\n[B.5] COMBINING AVERAGES")
         if data_average_down is not None and data_average_up is not None:
             data_average = np.vstack([data_average_down, data_average_up])
-            print(f"  ✓ Combined downward and upward averages")
+            print("  ✓ Combined downward and upward averages")
             print(f"    Combined shape: {data_average.shape}")
         elif data_average_down is not None:
             data_average = data_average_down
-            print(f"  Using downward average only (no upward data)")
+            print("  Using downward average only (no upward data)")
         elif data_average_up is not None:
             data_average = data_average_up
-            print(f"  Using upward average only (no downward data)")
+            print("  Using upward average only (no downward data)")
         else:
-            print(f"  [ERROR] No data to average!", file=sys.stderr)
+            print("  [ERROR] No data to average!", file=sys.stderr)
             return
 
         # Write averaged data to file
         avg_file = results_dir / "isotrop_average.mh"
-        print(f"\n[B.6] WRITING RESULTS")
+        print("\n[B.6] WRITING RESULTS")
         print(f"  Saving averaged data to: {avg_file}")
 
         with open(avg_file, "w") as f:
@@ -1409,7 +1407,7 @@ def step4_repeat_and_average(
         print(f"    File size: {avg_file.stat().st_size / 1024:.2f} KB")
 
         # Generate plot for averaged data with both directions
-        print(f"\n[B.7] GENERATING PLOT")
+        print("\n[B.7] GENERATING PLOT")
         plot_file = results_dir / "isotrop_average.png"
         total_runs = len(dat_files_down) + len(dat_files_up) / 2
 
@@ -1422,7 +1420,7 @@ def step4_repeat_and_average(
             mesh_extent = extent_override if extent_override else ("20,20,20" if neper_minimal else "80,80,80")
 
         # Compute Hc for plotting (prefer averaged downward segment)
-        hc_for_plot: Optional[float] = None
+        hc_for_plot: float | None = None
         try:
             if data_average_down is not None:
                 Hext_down_T = data_average_down[:, 0]
@@ -1438,7 +1436,7 @@ def step4_repeat_and_average(
             hc_for_plot = None
 
         # Compute Jr for plotting (prefer averaged downward segment)
-        jr_for_plot: Optional[float] = None
+        jr_for_plot: float | None = None
         try:
             if data_average_down is not None:
                 Hext_down_T = data_average_down[:, 0]
@@ -1468,7 +1466,7 @@ def step4_repeat_and_average(
         )
 
         # ===== Coercivity (Hc) via mammos-analysis (in-memory) =====
-        print(f"\n[B.8] COERCIVITY Hc COMPUTATION (mammos-analysis)")
+        print("\n[B.8] COERCIVITY Hc COMPUTATION (mammos-analysis)")
 
         hc_val = None
 
@@ -1507,7 +1505,7 @@ def step4_repeat_and_average(
             print("  [INFO] Skipped Hc computation (mammos-analysis unavailable or failed)")
 
         # ===== Remanent polarization (Jr) via mammos-analysis (in-memory) =====
-        print(f"\n[B.9] REMANENT POLARIZATION Jr COMPUTATION (mammos-analysis)")
+        print("\n[B.9] REMANENT POLARIZATION Jr COMPUTATION (mammos-analysis)")
 
         jr_val = None
 
@@ -1541,7 +1539,7 @@ def step4_repeat_and_average(
             print("  [INFO] Skipped Jr computation (mammos-analysis unavailable or failed)")
 
         # ===== Maximum energy product (BH)max via mammos-analysis (in-memory) =====
-        print(f"\n[B.10] MAXIMUM ENERGY PRODUCT (BH)max COMPUTATION (mammos-analysis)")
+        print("\n[B.10] MAXIMUM ENERGY PRODUCT (BH)max COMPUTATION (mammos-analysis)")
 
         bhmax_val = None
 
@@ -1577,13 +1575,13 @@ def step4_repeat_and_average(
 
         # ===== Write all extrinsic properties to CSV using mammos-entity =====
         if hc_val is not None or jr_val is not None or bhmax_val is not None:
-            print(f"\n[B.11] WRITING EXTRINSIC PROPERTIES TO CSV")
+            print("\n[B.11] WRITING EXTRINSIC PROPERTIES TO CSV")
             properties_file = results_dir / "isotrop_average_properties.csv"
             try:
                 # Prepare mammos-entity objects for CSV export
                 description = (
                     "Averaged extrinsic properties for Benchmark 1.\n"
-                    "This file contains Hc (coercivity), Mr (remanent magnetization), and BHmax (maximum energy product)\n"
+                    "This file contains Hc (coercivity), Mr (remanent magnetization), and BHmax (maximum energy product)\n"  # noqa: E501
                     "computed from the averaged hysteresis loop.\n"
                 )
                 # Only include non-None values
@@ -1623,14 +1621,14 @@ def step4_repeat_and_average(
         total_files = len(dat_files_down) + len(dat_files_up)
         if average_only:
             print(
-                f"[STEP A] Found {total_files} existing run files ({len(dat_files_down)} down, {len(dat_files_up)} up) in results/ directory"
+                f"[STEP A] Found {total_files} existing run files ({len(dat_files_down)} down, {len(dat_files_up)} up) in results/ directory"  # noqa: E501
             )
         else:
             print(
-                f"[STEP A] Stored {total_files} individual run files ({len(dat_files_down)} down, {len(dat_files_up)} up) in results/ directory"
+                f"[STEP A] Stored {total_files} individual run files ({len(dat_files_down)} down, {len(dat_files_up)} up) in results/ directory"  # noqa: E501
             )
         print(f"[STEP B] Averaged {len(dat_files_down)} downward and {len(dat_files_up)} upward runs")
-        print(f"\n[OUTPUT]")
+        print("\n[OUTPUT]")
         if dat_files_down:
             print(
                 f"  Downward runs: {results_dir}/isotrop_down_run01.mh ... isotrop_down_run{len(dat_files_down):02d}.mh"
@@ -1650,7 +1648,7 @@ def step4_repeat_and_average(
                 bhmax_kJ_per_m3 = bhmax_val / 1e3
                 print(f"    - (BH)max = {bhmax_kJ_per_m3:.4g} kJ/m³")
 
-        print(f"\n[RESULT] ✓ Repeat and average workflow complete")
+        print("\n[RESULT] ✓ Repeat and average workflow complete")
         print(f"[OUTPUT] Results directory: {results_dir}/")
 
     except Exception as e:
@@ -1781,14 +1779,14 @@ Examples:
     parser.add_argument(
         "--clean-results",
         action="store_true",
-        help="Remove (or backup with --backup) existing results in results/ before averaging (useful with --average-only)",
+        help="Remove (or backup with --backup) existing results in results/ before averaging (useful with --average-only)",  # noqa: E501
     )
     parser.add_argument(
         "--demag",
         type=float,
         default=1.0 / 3.0,
         metavar="N",
-        help="Demagnetization coefficient for Hc/BHmax estimation (e.g., 1/3 for cube). Optional; Hc computed without it.",
+        help="Demagnetization coefficient for Hc/BHmax estimation (e.g., 1/3 for cube). Optional; Hc computed without it.",  # noqa: E501
     )
 
     args = parser.parse_args()
@@ -1825,7 +1823,7 @@ Examples:
     print(f"  Average only: {average_only}")
     print(f"  Backup files: {backup_existing}")
     print(f"  Demag coeff:  {demag_coeff}")
-    print(f"\n[PATH INFO]")
+    print("\n[PATH INFO]")
     print(f"  Base directory:        {base}")
     print(f"  Examples directory:    {run_dir.parent}")
     print(f"  Benchmark directory:   {benchmark_dir}")

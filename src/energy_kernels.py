@@ -49,10 +49,10 @@ from typing import Any, Literal
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+import jax.numpy as jnp
+from jax import lax
 
-from fem_utils import (  # noqa: E402
+from fem_utils import (
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,
@@ -505,10 +505,7 @@ def compute_exchange_diagonal(
     geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
     conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
 
-    if geom_p.x_nodes is not None:
-        N = geom_p.x_nodes.shape[0]
-    else:
-        N = int(jnp.max(geom.conn)) + 1
+    N = geom_p.x_nodes.shape[0] if geom_p.x_nodes is not None else int(jnp.max(geom.conn)) + 1
 
     dtype = jnp.float64
     inv_Vmag = 1.0 / V_mag

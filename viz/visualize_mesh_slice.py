@@ -1,14 +1,16 @@
 import argparse
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
+
 
 def slice_tet_mesh_z0(knt, ijk):
-    """
-    Slices a 3D tetrahedral mesh at z = 0 using a custom marching-tets method.
+    """Slices a 3D tetrahedral mesh at z = 0 using a custom marching-tets method.
+
     Returns:
         x, y: coordinates of slice vertices
         triangles: triangle connectivity (M, 3)
-        mat_ids: material IDs of each triangle (M,)
+        mat_ids: material IDs of each triangle (M,).
     """
     # Perturb z slightly to avoid degeneracies (nodes exactly on the slice plane)
     z = knt[:, 2] + 1e-10 * np.sin(knt[:, 0] * 123.45 + knt[:, 1] * 678.90)
@@ -78,16 +80,21 @@ def slice_tet_mesh_z0(knt, ijk):
 
     return np.array(slice_pts), np.array(triangles), np.array(mat_ids)
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Slice a 3D tetrahedral mesh (.npz) at z=0 and plot material IDs and mesh grid.")
-    ap.add_argument("--mesh", type=str, default="box_with_shell.npz", help="Path to input NPZ mesh containing 'knt' and 'ijk'.")
+    ap = argparse.ArgumentParser(
+        description="Slice a 3D tetrahedral mesh (.npz) at z=0 and plot material IDs and mesh grid."
+    )
+    ap.add_argument(
+        "--mesh", type=str, default="box_with_shell.npz", help="Path to input NPZ mesh containing 'knt' and 'ijk'."
+    )
     ap.add_argument("--out", type=str, default="viz/mesh_slice.png", help="Path to save the output slice image.")
     args = ap.parse_args()
 
     print(f"Loading {args.mesh}...")
     data = np.load(args.mesh)
-    knt = data['knt']
-    ijk = data['ijk']
+    knt = data["knt"]
+    ijk = data["ijk"]
 
     print(f"Slicing mesh with {len(knt)} nodes and {len(ijk)} tets...")
     pts_2d, triangles, mat_ids = slice_tet_mesh_z0(knt, ijk)
@@ -106,24 +113,25 @@ def main():
     # Plot 1: Material IDs (filled triangles)
     ax = axes[0]
     unique_mats = np.unique(mat_ids)
-    tc = ax.tripcolor(x, y, triangles, facecolors=mat_ids, cmap='tab10', edgecolors='none', vmin=0, vmax=9)
-    cbar = fig.colorbar(tc, ax=ax, label='Material ID', ticks=unique_mats)
-    ax.set_title('Material IDs (z = 0 Slice)', fontsize=14)
-    ax.set_aspect('equal')
-    ax.grid(True, linestyle='--', alpha=0.5)
+    tc = ax.tripcolor(x, y, triangles, facecolors=mat_ids, cmap="tab10", edgecolors="none", vmin=0, vmax=9)
+    fig.colorbar(tc, ax=ax, label="Material ID", ticks=unique_mats)
+    ax.set_title("Material IDs (z = 0 Slice)", fontsize=14)
+    ax.set_aspect("equal")
+    ax.grid(True, linestyle="--", alpha=0.5)
 
     # Plot 2: Mesh Grid (wireframe showing grading)
     ax = axes[1]
-    ax.triplot(x, y, triangles, color='black', linewidth=0.2, alpha=0.7)
-    ax.scatter(x, y, color='red', s=0.5, alpha=0.8)
-    ax.set_title('Mesh Grid / Grading (z = 0 Slice)', fontsize=14)
-    ax.set_aspect('equal')
-    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.triplot(x, y, triangles, color="black", linewidth=0.2, alpha=0.7)
+    ax.scatter(x, y, color="red", s=0.5, alpha=0.8)
+    ax.set_title("Mesh Grid / Grading (z = 0 Slice)", fontsize=14)
+    ax.set_aspect("equal")
+    ax.grid(True, linestyle="--", alpha=0.5)
 
-    plt.suptitle(f'Tetrahedral Mesh Slice at z = 0 ({args.mesh})', fontsize=16)
-    
-    plt.savefig(args.out, dpi=300, bbox_inches='tight')
+    plt.suptitle(f"Tetrahedral Mesh Slice at z = 0 ({args.mesh})", fontsize=16)
+
+    plt.savefig(args.out, dpi=300, bbox_inches="tight")
     print(f"Saved visualization to {args.out}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

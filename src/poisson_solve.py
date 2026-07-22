@@ -16,10 +16,10 @@ from typing import Literal
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+import jax.numpy as jnp
+from jax import lax
 
-from fem_utils import (  # noqa: E402
+from fem_utils import (
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,
@@ -131,10 +131,10 @@ def make_poisson_ops(
     assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
     mode: str = "matrix_free",
-    A_sparse: Any | None = None,
-    Dx_sparse: Any | None = None,
-    Dy_sparse: Any | None = None,
-    Dz_sparse: Any | None = None,
+    A_sparse: Any | None = None,  # noqa: F821
+    Dx_sparse: Any | None = None,  # noqa: F821
+    Dy_sparse: Any | None = None,  # noqa: F821
+    Dz_sparse: Any | None = None,  # noqa: F821
     A_diag: Array | None = None,
 ) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
     """Create JIT-compiled matrix-free or matrix-assembled Poisson operators.
@@ -495,11 +495,11 @@ def make_solve_U(
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
     mode: str = "matrix_free",
-    A_sparse: Any = None,
-    Dx_sparse: Any = None,
-    Dy_sparse: Any = None,
-    Dz_sparse: Any = None,
-    A_diag: Any = None,
+    A_sparse: Any = None,  # noqa: F821
+    Dx_sparse: Any = None,  # noqa: F821
+    Dy_sparse: Any = None,  # noqa: F821
+    Dz_sparse: Any = None,  # noqa: F821
+    A_diag: Any = None,  # noqa: F821
     cpu_spmv_backend: str = "persistent_mkl",
     poisson_solver: str = "jax",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
@@ -601,7 +601,7 @@ def make_solve_U(
 
         if poisson_solver == "jax_mkl":
             raise ValueError(
-                "poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead."
+                "poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead."  # noqa: E501
             )
         else:
             levels_jax = []

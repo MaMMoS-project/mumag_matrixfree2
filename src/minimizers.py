@@ -2969,11 +2969,11 @@ def make_minimizer(
 
     # Compute Jacobi preconditioner using the diagonal of the exchange matrix
     if kwargs.get("mode", "matrix_free") == "assembled" and Kex_diag is not None:
-        d_diag = Kex_diag
+        pass
     else:
         from energy_kernels import compute_exchange_diagonal
 
-        d_diag = compute_exchange_diagonal(
+        compute_exchange_diagonal(
             geom,
             A_lookup,
             V_mag,
@@ -3882,7 +3882,7 @@ def make_minimizer(
 
                         if params.get("verbose", False):
                             print(
-                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf):.3e} rho={rho_tr:.3f} dlt={delta_next:.3e} conv={bool(s_conv)}"
+                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf):.3e} rho={rho_tr:.3f} dlt={delta_next:.3e} conv={bool(s_conv)}"  # noqa: E501
                             )
 
                         state_class = PTRState if method == "ptr" else TRState
@@ -3988,7 +3988,7 @@ def make_minimizer(
 
                         if params.get("verbose", False):
                             print(
-                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}"
+                                f"it={int(state_local.it):03d} E={float(s_E_new):.8e} g={float(s_gnorm_inf_smooth):.3e} tau={float(s_tau):.3e} conv={bool(s_conv)}"  # noqa: E501
                             )
 
                         state_local = PCGState(

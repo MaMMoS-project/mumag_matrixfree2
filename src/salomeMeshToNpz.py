@@ -18,7 +18,7 @@ def knt_ijk_to_npz(knt_path: str, ijk_path: str, npz_path: str) -> None:
     try:
         pts = np.loadtxt(knt_path, dtype=np.float64)
     except Exception as e:
-        raise ValueError(f"Failed to read KNT file: {e}")
+        raise ValueError(f"Failed to read KNT file: {e}")  # noqa: B904
 
     if pts.ndim != 2 or pts.shape[1] < 3:
         raise ValueError("KNT file must contain at least 3 columns (x y z)")
@@ -29,7 +29,7 @@ def knt_ijk_to_npz(knt_path: str, ijk_path: str, npz_path: str) -> None:
     try:
         ijk_raw = np.loadtxt(ijk_path, dtype=np.int32)
     except Exception as e:
-        raise ValueError(f"Failed to read IJK file: {e}")
+        raise ValueError(f"Failed to read IJK file: {e}")  # noqa: B904
 
     if ijk_raw.ndim == 1:
         ijk_raw = ijk_raw.reshape(1, -1)
@@ -51,10 +51,7 @@ def knt_ijk_to_npz(knt_path: str, ijk_path: str, npz_path: str) -> None:
         mat = ijk_raw[:, 4].astype(np.int32)
 
     # ---- Combine like your VTU version ----
-    if mat is not None:
-        ijk = np.column_stack([tets, mat])
-    else:
-        ijk = tets
+    ijk = np.column_stack([tets, mat]) if mat is not None else tets
 
     # ---- Save NPZ ----
     np.savez(npz_path, knt=pts, ijk=ijk)

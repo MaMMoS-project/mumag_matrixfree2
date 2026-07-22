@@ -1,8 +1,9 @@
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
-import os
+
 
 def write_p2(path, hstart, hfinal, hstep):
     content = f"""[mesh]
@@ -34,6 +35,7 @@ eps_a = 1e-12
     with open(path, "w") as f:
         f.write(content)
 
+
 def main():
     parser = argparse.ArgumentParser(description="Compute intrinsic properties evaluations.")
     parser.add_argument("--K1", type=float, required=True, help="Anisotropy constant K1 [J/m^3]")
@@ -49,7 +51,7 @@ def main():
     base_structures_dir = run_dir / "base_structures"
     evaluations_dir = run_dir / "evaluations"
     evaluations_dir.mkdir(parents=True, exist_ok=True)
-    
+
     loop_script = base_dir / "src" / "loop.py"
 
     struct_dirs = sorted(base_structures_dir.glob("structure_*"))
@@ -71,11 +73,11 @@ def main():
         mesh_dst = run_struct_dir / "isotrop.npz"
         if not mesh_dst.exists():
             os.symlink(mesh_src, mesh_dst)
-        
+
         # Read and modify krn (replacing intrinsic properties but keeping theta/phi)
         krn_src = struct_dir / "isotrop.krn"
         krn_dst = run_struct_dir / "isotrop.krn"
-        with open(krn_src, "r") as f_in, open(krn_dst, "w") as f_out:
+        with open(krn_src) as f_in, open(krn_dst, "w") as f_out:
             for line in f_in:
                 if line.startswith("#"):
                     f_out.write(line)
@@ -95,6 +97,7 @@ def main():
         print(f"\n--- Running loop.py for {struct_name} ---")
         loop_cmd = [sys.executable, str(loop_script), "isotrop", "--mesh", "isotrop.npz", "--add-shell"]
         subprocess.run(loop_cmd, cwd=run_struct_dir, check=True)
+
 
 if __name__ == "__main__":
     main()

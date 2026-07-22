@@ -284,13 +284,13 @@ def subdivide_flat_mesh(V: np.ndarray, F: np.ndarray, levels: int) -> tuple[np.n
 
         def mid_idx(i: int, j: int) -> int:
             key = (i, j) if i < j else (j, i)
-            if key in edge_cache:
-                return edge_cache[key]
-            vi, vj = np.array(new_verts[i]), np.array(new_verts[j])
+            if key in edge_cache:  # noqa: B023
+                return edge_cache[key]  # noqa: B023
+            vi, vj = np.array(new_verts[i]), np.array(new_verts[j])  # noqa: B023
             vm = 0.5 * (vi + vj)
-            new_verts.append(vm.tolist())
-            idx = len(new_verts) - 1
-            edge_cache[key] = idx
+            new_verts.append(vm.tolist())  # noqa: B023
+            idx = len(new_verts) - 1  # noqa: B023
+            edge_cache[key] = idx  # noqa: B023
             return idx
 
         for i, j, k in F:
