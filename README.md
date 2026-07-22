@@ -21,7 +21,12 @@ cd mumag_matrixfree2
 ```
 *Note: For Linux users running on CPU, Pixi will automatically compile the highly optimized `libcpp_mkl_minimizer.so` shared libraries using the Intel MKL in the background when the environment activates.*
 
+*Note for Mac Users (Apple Silicon / ARM64): Intel MKL is not available on Mac. You must bypass the MKL backends by appending `--cpu-spmv-backend scipy --no-cpp-mkl` to your `loop.py` simulation commands.*
+
 ## 2. How to Run the Software Locally
+
+> [!WARNING]
+> **Experimental Feature:** The `--operator-mode matrix_free` flag is highly experimental and is **not recommended** for use. It incurs excessively long JAX JIT compilation times on GPUs. Please use the default `--operator-mode assembled` for all workloads.
 
 All operations are executed through `pixi run`. The default environment is `cpu`.
 
@@ -111,9 +116,10 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 
 1. **`params.log`**: A Markdown table detailing all resolved configuration variables and their origin (CLI, `.p2`, or Defaults).
 2. **`hysteresis.csv`**: Global results tracking external field `B_ext_T`, parallel magnetization `J_par_T`, total energy `E`, and gradient norms across the sweep.
-3. **`*.mh`**: Legacy compatibility text file with space-separated columns of the magnetization history.
-4. **`*.vtu`**: ParaView-compatible XML visualization snapshots of the vector state. E.g., `state_cfg00001_B+1.5000e+00T.vtu`.
-5. **`simulation.log`**: The captured standard output if explicitly tee'd in the run script.
+3. **`mammos_hysteresis.csv`**: An ontology-compliant version of the hysteresis data mapped to the [MagMo/MAMMOS EMMO ontology](https://emmo-repo.github.io/domain-magnetic-materials/magnetic-materials.html). It automatically scales reduced units into strictly typed physical entities (e.g., `EnergyDensity` in $J/m^3$, `MagneticFluxDensity` in Tesla, and `Index` for configuration numbers).
+4. **`*.mh`**: Legacy compatibility text file with space-separated columns of the magnetization history.
+5. **`*.vtu`**: ParaView-compatible XML visualization snapshots of the vector state. E.g., `state_cfg00001_B+1.5000e+00T.vtu`.
+6. **`simulation.log`**: The captured standard output if explicitly tee'd in the run script.
 
 ## 6. Basic Usage Examples
 
@@ -137,6 +143,15 @@ pixi run python3 src/loop.py cube_20nm --add-shell
 pixi run sample
 ```
 *(This automatically meshes a cube, runs a full hysteresis loop, and outputs the results).*
+
+**5. Run the Pipeline on Mac (Apple Silicon / ARM64):**
+Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
+```bash
+# Generate the mesh
+pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
+# Run the simulation without MKL
+pixi run python3 src/loop.py cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
+```
 
 ## 7. Numerical Methods & Algorithms
 
@@ -166,7 +181,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
-| `--operator-mode` | choice | Mode for execution: `matrix-free` or `assembled`. |
+| `--operator-mode` | choice | Mode for execution: `assembled` (default, recommended) or `matrix_free` (experimental, do not use). |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
@@ -248,7 +263,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Solver Backend & Parallelization
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--operator-mode` | SpMV execution mode: `matrix_free` (recompute on-the-fly) or `assembled` (sparse matrix format). | `assembled` |
+| `--operator-mode` | SpMV execution mode: `assembled` (default, sparse matrix) or `matrix_free` (experimental, do not use). | `assembled` |
 | `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
@@ -319,6 +334,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | `hstart` | Starting magnitude of the applied field (Tesla). | `-1.0` | `--B-start` |
 | `hfinal` | Final magnitude of the applied field (Tesla). | `1.0` | `--B-end` |
 | `hstep` | Field sweep step size magnitude (Tesla). | `0.05` | `--dB` |
+| `mstep` | Magnetization change threshold for saving `.vtu` snapshots. Setting this to a very large value (e.g. `10000`) prevents VTU outputs to save disk space. | `None` | N/A |
 | `bias_type` | Symmetry-breaking initialization field (`circular` or `random`). | `None` | `--bias-type` |
 | `bias_strength` | Strength of the bias field relative to saturation. | `0.0` | `--bias-strength` |
 
@@ -358,20 +374,27 @@ The `examples/evaluate_materials` directory provides an automated pipeline for g
 **1. Generate Base Structures:**
 ```bash
 cd examples/evaluate_materials
-python generate_structures.py --extent 80,80,80 --grains 8 --num-structures 10
+pixi run python generate_structures.py --extent 80,80,80 --grains 8 --num-structures 10
 ```
-This generates 10 fixed meshes with their random easy-axis orientations permanently seeded in `isotrop.krn`.
+*(Alternatively, submit `sbatch run_generate_structures.slurm` to a cluster).*
+This generates 10 fixed meshes with their random easy-axis orientations permanently seeded in `isotrop.krn` under the `base_structures/` folder.
 
 **2. Evaluate Magnetic Properties:**
 ```bash
-python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
+pixi run -e cuda python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
 ```
-This evaluates the specified intrinsic properties on all 10 structures. It overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, runs `loop.py` for each, and appends the coercivity and remanence data to:
-- `evaluation_results_individual.csv`: Per-structure data.
-- `evaluation_results_average.csv`: Computed from the element-wise average curve of the 10 runs.
+*(Alternatively, submit `sbatch run_evaluate_properties.slurm` to a cluster).*
+This wrapper script orchestrates two distinct phases for the specified intrinsic properties across all 10 structures:
+- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `loop.py` sequentially for each structure.
+- **Analyze Phase:** Analyzes the simulation outputs, automatically handling demagnetization field shearing and detecting overskewed coercivities.
+
+Results are written to the `evaluations/` directory, including a visual plot (`*_demag_curves.png`) and three strictly typed, ontology-mapped CSV files:
+- `evaluation_results_average.csv`: The full average demagnetization loop curve.
+- `evaluation_results_individual.csv`: The discrete $H_c$ and $J_r$ properties for each individual mesh.
+- `evaluation_summary_scalars.csv`: A single-row summary of the geometry and intrinsic/extrinsic properties fully typed using the MaMMoS EMMO ontology.
 
 **3. Clean Up Data:**
 ```bash
 ./clean_evaluations.sh
 ```
-Safely deletes the heavy simulation output directories while preserving your evaluation CSV results.
+Safely deletes the heavy simulation output directories inside `evaluations/` while preserving your evaluation CSV results and plots.
