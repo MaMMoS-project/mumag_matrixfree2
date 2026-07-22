@@ -34,12 +34,15 @@ PrecondType = Literal["none", "jacobi", "chebyshev", "amg", "amgcl"]
 Assembly = Literal["scatter", "segment_sum"]
 
 import os
+
 _DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
+
 
 def safe_device_put(x, target_device):
     """Safely transfer data to a device.
     If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
-    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance."""
+    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance.
+    """
     try:
         if hasattr(x, "device") and x.device() == target_device:
             return x
@@ -53,6 +56,7 @@ def safe_device_put(x, target_device):
         except Exception:
             pass
     return jax.device_put(x, target_device)
+
 
 _GRAD_HAT = jnp.array(
     [

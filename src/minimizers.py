@@ -34,12 +34,15 @@ from jax import lax
 Array = jnp.ndarray
 
 import os
+
 _DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
+
 
 def safe_device_put(x, target_device):
     """Safely transfer data to a device.
     If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
-    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance."""
+    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance.
+    """
     try:
         if hasattr(x, "device") and x.device() == target_device:
             return x
@@ -53,6 +56,7 @@ def safe_device_put(x, target_device):
         except Exception:
             pass
     return jax.device_put(x, target_device)
+
 
 # -----------------------------------------------------------------------------
 # Global variables and preconditioning mapping
@@ -91,25 +95,31 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
     """Project a raw gradient onto the tangent space of the unit sphere."""
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
 
+
 # -----------------------------------------------------------------------------
 # JIT-compiled Helper Functions (Extracted to global scope to prevent recompilation)
 # -----------------------------------------------------------------------------
+
 
 @jax.jit
 def mvp_Keff(K_op, m_vec):
     return K_op @ m_vec
 
+
 @jax.jit
 def mvp_K_component(K_comp, m_vec):
     return K_comp @ m_vec
+
 
 @jax.jit
 def mvp_G(G_op, U_vec):
     return G_op @ U_vec
 
+
 @jax.jit
 def tangent_grad_jit(m_vec, g_vec):
     return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
+
 
 @jax.jit
 def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
@@ -121,13 +131,16 @@ def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps
     u4 = gnorm_inf < eps_a
     return jnp.where(it > 0, (u1 & u2 & u3) | u4, False)
 
+
 @jax.jit
 def update_m_jit(m_vec, H_vec, s_step):
     return cayley_update(m_vec, H_vec, s_step)
 
+
 @jax.jit
 def d_update_jit(y_vec, beta_val, d_prev_proj):
     return -y_vec + beta_val * d_prev_proj
+
 
 @jax.jit
 def H_pg_jit(m_vec, d_vec, g_raw_vec):
@@ -3448,7 +3461,6 @@ def make_minimizer(
             master_device = gpus[0]
             dev_g = assignments["G"]
 
-
             def K_mvp(v_flat, sparse_ops):
                 if num_gpus == 2:
                     v_gpu = safe_device_put(v_flat, assignments["Keff"])
@@ -3458,11 +3470,11 @@ def make_minimizer(
                     vx = safe_device_put(v_flat, assignments["Kx"])
                     vy = safe_device_put(v_flat, assignments["Ky"])
                     vz = safe_device_put(v_flat, assignments["Kz"])
-                    
+
                     gx_gpu = mvp_K_component(sparse_ops["Kx_sparse"], vx)
                     gy_gpu = mvp_K_component(sparse_ops["Ky_sparse"], vy)
                     gz_gpu = mvp_K_component(sparse_ops["Kz_sparse"], vz)
-                    
+
                     gx = safe_device_put(gx_gpu, master_device)
                     gy = safe_device_put(gy_gpu, master_device)
                     gz = safe_device_put(gz_gpu, master_device)

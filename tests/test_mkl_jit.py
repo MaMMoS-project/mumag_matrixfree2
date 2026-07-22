@@ -1,16 +1,16 @@
-import jax
-import pytest
 import sys
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
+import jax
 
 jax.config.update("jax_enable_x64", True)
 import os
-import sys
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 import scipy.sparse as sp
+
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
 
 # Append src to path to import amg_utils
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))

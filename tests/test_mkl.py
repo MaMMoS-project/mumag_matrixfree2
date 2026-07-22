@@ -1,14 +1,13 @@
-import numpy as np
-import scipy.sparse as sp
-import sys
-import pytest
-
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
 import ctypes
 import ctypes.util
+import sys
 
 import numpy as np
+import pytest
 import scipy.sparse as sp
+
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
+
 from sparse_dot_mkl._mkl_interface import MKL as MKL_wrapper
 from sparse_dot_mkl._mkl_interface import (
     _create_mkl_sparse,

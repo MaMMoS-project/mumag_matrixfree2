@@ -1,12 +1,13 @@
 import os
 import sys
-import pytest
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="C++ MKL minimizer is only supported on Linux")
-import numpy as np
-import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="C++ MKL minimizer is only supported on Linux"
+)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 

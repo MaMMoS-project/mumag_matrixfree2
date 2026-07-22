@@ -1106,6 +1106,7 @@ def main() -> None:
 
         # GPU device detection and assignment
         from poisson_solve import safe_device_put
+
         try:
             gpus = jax.devices("gpu")
             num_gpus = len(gpus)
@@ -1140,7 +1141,7 @@ def main() -> None:
             D_scipy.sort_indices()
             D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
             D_sparse = safe_device_put(D_sparse, dev_d)
-            
+
             Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
             Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
             Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
@@ -1187,13 +1188,13 @@ def main() -> None:
 
             Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Kx_sparse = safe_device_put(Kx_sparse, assignments["Kx"])
-            
+
             Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Ky_sparse = safe_device_put(Ky_sparse, assignments["Ky"])
-            
+
             Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
             Kz_sparse = safe_device_put(Kz_sparse, assignments["Kz"])
-            
+
             K_eff_sparse = None
         else:
             K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
@@ -1251,11 +1252,13 @@ def main() -> None:
 
     # Convert the raw simulation CSV to mammos_entity format
     from io_utils import convert_sim_csv_to_mammos
+
     csv_name = params_dict.get("csv_name", "hysteresis.csv")
     csv_path = Path(args.out_dir) / csv_name
     mammos_csv_path = Path(args.out_dir) / f"mammos_{csv_name}"
     convert_sim_csv_to_mammos(csv_path, out_path=mammos_csv_path, Js_ref=params.Js_ref)
     print(f"[ok] Converted {csv_name} to mammos_entity format at {mammos_csv_path}")
+
 
 if __name__ == "__main__":
     main()

@@ -118,7 +118,7 @@ def test_micromagnetic_energies():
 
     # 5. Verification
     sparse_ops = {"M_nodal": M_nodal}
-    
+
     # --- Exchange ---
     e_ex, _ = energy_and_grad(m_hel, jnp.zeros(knt.shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
     E_ex_calc_si = float(e_ex) * SI_FACTOR

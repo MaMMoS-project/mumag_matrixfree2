@@ -156,7 +156,10 @@ def test():
     print("Running JAX minimize...")
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
     from energy_kernels import compute_exchange_diagonal
-    d_diag = compute_exchange_diagonal(geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT")
+
+    d_diag = compute_exchange_diagonal(
+        geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
+    )
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     m_new, U_new, info = minimize(
         m,
@@ -189,10 +192,15 @@ def test():
         phi_extrapolate=params.phi_extrapolate,
         L=params.L,
         sparse_ops={
-            "A_sparse": A_sparse, "A_diag": A_diag, "K_eff_sparse": K_eff_sparse,
-            "D_sparse": D_sparse, "G_sparse": G_sparse,
-            "M_nodal": M_nodal, "inv_M_rel": inv_M_rel, "inv_M_prec": inv_M_prec,
-        }
+            "A_sparse": A_sparse,
+            "A_diag": A_diag,
+            "K_eff_sparse": K_eff_sparse,
+            "D_sparse": D_sparse,
+            "G_sparse": G_sparse,
+            "M_nodal": M_nodal,
+            "inv_M_rel": inv_M_rel,
+            "inv_M_prec": inv_M_prec,
+        },
     )
     print("Finished JAX successfully!")
     print("Info:", info)

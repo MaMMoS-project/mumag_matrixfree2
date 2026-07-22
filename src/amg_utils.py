@@ -781,8 +781,7 @@ def assemble_exchange_anisotropy_matrix_cpu(
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
     import ctypes
-    import os
-    
+
     lib_path = None
     slurm_job_id = os.environ.get("SLURM_JOB_ID")
     if slurm_job_id:
