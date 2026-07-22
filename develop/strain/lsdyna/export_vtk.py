@@ -1,3 +1,4 @@
+"""Export LS-DYNA simulation results to VTK."""
 #!/usr/bin/env python3
 
 import argparse
@@ -230,6 +231,7 @@ def write_inp(
 
 
 def get_centroids(nodes, elements):
+    """Compute element centroids."""
     centroids = []
     eids = []
     for eid, nids in elements.items():
@@ -244,6 +246,7 @@ def get_centroids(nodes, elements):
 
 
 def main():
+    """CLI entry point for exporting LS-DYNA to VTK."""
     parser = argparse.ArgumentParser(description="Map LS-DYNA results to an unstructured INP grid.")
     parser.add_argument("--full", action="store_true", help="Apply 8-fold symmetry to LS-DYNA data.")
     args = parser.parse_args()

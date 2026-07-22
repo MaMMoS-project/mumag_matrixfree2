@@ -1,3 +1,5 @@
+"""Analyze and plot intrinsic material properties."""
+
 import argparse
 import os
 import sys
@@ -23,6 +25,7 @@ def find_crossing(x, y, target_y=0.0):
 
 
 def compute_coercivity(H, M):
+    """Compute coercivity from M-H loops."""
     cross_H = find_crossing(H, M, 0.0)
     mask = M >= 0
     if np.any(mask):
@@ -42,7 +45,10 @@ def compute_coercivity(H, M):
 
 
 class StringEntity(list):
+    """List subclass for storing string properties."""
+
     def __init__(self, vals, label):
+        """Initialize a string entity list."""
         super().__init__(vals)
         self.ontology_label = label
         try:
@@ -57,6 +63,7 @@ class StringEntity(list):
 
 
 def get_all_properties(B_ext, J, Neff=1.0 / 3.0):
+    """Extract intrinsic properties from loop data."""
     mu0 = 4 * np.pi * 1e-7
     Jr_ext = find_crossing(J, B_ext, 0.0)
     Bc_ext, _, _ = compute_coercivity(B_ext, J)
@@ -74,6 +81,7 @@ def get_all_properties(B_ext, J, Neff=1.0 / 3.0):
 
 
 def plot_demagnetization_curves(all_data, data_avg, props, out_dir, eval_name, Neff=1.0 / 3.0):
+    """Plot demagnetization curves."""
     import matplotlib.pyplot as plt
     from matplotlib import rcParams
 
@@ -137,6 +145,7 @@ def plot_demagnetization_curves(all_data, data_avg, props, out_dir, eval_name, N
 
 
 def main():
+    """CLI entry point to analyze evaluations."""
     parser = argparse.ArgumentParser(description="Analyze intrinsic properties evaluations.")
     parser.add_argument("--K1", type=float, required=True, help="Anisotropy constant K1 [J/m^3]")
     parser.add_argument("--Js", type=float, required=True, help="Saturation polarization Js [T]")

@@ -1,3 +1,5 @@
+"""Plot Stoner-Wohlfarth switching curves."""
+
 import os
 
 import matplotlib.pyplot as plt
@@ -8,6 +10,7 @@ plt.rcParams.update({"font.size": 18})
 
 
 def read_csv(path):
+    """Read switching results from CSV."""
     angles = []
     b_sw = []
     with open(path) as f:

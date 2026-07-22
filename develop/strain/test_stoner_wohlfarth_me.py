@@ -15,14 +15,14 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
-import jax.numpy as jnp
-from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad
-from jax import lax
+import jax.numpy as jnp  # noqa: E402
+from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad  # noqa: E402
+from jax import lax  # noqa: E402
 
-from energy_kernels import make_energy_kernels
-from fem_utils import TetGeom, compute_node_volumes
-from io_utils import ensure_dir
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
+from energy_kernels import make_energy_kernels  # noqa: E402
+from fem_utils import TetGeom, compute_node_volumes  # noqa: E402
+from io_utils import ensure_dir  # noqa: E402
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
 
 
 def parse_inp_with_data(path: str):
@@ -90,6 +90,7 @@ def make_minimizer_no_demag(
     k1me: jnp.ndarray,
     k1me_p: jnp.ndarray,
 ):
+    """Create a minimizer without demagnetization field."""
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
     # Pass k1me and k1me_p to kernels
@@ -160,6 +161,7 @@ def make_minimizer_no_demag(
 
 
 def run_sw_me_test(inp_path: str, phi_deg: float = 0.0):
+    """Run the Stoner-Wohlfarth magnetoelastic test."""
     if not os.path.exists(inp_path):
         print(f"Error: {inp_path} not found.")
         return

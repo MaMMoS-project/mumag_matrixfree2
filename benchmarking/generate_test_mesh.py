@@ -1,4 +1,6 @@
-import sys  # noqa: D100
+"""Generate a simple tetrahedral test mesh."""
+
+import sys
 from pathlib import Path
 
 import numpy as np

@@ -1,3 +1,5 @@
+"""Convert Salome meshes to .npz format."""
+
 import numpy as np
 
 """ Created with Microsoft Copilot. """

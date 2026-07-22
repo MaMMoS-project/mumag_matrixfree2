@@ -1,3 +1,5 @@
+"""Tools for creating grain easy-axis .krn files."""
+
 #!/usr/bin/env python3
 import argparse
 
@@ -29,7 +31,7 @@ def compute_tetra_volumes(knt, conn):
 def generate_random_easy_axes(num_grains, rng):
     """Generate random easy axes uniformly on the sphere.
     Returns array shape (num_grains, 5): [theta, phi, x, y, z].
-    """
+    """  # noqa: D205
     phi = rng.uniform(0.0, 2.0 * np.pi, size=num_grains)  # azimuth
     u = rng.uniform(-1.0, 1.0, size=num_grains)  # cos(theta)
     theta = np.arccos(u)  # polar
@@ -44,7 +46,7 @@ def generate_random_easy_axes(num_grains, rng):
 def adjust_axes_sign(easy_axes, component):
     """Flip the vector (x,y,z) per grain so the requested component becomes > 0.
     component in {'x','y','z'}.
-    """
+    """  # noqa: D205
     comp_idx = {"x": 2, "y": 3, "z": 4}[component]
     flip_mask = easy_axes[:, comp_idx] < 0.0
     # Flip x,y,z for grains where component < 0
@@ -57,7 +59,7 @@ def adjust_axes_sign(easy_axes, component):
 def volume_weighted_average_component(easy_axes, mat_id, vols, component):
     """Compute <m_component>_V = sum_e V_e * m_comp(grain_id(e)) / sum_e V_e,
     where m_comp for each grain comes from easy_axes after sign adjustment.
-    """
+    """  # noqa: D205
     comp_idx = {"x": 2, "y": 3, "z": 4}[component]
     m_g = easy_axes[:, comp_idx]  # (G,)
     # Map each element to its grain's component: mat_id is 1..G
@@ -72,7 +74,7 @@ def generate_distribution_all_three(knt, conn, mat_id, tol, max_attempts, seed=N
       2) adjust for x -> avg_x; adjust for y -> avg_y; adjust for z -> avg_z
       3) if all |avg_* - 0.5| < tol -> accept; else repeat.
     Returns the accepted easy_axes (theta, phi only are written into .krn).
-    """
+    """  # noqa: D205
     rng = np.random.default_rng(seed)
     vols = compute_tetra_volumes(knt, conn)
     num_grains = int(mat_id.max())  # since there is NO air, mat_id in 1..G
@@ -104,7 +106,7 @@ def generate_distribution_all_three(knt, conn, mat_id, tol, max_attempts, seed=N
 def write_krn(path, easy_axes, K1, Js, A, summary=None):
     """Write .krn with columns: theta phi K1 dummy Js A
     Optionally include a comment header with summary.
-    """
+    """  # noqa: D205
     with open(path, "w", encoding="utf-8") as f:
         if summary is not None:
             avg_x, avg_y, avg_z, attempts = summary
@@ -117,6 +119,7 @@ def write_krn(path, easy_axes, K1, Js, A, summary=None):
 
 
 def main():
+    """CLI entry point for making .krn files."""
     ap = argparse.ArgumentParser(
         description="Create a .krn file with random easy axes satisfying three volume-averaged conditions."
     )

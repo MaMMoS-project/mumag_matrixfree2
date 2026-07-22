@@ -1,3 +1,5 @@
+"""C++ minimizer bindings."""
+
 import ctypes
 import os
 
@@ -74,6 +76,7 @@ lib.run_cpp_pcohen_hs_minimization.restype = ctypes.c_int
 
 
 def cpp_minimize(m, B_ext, U0, params, sparse_ops, solve_U=None, **kwargs):
+    """Run minimization using C++ backend."""
     N = U0.shape[0]
 
     m_arr = np.ascontiguousarray(m.reshape(-1), dtype=np.float64)

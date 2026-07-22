@@ -378,7 +378,7 @@ def build_layer_nodes(
     return knt, node_map, svecs_layer
 
 
-def make_shell_plc_from_surface(
+def make_shell_plc_from_surface(  # noqa: D417
     knt0: np.ndarray,
     tris0: np.ndarray,
     layers: int,
@@ -538,7 +538,7 @@ def make_shell_plc_from_surface(
 
 
 # ------------------------------ meshing core ------------------------------
-def add_shell_with_meshpy(
+def add_shell_with_meshpy(  # noqa: D417
     knt0: np.ndarray,
     ijk0: np.ndarray,
     layers: int,
@@ -688,7 +688,7 @@ def add_shell_with_meshpy(
 # ----------------------------------------------------------------------
 # Public entry point (importable) – pure in-memory (no writes)
 # ----------------------------------------------------------------------
-def run_add_shell_pipeline(
+def run_add_shell_pipeline(  # noqa: D417
     *,
     in_npz: str,
     # Geometry controls

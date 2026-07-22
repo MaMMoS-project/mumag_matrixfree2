@@ -1368,7 +1368,7 @@ def mesh_backend_grid_ellipsoid(
 # ------------------------------- Programmatic entry point --------------------
 
 
-def run_single_solid_mesher(
+def run_single_solid_mesher(  # noqa: D417
     *,
     geom: str = "box",  # "box" | "ellipsoid" | "eye" | "elliptic_cylinder" | "poly" | "poly_gb"
     extent: str | tuple[float, float, float] = "60.0,60.0,60.0",

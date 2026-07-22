@@ -1,3 +1,5 @@
+"""Generate base granular structures for evaluation."""
+
 import argparse
 import shutil
 import subprocess
@@ -6,6 +8,7 @@ from pathlib import Path
 
 
 def main():
+    """CLI entry point to generate granular structures."""
     parser = argparse.ArgumentParser(description="Generate base granular structures.")
     parser.add_argument("--extent", default="80,80,80", help="Mesh extent (default: 80,80,80)")
     parser.add_argument("--grains", type=int, default=8, help="Number of grains (default: 8)")

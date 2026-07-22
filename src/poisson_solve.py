@@ -16,10 +16,10 @@ from typing import Literal
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-from jax import lax
+import jax.numpy as jnp  # noqa: E402
+from jax import lax  # noqa: E402
 
-from fem_utils import (
+from fem_utils import (  # noqa: E402
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,
@@ -33,7 +33,7 @@ GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 PrecondType = Literal["none", "jacobi", "chebyshev", "amg", "amgcl"]
 Assembly = Literal["scatter", "segment_sum"]
 
-import os
+import os  # noqa: E402
 
 _DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
 
@@ -42,7 +42,7 @@ def safe_device_put(x, target_device):
     """Safely transfer data to a device.
     If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
     Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance.
-    """
+    """  # noqa: D205
     try:
         if hasattr(x, "device") and x.device() == target_device:
             return x
@@ -121,7 +121,7 @@ def _make_B_getter(
     return _get_B
 
 
-def make_poisson_ops(
+def make_poisson_ops(  # noqa: D417
     geom: TetGeom,
     Js_lookup: Array,
     *,
@@ -480,7 +480,7 @@ def make_pcg_solve(
     return jax.jit(solve)
 
 
-def make_solve_U(
+def make_solve_U(  # noqa: D417
     geom: TetGeom,
     Js_lookup: Array,
     *,

@@ -33,7 +33,7 @@ from jax import lax
 
 Array = jnp.ndarray
 
-import os
+import os  # noqa: E402
 
 _DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
 
@@ -42,7 +42,7 @@ def safe_device_put(x, target_device):
     """Safely transfer data to a device.
     If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
     Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance.
-    """
+    """  # noqa: D205
     try:
         if hasattr(x, "device") and x.device() == target_device:
             return x
@@ -103,26 +103,31 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
 
 @jax.jit
 def mvp_Keff(K_op, m_vec):
+    """Matrix-vector product for effective anisotropy."""
     return K_op @ m_vec
 
 
 @jax.jit
 def mvp_K_component(K_comp, m_vec):
+    """Matrix-vector product for anisotropy component."""
     return K_comp @ m_vec
 
 
 @jax.jit
 def mvp_G(G_op, U_vec):
+    """Matrix-vector product for preconditioner G."""
     return G_op @ U_vec
 
 
 @jax.jit
 def tangent_grad_jit(m_vec, g_vec):
+    """Compute projected tangent gradient."""
     return g_vec - jnp.sum(m_vec * g_vec, axis=1, keepdims=True) * m_vec
 
 
 @jax.jit
 def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps_a):
+    """Check minimization convergence criteria."""
     m_norm_inf = 1.0
     diff_m_norm_inf = jnp.max(jnp.abs(m_new_vec - m_vec))
     u1 = (E_prev - E) < tau_f * (1.0 + jnp.abs(E))
@@ -134,16 +139,19 @@ def check_convergence_jit(it, E, E_prev, m_vec, m_new_vec, gnorm_inf, tau_f, eps
 
 @jax.jit
 def update_m_jit(m_vec, H_vec, s_step):
+    """Update magnetization using Cayley transform."""
     return cayley_update(m_vec, H_vec, s_step)
 
 
 @jax.jit
 def d_update_jit(y_vec, beta_val, d_prev_proj):
+    """Update search direction."""
     return -y_vec + beta_val * d_prev_proj
 
 
 @jax.jit
 def H_pg_jit(m_vec, d_vec, g_raw_vec):
+    """Compute effective field H and projected gradient."""
     H_vec = -jnp.cross(m_vec, -d_vec)
     pg_val = jnp.vdot(g_raw_vec, d_vec)
     return H_vec, pg_val

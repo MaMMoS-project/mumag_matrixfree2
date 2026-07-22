@@ -402,7 +402,7 @@ def step3b_run_loop_up(base: Path, benchmark_dir: Path, num_loops: int = 1) -> N
 # =============================================================================
 
 
-def plot_hysteresis_loop(
+def plot_hysteresis_loop(  # noqa: D417
     data_file: Path,
     output_file: Path,
     overlay_down_files: list[Path] | None = None,
@@ -1014,7 +1014,7 @@ def compute_bhmax_from_arrays(
 # =============================================================================
 
 
-def step4_repeat_and_average(
+def step4_repeat_and_average(  # noqa: D417
     base: Path,
     benchmark_dir: Path,
     neper_minimal: int = 1,

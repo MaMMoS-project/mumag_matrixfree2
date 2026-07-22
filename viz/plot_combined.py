@@ -1,3 +1,5 @@
+"""Plot combined hysteresis loops from multiple solvers."""
+
 import matplotlib.pyplot as plt
 import numpy as np
 

@@ -31,6 +31,7 @@ def morton_encode(q_coords: np.ndarray) -> np.ndarray:
 
 
 def reorder_mesh(in_path: str, out_path: str, target: str = "gpu") -> None:
+    """Reorder nodes and elements of a mesh for memory locality."""
     print(f"Loading original mesh from {in_path}...")
     data = np.load(in_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
@@ -136,6 +137,7 @@ def reorder_mesh(in_path: str, out_path: str, target: str = "gpu") -> None:
 
 
 def main() -> None:
+    """CLI entry point for reordering mesh."""
     ap = argparse.ArgumentParser(description="Spatially or topologically reorder mesh nodes and elements.")
     ap.add_argument("--in-mesh", required=True, help="Input NPZ mesh file.")
     ap.add_argument("--out-mesh", help="Output NPZ mesh file. Defaults to [in-mesh]_[target_suffix].npz")

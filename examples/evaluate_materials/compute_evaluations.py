@@ -1,3 +1,5 @@
+"""Compute intrinsic magnetic properties."""
+
 import argparse
 import os
 import subprocess
@@ -6,6 +8,7 @@ from pathlib import Path
 
 
 def write_p2(path, hstart, hfinal, hstep):
+    """Write a .p2 configuration file for the solver."""
     content = f"""[mesh]
 format = "npz"
 
@@ -37,6 +40,7 @@ eps_a = 1e-12
 
 
 def main():
+    """CLI entry point to compute intrinsic properties."""
     parser = argparse.ArgumentParser(description="Compute intrinsic properties evaluations.")
     parser.add_argument("--K1", type=float, required=True, help="Anisotropy constant K1 [J/m^3]")
     parser.add_argument("--Js", type=float, required=True, help="Saturation polarization Js [T]")

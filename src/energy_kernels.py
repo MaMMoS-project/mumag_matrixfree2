@@ -49,10 +49,10 @@ from typing import Any, Literal
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-from jax import lax
+import jax.numpy as jnp  # noqa: E402
+from jax import lax  # noqa: E402
 
-from fem_utils import (
+from fem_utils import (  # noqa: E402
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,
@@ -79,7 +79,7 @@ _GRAD_HAT = jnp.array(
 )
 
 
-def make_energy_kernels(
+def make_energy_kernels(  # noqa: D417
     geom: TetGeom,
     A_lookup: Array,
     K1_lookup: Array,
@@ -337,7 +337,7 @@ def make_energy_kernels(
         g_local = lax.fori_loop(0, n_chunks_dyn, body, jnp.zeros((N, 3), dtype=dtype))
         return g_local * inv_Vmag
 
-    def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
+    def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:  # noqa: D417
         """Compute the total dimensionless energy and gradient.
 
         Args:
@@ -458,7 +458,7 @@ def make_energy_kernels(
 
         return E * inv_Vmag, g_total * inv_Vmag
 
-    def energy_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
+    def energy_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:  # noqa: D417
         """Compute only the total dimensionless energy.
 
         Args:
@@ -472,7 +472,7 @@ def make_energy_kernels(
         E, _ = energy_and_grad(m, U, B_ext)
         return E
 
-    def grad_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
+    def grad_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:  # noqa: D417
         """Compute only the total energy gradient.
 
         Args:

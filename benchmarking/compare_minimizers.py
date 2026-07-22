@@ -30,7 +30,8 @@ from minimizers import make_minimizer as make_new_minimizer
 from poisson_solve import make_solve_U
 
 
-def load_mesh(mesh_path):  # noqa: D103
+def load_mesh(mesh_path):
+    """Load mesh data from NPZ file."""
     data = np.load(mesh_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
     ijk = np.asarray(data["ijk"])
@@ -43,7 +44,8 @@ def load_mesh(mesh_path):  # noqa: D103
     return knt, conn, mat_id
 
 
-def main():  # noqa: D103
+def main():
+    """CLI entry point to compare minimizers."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--krn", type=str, default=None)

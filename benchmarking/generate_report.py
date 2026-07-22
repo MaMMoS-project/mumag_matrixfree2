@@ -1,11 +1,14 @@
-import platform  # noqa: D100
+"""Generate markdown reports from benchmark logs."""
+
+import platform
 import re
 import subprocess
 import sys
 from typing import Any
 
 
-def get_hardware_info() -> dict[str, str]:  # noqa: D103
+def get_hardware_info() -> dict[str, str]:
+    """Retrieve system OS and GPU info."""
     info = {}
     info["OS"] = f"{platform.system()} {platform.release()}"
 
@@ -32,7 +35,8 @@ def get_hardware_info() -> dict[str, str]:  # noqa: D103
     return info
 
 
-def parse_output(text: str) -> dict[str, Any]:  # noqa: D103
+def parse_output(text: str) -> dict[str, Any]:
+    """Parse benchmark text output into a dictionary."""
     results = {}
 
     # Mesh info
@@ -59,13 +63,15 @@ def parse_output(text: str) -> dict[str, Any]:  # noqa: D103
     return results
 
 
-def safe_format(val: Any, fmt: str) -> str:  # noqa: D103
+def safe_format(val: Any, fmt: str) -> str:
+    """Format parsed values safely."""
     if val is None or val == "N/A":
         return "N/A"
     return f"{val:{fmt}}"
 
 
-def main() -> None:  # noqa: D103
+def main() -> None:
+    """CLI entry point to generate benchmark report."""
     if len(sys.argv) < 3:
         print("Usage: generate_report.py python_output.txt cpp_output.txt")
         return

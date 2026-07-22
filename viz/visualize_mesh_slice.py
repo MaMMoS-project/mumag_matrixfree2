@@ -1,3 +1,5 @@
+"""Tools for visualizing 2D slices of 3D meshes."""
+
 import argparse
 
 import matplotlib.pyplot as plt
@@ -82,6 +84,7 @@ def slice_tet_mesh_z0(knt, ijk):
 
 
 def main():
+    """CLI entry point to slice and visualize a 3D mesh."""
     ap = argparse.ArgumentParser(
         description="Slice a 3D tetrahedral mesh (.npz) at z=0 and plot material IDs and mesh grid."
     )

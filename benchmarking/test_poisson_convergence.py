@@ -28,7 +28,8 @@ from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
 from poisson_solve import make_solve_U  # noqa: E402
 
 
-def benchmark_poisson():  # noqa: D103
+def benchmark_poisson():
+    """Run Poisson solver convergence benchmark."""
     # 1. Setup Geometry (60 nm cube + 8 layer shell)
     L_cube = 60.0
     h = 2.0

@@ -1,3 +1,5 @@
+"""Wrapper script to evaluate intrinsic properties."""
+
 import argparse
 import subprocess
 import sys
@@ -5,6 +7,7 @@ from pathlib import Path
 
 
 def main():
+    """CLI entry point to evaluate material properties."""
     parser = argparse.ArgumentParser(description="Evaluate intrinsic properties (wrapper script).")
     parser.add_argument("--K1", type=float, required=True, help="Anisotropy constant K1 [J/m^3]")
     parser.add_argument("--Js", type=float, required=True, help="Saturation polarization Js [T]")

@@ -1,3 +1,5 @@
+"""Extract nucleation fields from simulation results."""
+
 import sys
 
 import numpy as np

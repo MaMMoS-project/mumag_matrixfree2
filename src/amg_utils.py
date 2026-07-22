@@ -169,23 +169,27 @@ def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
 class SparseOperator:
     """A wrapper for sparse matrix operations that overrides the matmul (@) operator.
     This allows JAX to trace both CPU and GPU execution paths cleanly.
-    """
+    """  # noqa: D205
 
     def __init__(self, apply_fn, pytree_parts=()):
+        """Initialize the sparse operator."""
         self.apply_fn = apply_fn
         self.pytree_parts = pytree_parts
 
     def __matmul__(self, other):
+        """Multiply the operator by a vector."""
         # If there are dynamic JAX arrays (like the GPU CSR object), pass them to apply_fn
         if len(self.pytree_parts) > 0:
             return self.apply_fn(self.pytree_parts[0], other)
         return self.apply_fn(None, other)
 
     def tree_flatten(self):
+        """Flatten the operator for JAX."""
         return (self.pytree_parts, (self.apply_fn,))
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        """Unflatten the operator for JAX."""
         (apply_fn,) = aux_data
         return cls(apply_fn, pytree_parts=children)
 
@@ -197,6 +201,7 @@ class PersistentMKLOperator:
     """
 
     def __init__(self, scipy_csr_mat: sp.csr_matrix):
+        """Initialize persistent MKL operator."""
         import ctypes
         import ctypes.util
 
@@ -237,6 +242,7 @@ class PersistentMKLOperator:
         self.func = funcs[(self.dbl, self.cplx)]
 
     def apply(self, x_val):
+        """Apply the MKL operator."""
         from sparse_dot_mkl._mkl_interface import _out_matrix
 
         x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
@@ -249,6 +255,7 @@ class PersistentMKLOperator:
         return output_arr
 
     def __del__(self):
+        """Clean up MKL handle."""
         try:
             from sparse_dot_mkl._mkl_interface import _destroy_mkl_handle
 
@@ -294,6 +301,7 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
 
 
 def get_gpu_assignments(num_gpus, devices):
+    """Get GPU device assignments for multi-GPU."""
     assignments = {}
     if num_gpus == 2:
         assignments["AMG"] = devices[0]
@@ -738,7 +746,7 @@ def assemble_exchange_anisotropy_matrix_cpu(
 ) -> sp.csr_matrix:
     """Assemble the combined Exchange and Anisotropy matrix in CSR format.
     The resulting matrix is of shape (3N, 3N) to handle cross-component anisotropy.
-    """
+    """  # noqa: D205
     N = np.max(conn) + 1
     A_elem = A_lookup[mat_id - 1]
     K1_elem = K1_lookup[mat_id - 1]
@@ -872,4 +880,5 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
 
 
 def make_jax_mkl_solve_linear(pyamg_hierarchy, cg_maxiter: int = 2000, cg_tol: float = 1e-8) -> callable:
+    """Create a JAX MKL linear solver."""
     raise NotImplementedError("make_jax_mkl_solve_linear was removed as JAX FFI is no longer supported.")
