@@ -68,7 +68,7 @@ def test_compare():
     mask_np = np.zeros(knt.shape[0], dtype=np.int32)
     boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
 
-    node_vols = compute_node_volumes(geom, chunk_elems=200_000)
+    compute_node_volumes(geom, chunk_elems=200_000)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
@@ -342,7 +342,7 @@ def test_compare():
 
     from minimizers import make_preconditioner_op
 
-    inv_M_rel_arr = np.ascontiguousarray(1.0 / (M_nodal / np.max(M_nodal) + 1e-30), dtype=np.float64)
+    np.ascontiguousarray(1.0 / (M_nodal / np.max(M_nodal) + 1e-30), dtype=np.float64)
     apply_P_py, _ = make_preconditioner_op(local_grad_only)
 
     Ap_py = apply_P_py(m, py_g, p_jax, reg=0.0, sparse_ops=sparse_ops_py)

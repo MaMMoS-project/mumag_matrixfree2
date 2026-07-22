@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import os
 import sys
 
@@ -72,7 +73,7 @@ def test():
     m = m / np.linalg.norm(m, axis=1, keepdims=True)
     m = jnp.asarray(m)
 
-    node_vols = compute_node_volumes(geom, chunk_elems=200_000)
+    compute_node_volumes(geom, chunk_elems=200_000)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
@@ -92,19 +93,19 @@ def test():
     import scipy.sparse as sp
 
     D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl")
 
     N = knt.shape[0]
     Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
     Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
     Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
     G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl")
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl")
 
     # Preconditioning setup
     from energy_kernels import compute_exchange_diagonal
