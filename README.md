@@ -46,9 +46,9 @@ pixi run -e cuda python3 src/loop.py <modelname> [options]
 
 ## 3. How to Submit Jobs with Slurm
 
-### Included Slurm Pipeline Examples
+### Slurm Pipeline Examples
 
-The repository includes complete end-to-end pipeline examples located in the `../test_matrixfree2/Nd0.5Fe0.5/` directory (assuming your simulation workspaces are structured side-by-side). These scripts automatically handle the execution and performance environment tuning for different hardware profiles.
+Below are complete end-to-end Slurm pipeline examples. These scripts automatically handle the execution and performance environment tuning for different hardware profiles. You can save these as `.slurm` files in your simulation directory and submit them using `sbatch`.
 
 **1. `test_cpu.slurm`** (High-Performance CPU)
 - **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node). Sets critical thread pinning (OpenMP) environment variables to guarantee optimal bare-metal CPU performance (MKL variables are now securely handled automatically in Python).
@@ -57,10 +57,75 @@ The repository includes complete end-to-end pipeline examples located in the `..
   - Runs the demagnetization simulation using the generated cubic mesh.
   - Safely deletes the `/tmp/` build artifacts upon completion to leave the node clean.
 
+```bash
+#!/bin/bash
+#SBATCH --job-name=ndfeb_gd_cpp
+#SBATCH --partition=dissSims
+#SBATCH --nodelist=Gd
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
+#SBATCH --output=test_cpu.log
+
+echo "=== Running Assembled Test on CPU ==="
+export JAX_ENABLE_X64=True
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+
+# Force MKL and OpenMP to use exactly the number of cores allocated by Slurm
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# Pin threads to physical cores to maximize cache hits and memory bandwidth
+export OMP_PROC_BIND=true
+export OMP_PLACES=cores
+
+# Keep threads awake between rapid matrix multiplications to avoid sleep/wake latency
+export OMP_WAIT_POLICY=ACTIVE
+
+# compile the C++ library
+pixi run compile
+
+echo "========================="
+echo "=== Running minimizer ==="
+echo "========================="
+pixi run python3 src/loop.py cube \
+    --mesh cube_sorted.npz \
+    --out-dir test_cpu \
+    --benchmark \
+    --verbose || echo "=== WARNING: minimizer failed! ==="
+
+# clean tmp
+rm -rf /tmp/mumag_build_${SLURM_JOB_ID}
+
+echo "=== JAX simulation finished ==="
+```
+
 **2. `test_a100.slurm`** (Single GPU)
 - **Hardware**: Reserves 1 A100 GPU and 2 CPU cores, configuring XLA memory allocation safely to prevent out-of-memory errors (`XLA_PYTHON_CLIENT_MEM_FRACTION`).
 - **Workflow**:
   - Sweeps the external field entirely on the extremely fast GPU backend (no C++ compilation required).
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=test_as_a100
+#SBATCH --partition=dissSims
+#SBATCH --gres=gpu:a100:1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=128G
+#SBATCH --time=00:30:00
+#SBATCH --output=test_a100.log
+
+echo "=== Running Assembled Test on A100 ==="
+export JAX_ENABLE_X64=True
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+
+pixi run -e cuda python3 src/loop.py cube \
+    --mesh cube_sorted.npz \
+    --out-dir test_a100 \
+    --benchmark \
+    --verbose || echo "=== WARNING: minimizer failed! ==="
+
+echo "=== JAX simulation finished ==="
+```
 
 **3. `test_multi_gpu.slurm`** (Multi-GPU)
 - **Hardware**: Reserves 4 L40s GPUs. 
@@ -68,12 +133,36 @@ The repository includes complete end-to-end pipeline examples located in the `..
   - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
   - **Crucial Setting**: Includes `export JAX_DISABLE_P2P=1`. When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely or silently fail. This forces JAX to route cross-device memory transfers safely through host RAM.
 
-To submit any job, simply `cd` into the test directory and use `sbatch`:
 ```bash
-cd ../test_matrixfree2/Nd0.5Fe0.5
+#!/bin/bash
+#SBATCH --job-name=test_multi
+#SBATCH --partition=dissSims
+#SBATCH --gres=gpu:l40s:4
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=128G
+#SBATCH --time=01:30:00
+#SBATCH --output=test_multi_gpu.log
+
+echo "=== Running Assembled Test on l40s multi-gpu ==="
+export JAX_ENABLE_X64=True
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+
+# Disable direct GPU-to-GPU (P2P) transfers to prevent silent failures
+# or lockups on cluster nodes without NVLink bridges.
+export JAX_DISABLE_P2P=1
+
+pixi run -e cuda python3 src/loop.py cube \
+    --mesh cube_sorted.npz \
+    --out-dir test_multi_gpu \
+    --benchmark \
+    --verbose || echo "=== WARNING: minimizer failed! ==="
+
+echo "=== JAX simulation finished ==="
+```
+
+To submit any job, simply save the script and use `sbatch`:
+```bash
 sbatch test_cpu.slurm
-sbatch test_a100.slurm
-sbatch test_multi_gpu.slurm
 ```
 
 ## 4. Required Input
