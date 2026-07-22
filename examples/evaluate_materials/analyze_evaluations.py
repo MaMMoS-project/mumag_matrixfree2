@@ -6,49 +6,11 @@ import os
 import sys
 
 try:
-    import mammos_analysis
     import mammos_entity as me
     import mammos_units as u
     _MAMMOS_AVAILABLE = True
 except ImportError:
     _MAMMOS_AVAILABLE = False
-
-def compute_properties_from_arrays(Hext_T, J_T, demag=1.0/3.0):
-    if not _MAMMOS_AVAILABLE:
-        return None, None
-    try:
-        mu0 = 4 * np.pi * 1e-7
-        H_A_per_m = Hext_T / mu0
-        M_A_per_m = J_T / mu0
-        H_entity = me.H(list(H_A_per_m))
-        M_entity = me.M(list(M_A_per_m))
-        extrinsic = mammos_analysis.hysteresis.extrinsic_properties(
-            H=H_entity, M=M_entity, demagnetization_coefficient=demag
-        )
-        
-        hc_val = None
-        try: hc_val = float(extrinsic.Hc.q.to_value(u.A / u.m))
-        except:
-            try: hc_val = float(extrinsic.Hc.q.m)
-            except: pass
-        
-        jr_val = None
-        for attr in ["Mr", "Br", "Jr", "M_r", "B_r", "J_r", "remanence", "remanent_magnetization"]:
-            if hasattr(extrinsic, attr):
-                jr_attr = getattr(extrinsic, attr)
-                try:
-                    jr_val = float(jr_attr.q.to_value(u.A / u.m)) * mu0
-                    break
-                except:
-                    try:
-                        jr_val = float(jr_attr.q.m) * mu0
-                        break
-                    except: pass
-
-        return hc_val, jr_val
-    except Exception as e:
-        print(f"Error computing properties: {e}")
-        return None, None
 
 def find_crossing(x, y, target_y=0.0):
     """Finds x where y crosses target_y by linear interpolation."""
@@ -74,6 +36,19 @@ def compute_coercivity(H, M):
         M_left = 0.0
         
     return Hc, H_left, M_left
+
+class StringEntity(list):
+    def __init__(self, vals, label):
+        super().__init__(vals)
+        self.ontology_label = label
+        try:
+            from mammos_entity import Entity
+            dummy = Entity(label, 1.0)
+            self.ontology_iri = getattr(dummy, "ontology_iri", "")
+        except Exception:
+            self.ontology_iri = ""
+        self.description = ""
+        self.unit = ""
 
 def get_all_properties(B_ext, J, Neff=1.0/3.0):
     mu0 = 4 * np.pi * 1e-7
@@ -278,7 +253,7 @@ def main():
             print("Error writing mammos csv for average curve:", e)
             
         try:
-            c_summary["Extent"] = append_val(c_summary, "Extent", extent_str, list)
+            c_summary["GeometricalSize"] = append_val(c_summary, "GeometricalSize", extent_str, lambda v: StringEntity(v, "GeometricalSize"))
             c_summary["Grains"] = append_val(c_summary, "Grains", grains_val, list)
             c_summary["K1"] = append_val(c_summary, "K1", args.K1, lambda v: me.Entity("K1", v, "J/m^3"))
             c_summary["Js"] = append_val(c_summary, "Js", args.Js, lambda v: me.Entity("Js", v, "T"))
