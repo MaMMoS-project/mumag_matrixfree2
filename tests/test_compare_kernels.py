@@ -1,6 +1,12 @@
 import os
 import sys
 
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="MKL comparison tests are only supported on Linux"
+)
+
 import jax.numpy as jnp
 import numpy as np
 

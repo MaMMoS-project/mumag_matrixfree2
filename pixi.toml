@@ -73,6 +73,10 @@ sample = { cmd = "cd samples && ./run_cube.sh" }
 # Run the demagnetization curve sample on Mac (bypasses MKL)
 sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
 
+[target.osx-64.tasks]
+# Run the demagnetization curve sample on Mac (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
 [target.win-64.tasks]
 # Run the demagnetization curve sample on Windows (bypasses MKL)
 sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
