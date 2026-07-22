@@ -26,6 +26,6 @@ python ../src/loop.py cube_${L}nm \
     --out-dir ${OUT_DIR} \
     --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
     --benchmark \
-    --verbose 2>&1 | tee ${OUT_DIR}/simulation.log
+    --verbose "$@" 2>&1 | tee ${OUT_DIR}/simulation.log
 
 echo "=== Benchmark Complete ==="

@@ -168,12 +168,11 @@ def test_compare():
     B_ext = jnp.array([0.0, 0.0, -0.5], dtype=jnp.float64)  # Applied field
 
     # Python Energy & Grad
+    inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
     sparse_ops_py = {
-        "A_sparse": A_sparse,
-        "A_diag": A_diag,
-        "K_eff_sparse": K_eff_sparse,
-        "D_sparse": D_sparse,
-        "G_sparse": G_sparse,
+        "A_sparse": A_sparse, "A_diag": A_diag, "K_eff_sparse": K_eff_sparse,
+        "D_sparse": D_sparse, "G_sparse": G_sparse,
+        "M_nodal": M_nodal, "inv_M_rel": inv_M_rel, "inv_M_prec": inv_M_prec,
     }
     py_E, py_g = py_energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops_py)
 
@@ -228,8 +227,17 @@ def test_compare():
         K_col.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
         K_val.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
     )
+    
+    # Convert G_scipy to interleaved for C++ since C++ expects interleaved output
+    row_indices = np.arange(3*N, dtype=np.int32)
+    col_indices = np.empty(3*N, dtype=np.int32)
+    col_indices[0::3] = np.arange(N)
+    col_indices[1::3] = np.arange(N) + N
+    col_indices[2::3] = np.arange(N) + 2*N
+    P_mat = sp.coo_matrix((np.ones(3*N, dtype=np.float64), (row_indices, col_indices)), shape=(3*N, 3*N)).tocsr()
+    G_scipy_cpp = P_mat @ G_scipy
 
-    G_csr = G_scipy
+    G_csr = G_scipy_cpp
     G_val = np.ascontiguousarray(G_csr.data, dtype=np.float64)
     G_col = np.ascontiguousarray(G_csr.indices, dtype=np.int32)
     G_ptr = np.ascontiguousarray(G_csr.indptr, dtype=np.int32)
@@ -330,8 +338,8 @@ def test_compare():
     from minimizers import make_preconditioner_op
 
     inv_M_rel_arr = np.ascontiguousarray(1.0 / (M_nodal / np.max(M_nodal) + 1e-30), dtype=np.float64)
-    apply_P_py, _ = make_preconditioner_op(local_grad_only, jnp.asarray(inv_M_rel_arr))
-
+    apply_P_py, _ = make_preconditioner_op(local_grad_only)
+    
     Ap_py = apply_P_py(m, py_g, p_jax, reg=0.0, sparse_ops=sparse_ops_py)
 
     rho_py = jnp.vdot(g_tan_ext, p_jax)

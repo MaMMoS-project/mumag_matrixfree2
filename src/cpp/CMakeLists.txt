@@ -28,8 +28,14 @@ target_link_libraries(cpp_mkl_minimizer PRIVATE
     ${MKL_LIBRARIES}
     OpenMP::OpenMP_CXX
 )
+if(DEFINED ENV{MUMAG_LIB_OUT})
+    set(OUT_DIR "$ENV{MUMAG_LIB_OUT}")
+else()
+    set(OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../lib")
+endif()
+
 set_target_properties(cpp_mkl_minimizer PROPERTIES 
     PREFIX "lib"
     OUTPUT_NAME "cpp_mkl_minimizer"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../lib"
+    LIBRARY_OUTPUT_DIRECTORY "${OUT_DIR}"
 )

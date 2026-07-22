@@ -781,10 +781,25 @@ def assemble_exchange_anisotropy_matrix_cpu(
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
     import ctypes
+    import os
+    
+    lib_path = None
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    if slurm_job_id:
+        local_lib = f"/tmp/mumag_build_{slurm_job_id}/libcpp_mkl_minimizer.so"
+        if os.path.exists(local_lib):
+            lib_path = local_lib
 
-    lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+    if not lib_path and "MUMAG_LIB_OUT" in os.environ:
+        env_lib = os.path.join(os.environ["MUMAG_LIB_OUT"], "libcpp_mkl_minimizer.so")
+        if os.path.exists(env_lib):
+            lib_path = env_lib
+
+    if not lib_path:
+        lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+
     if not os.path.exists(lib_path):
-        raise ImportError("libcpp_mkl_minimizer.so was not compiled successfully.")
+        raise ImportError(f"libcpp_mkl_minimizer.so was not found at {lib_path}. Please compile it.")
     ffi_lib = ctypes.CDLL(lib_path)
 
     ffi_lib.init_pardiso.argtypes = [

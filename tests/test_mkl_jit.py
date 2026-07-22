@@ -1,4 +1,8 @@
 import jax
+import pytest
+import sys
+
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
 
 jax.config.update("jax_enable_x64", True)
 import os

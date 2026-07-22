@@ -38,6 +38,8 @@ scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
 jaxopt = "*"
+mammos-entity = "*"
+mammos-analysis = "*"
 
 [feature.cpu.pypi-dependencies]
 jax = "*"
@@ -51,24 +53,33 @@ cpu = ["cpu"]
 cuda = ["cuda"]
 
 [tasks]
-# Compile all C++ extension libraries. Usage: pixi run compile
-compile = "mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
+# Compile locally to /tmp/ to avoid Slurm filesystem race conditions
+compile = "bash compile_local.sh"
+
+# Compile globally to the shared ../lib/ folder on Ceph
+compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
 
 # Run unit tests. Usage: pixi run test
 test = "JAX_ENABLE_X64=True pytest tests/"
 
-# Run the demagnetization curve sample.
-# CPU: pixi run sample
-# GPU: pixi run -e cuda sample
+[target.linux-64.tasks]
+# Run the demagnetization curve sample on Linux (uses MKL). CPU: pixi run sample, GPU: pixi run -e cuda sample
 sample = { cmd = "cd samples && ./run_cube.sh" }
 
-# Run the demagnetization curve sample on GPU.
-# Usage: pixi run sample-gpu
-sample-gpu = { cmd = "cd samples && ./run_cube.sh", default-environment = "cuda" }
+[target.osx-arm64.tasks]
+# Run the demagnetization curve sample on Mac (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
 
-# Submit the sphere sample on GPU.
-# Usage: pixi run submit-sphere-gpu
-submit-sphere-gpu = { cmd = "cd samples && sbatch run_sphere.slurm", default-environment = "cuda" }
+[target.win-64.tasks]
+# Run the demagnetization curve sample on Windows (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
+
 
 # Clean temporary mesh files
-clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/hyst_sphere_40nm samples/*.vtu samples/*.log"
+clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
+
+[feature.cuda.tasks]
+# Run the demagnetization curve sample on GPU.
+# Usage: pixi run sample-gpu (will automatically use cuda env if default-environment is set, or pixi run -e cuda sample-gpu)
+sample-gpu = { cmd = "cd samples && ./run_cube.sh" }

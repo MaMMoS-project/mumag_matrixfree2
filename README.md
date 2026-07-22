@@ -21,7 +21,12 @@ cd mumag_matrixfree2
 ```
 *Note: For Linux users running on CPU, Pixi will automatically compile the highly optimized `libcpp_mkl_minimizer.so` shared libraries using the Intel MKL in the background when the environment activates.*
 
+*Note for Mac Users (Apple Silicon / ARM64): Intel MKL is not available on Mac. You must bypass the MKL backends by appending `--cpu-spmv-backend scipy --no-cpp-mkl` to your `loop.py` simulation commands.*
+
 ## 2. How to Run the Software Locally
+
+> [!WARNING]
+> **Experimental Feature:** The `--operator-mode matrix_free` flag is highly experimental and is **not recommended** for use. It incurs excessively long JAX JIT compilation times on GPUs. Please use the default `--operator-mode assembled` for all workloads.
 
 All operations are executed through `pixi run`. The default environment is `cpu`.
 
@@ -43,60 +48,33 @@ pixi run -e cuda python3 src/loop.py <modelname> [options]
 
 ### Included Slurm Pipeline Examples
 
-The repository includes complete end-to-end pipeline examples located in the `slurm/` directory. These scripts automatically handle mesh generation, parameter setup, execution, and plotting for typical Nd2Fe14B configurations.
+The repository includes complete end-to-end pipeline examples located in the `../test_matrixfree2/Nd0.5Fe0.5/` directory (assuming your simulation workspaces are structured side-by-side). These scripts automatically handle the execution and performance environment tuning for different hardware profiles.
 
-**1. `slurm/run_cpu.slurm`**
-- **Hardware**: Reserves 8 CPUs on the CPU nodes (e.g., `dissSims`). Sets all critical thread pinning, OpenMP, and MKL environment variables to guarantee optimal bare-metal performance.
+**1. `test_cpu.slurm`** (High-Performance CPU)
+- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node). Sets critical thread pinning (OpenMP) environment variables to guarantee optimal bare-metal CPU performance (MKL variables are now securely handled automatically in Python).
 - **Workflow**: 
-  - Compiles the C++ MKL backend optimized for the scheduled node.
-  - Generates a $(20\text{ nm})^3$ Nd2Fe14B cubic mesh.
-  - Dynamically builds the `.krn` (material) and `.p2` (config) files.
-  - Runs a demagnetization curve sweep to $-8.0\text{ T}$ oriented $1^\circ$ off the easy axis.
-  - Plots the hysteresis results to `demag_curve_cpu.png`.
+  - Triggers a secure, isolated local compilation of the C++ MKL backend directly into `/tmp/` to avoid network filesystem race conditions.
+  - Runs the demagnetization simulation using the generated cubic mesh.
+  - Safely deletes the `/tmp/` build artifacts upon completion to leave the node clean.
 
-**2. `slurm/run_gpu.slurm`**
-- **Hardware**: Reserves 1 GPU and 4 CPU cores, configuring XLA memory allocation safely.
+**2. `test_a100.slurm`** (Single GPU)
+- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores, configuring XLA memory allocation safely to prevent out-of-memory errors (`XLA_PYTHON_CLIENT_MEM_FRACTION`).
 - **Workflow**:
-  - Generates a 10-grain Voronoi polycrystalline mesh ($100\times 100\times 100\text{ nm}^3$) with a grain boundary phase.
-  - Dynamically generates the `.krn` file using Python (main Nd2Fe14B grains with Gaussian orientation distribution, plus Nd0.5Fe0.5 grain boundary phases).
-  - Sweeps the external field down to $-8.0\text{ T}$ entirely on the GPU backend.
-  - Plots the hysteresis results to `demag_curve_gpu.png`.
+  - Sweeps the external field entirely on the extremely fast GPU backend (no C++ compilation required).
 
-**Cleanup Scripts**
-If you wish to remove the generated meshes, configs, and Slurm logs, you can run the accompanying cleanup scripts:
+**3. `test_multi_gpu.slurm`** (Multi-GPU)
+- **Hardware**: Reserves 4 L40s GPUs. 
+- **Workflow**:
+  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
+  - **Crucial Setting**: Includes `export JAX_DISABLE_P2P=1`. When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely or silently fail. This forces JAX to route cross-device memory transfers safely through host RAM.
+
+To submit any job, simply `cd` into the test directory and use `sbatch`:
 ```bash
-cd slurm
-./clean_cpu_run.sh
-./clean_gpu_run.sh
+cd ../test_matrixfree2/Nd0.5Fe0.5
+sbatch test_cpu.slurm
+sbatch test_a100.slurm
+sbatch test_multi_gpu.slurm
 ```
-
-To submit either job, simply `cd` into the `slurm` directory and use `sbatch`:
-```bash
-cd slurm
-sbatch run_cpu.slurm
-sbatch run_gpu.slurm
-```
-
-### Slurm Job for Multi-GPU
-To run a multi-GPU job (e.g., on a node with multiple `L40S` or `A100` GPUs), explicitly target the `cuda` environment and request more than one GPU in the SLURM headers. The codebase automatically detects the number of available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
-
-Create a file `run_multigpu.slurm`:
-```bash
-#!/bin/bash
-#SBATCH --job-name=mumag_multigpu
-#SBATCH --partition=dissSims
-#SBATCH --gres=gpu:l40s:4
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
-
-export JAX_ENABLE_X64=True
-# Limit memory fraction per GPU to avoid overallocation
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
-
-# Run the simulation. The code automatically distributes operators across all available GPUs!
-pixi run -e cuda python3 ../src/loop.py my_model --add-shell --verbose
-```
-Submit with: `sbatch run_multigpu.slurm`
 
 ## 4. Required Input
 
@@ -138,9 +116,10 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 
 1. **`params.log`**: A Markdown table detailing all resolved configuration variables and their origin (CLI, `.p2`, or Defaults).
 2. **`hysteresis.csv`**: Global results tracking external field `B_ext_T`, parallel magnetization `J_par_T`, total energy `E`, and gradient norms across the sweep.
-3. **`*.mh`**: Legacy compatibility text file with space-separated columns of the magnetization history.
-4. **`*.vtu`**: ParaView-compatible XML visualization snapshots of the vector state. E.g., `state_cfg00001_B+1.5000e+00T.vtu`.
-5. **`simulation.log`**: The captured standard output if explicitly tee'd in the run script.
+3. **`mammos_hysteresis.csv`**: An ontology-compliant version of the hysteresis data mapped to the [MagMo/MAMMOS EMMO ontology](https://emmo-repo.github.io/domain-magnetic-materials/magnetic-materials.html). It automatically scales reduced units into strictly typed physical entities (e.g., `EnergyDensity` in $J/m^3$, `MagneticFluxDensity` in Tesla, and `Index` for configuration numbers).
+4. **`*.mh`**: Legacy compatibility text file with space-separated columns of the magnetization history.
+5. **`*.vtu`**: ParaView-compatible XML visualization snapshots of the vector state. E.g., `state_cfg00001_B+1.5000e+00T.vtu`.
+6. **`simulation.log`**: The captured standard output if explicitly tee'd in the run script.
 
 ## 6. Basic Usage Examples
 
@@ -164,6 +143,15 @@ pixi run python3 src/loop.py cube_20nm --add-shell
 pixi run sample
 ```
 *(This automatically meshes a cube, runs a full hysteresis loop, and outputs the results).*
+
+**5. Run the Pipeline on Mac (Apple Silicon / ARM64):**
+Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
+```bash
+# Generate the mesh
+pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
+# Run the simulation without MKL
+pixi run python3 src/loop.py cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
+```
 
 ## 7. Numerical Methods & Algorithms
 
@@ -193,7 +181,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
-| `--operator-mode` | choice | Mode for execution: `matrix-free` or `assembled`. |
+| `--operator-mode` | choice | Mode for execution: `assembled` (default, recommended) or `matrix_free` (experimental, do not use). |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
@@ -275,7 +263,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Solver Backend & Parallelization
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--operator-mode` | SpMV execution mode: `matrix_free` (recompute on-the-fly) or `assembled` (sparse matrix format). | `assembled` |
+| `--operator-mode` | SpMV execution mode: `assembled` (default, sparse matrix) or `matrix_free` (experimental, do not use). | `assembled` |
 | `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
@@ -346,6 +334,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | `hstart` | Starting magnitude of the applied field (Tesla). | `-1.0` | `--B-start` |
 | `hfinal` | Final magnitude of the applied field (Tesla). | `1.0` | `--B-end` |
 | `hstep` | Field sweep step size magnitude (Tesla). | `0.05` | `--dB` |
+| `mstep` | Magnetization change threshold for saving `.vtu` snapshots. Setting this to a very large value (e.g. `10000`) prevents VTU outputs to save disk space. | `None` | N/A |
 | `bias_type` | Symmetry-breaking initialization field (`circular` or `random`). | `None` | `--bias-type` |
 | `bias_strength` | Strength of the bias field relative to saturation. | `0.0` | `--bias-strength` |
 
@@ -377,3 +366,35 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
 | `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` | `--cg-tol` |
 | `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
+
+## 11. Evaluate Materials Workflow
+
+The `examples/evaluate_materials` directory provides an automated pipeline for generating fixed sets of granular structures and evaluating different intrinsic magnetic properties across them.
+
+**1. Generate Base Structures:**
+```bash
+cd examples/evaluate_materials
+pixi run python generate_structures.py --extent 80,80,80 --grains 8 --num-structures 10
+```
+*(Alternatively, submit `sbatch run_generate_structures.slurm` to a cluster).*
+This generates 10 fixed meshes with their random easy-axis orientations permanently seeded in `isotrop.krn` under the `base_structures/` folder.
+
+**2. Evaluate Magnetic Properties:**
+```bash
+pixi run -e cuda python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
+```
+*(Alternatively, submit `sbatch run_evaluate_properties.slurm` to a cluster).*
+This wrapper script orchestrates two distinct phases for the specified intrinsic properties across all 10 structures:
+- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `loop.py` sequentially for each structure.
+- **Analyze Phase:** Analyzes the simulation outputs, automatically handling demagnetization field shearing and detecting overskewed coercivities.
+
+Results are written to the `evaluations/` directory, including a visual plot (`*_demag_curves.png`) and three strictly typed, ontology-mapped CSV files:
+- `evaluation_results_average.csv`: The full average demagnetization loop curve.
+- `evaluation_results_individual.csv`: The discrete $H_c$ and $J_r$ properties for each individual mesh.
+- `evaluation_summary_scalars.csv`: A single-row summary of the geometry and intrinsic/extrinsic properties fully typed using the MaMMoS EMMO ontology.
+
+**3. Clean Up Data:**
+```bash
+./clean_evaluations.sh
+```
+Safely deletes the heavy simulation output directories inside `evaluations/` while preserving your evaluation CSV results and plots.

@@ -1,9 +1,24 @@
 import ctypes
 import os
 
-import numpy as np
+lib_path = None
+# 1. Try local compute node temporary directory first (Slurm Job ID)
+slurm_job_id = os.environ.get("SLURM_JOB_ID")
+if slurm_job_id:
+    local_lib = f"/tmp/mumag_build_{slurm_job_id}/libcpp_mkl_minimizer.so"
+    if os.path.exists(local_lib):
+        lib_path = local_lib
 
-lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+# 2. Try MUMAG_LIB_OUT if set manually
+if not lib_path and "MUMAG_LIB_OUT" in os.environ:
+    env_lib = os.path.join(os.environ["MUMAG_LIB_OUT"], "libcpp_mkl_minimizer.so")
+    if os.path.exists(env_lib):
+        lib_path = env_lib
+
+# 3. Fallback to shared Ceph drive
+if not lib_path:
+    lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+
 if not os.path.exists(lib_path):
     raise FileNotFoundError(f"Could not find {lib_path}. Please compile the C++ minimizer.")
 
