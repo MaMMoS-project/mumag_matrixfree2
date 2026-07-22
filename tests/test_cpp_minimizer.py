@@ -87,7 +87,9 @@ def test():
         conn32, volume, l_grad_phi, boundary_mask=np.zeros(knt.shape[0], dtype=np.int32), reg=1e-12
     )
     A_diag = jnp.asarray(A_scipy.diagonal())
-    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    A_sparse = make_sparse_operator(
+        A_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
+    )
 
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
@@ -105,7 +107,9 @@ def test():
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    make_sparse_operator(
+        K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
+    )
 
     # Preconditioning setup
     from energy_kernels import compute_exchange_diagonal
