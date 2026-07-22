@@ -87,25 +87,25 @@ def test():
         conn32, volume, l_grad_phi, boundary_mask=np.zeros(knt.shape[0], dtype=np.int32), reg=1e-12
     )
     A_diag = jnp.asarray(A_scipy.diagonal())
-    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="persistent_mkl")
+    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
 
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
     D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
 
     N = knt.shape[0]
     Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
     Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
     Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
     G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl")
+    make_sparse_operator(K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
 
     # Preconditioning setup
     from energy_kernels import compute_exchange_diagonal
@@ -147,7 +147,7 @@ def test():
         boundary_mask=None,
         mode="assembled",
         A_sparse=A_sparse,
-        cpu_spmv_backend="persistent_mkl",
+        cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
         poisson_solver="pardiso",
     )
 
