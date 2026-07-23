@@ -187,17 +187,17 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--verbose` | flag | Print detailed minimizer iterations. |
 
 ### `src/mesh.py` (Meshing Tool)
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. |
-| `--extent` | CSV | Full dimensions `Lx,Ly,Lz` of the core mesh. |
-| `--h` | float | Target characteristic edge length. |
-| `--n` | int | (Poly / Poly_GB only) Number of grains for the polycrystalline generation. |
-| `--neper-timeout` | int | Timeout in seconds for the Neper Voronoi tessellation. |
-| `--gb-thickness` | float | (Poly_GB only) Total thickness of the grain boundary phase. |
-| `--backend` | choice | Meshing engine: `meshpy` (TetGen) or `grid`. |
-| `--out-name` | string | Base name for output files. |
-| `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. |
+| Parameter | Type | Description | Deafult |
+| :--- | :--- | :--- | :--- |
+| `--geom` | choice | Geometry type: `box`, `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. | `box` |
+| `--extent` | CSV | Full dimensions `Lx,Ly,Lz` of the core mesh. | `60.0,60.0,60.0` |
+| `--h` | float | Target characteristic edge length. | `2.0` |
+| `--n` | int | (Poly / Poly_GB only) Number of grains for the polycrystalline generation. | `10` |
+| `--neper-timeout` | int | Timeout in seconds for the Neper Voronoi tessellation. | `None` |
+| `--gb-thickness` | float | (Poly_GB only) Total thickness of the grain boundary phase. | `1.0` |
+| `--backend` | choice | Meshing engine: `meshpy` (TetGen) or `grid`. | `meshpy` |
+| `--out-name` | string | Base name for output files. | `single_solid` |
+| `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. | `True` |
 
 ### `src/add_shell.py` (Standalone Airbox Tool)
 The airbox tool can be run independently to add a far-field vacuum region to an existing mesh. It is highly optimized to minimize the number of tetrahedrons using a convex hull.
