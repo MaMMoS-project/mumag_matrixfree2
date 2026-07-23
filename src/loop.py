@@ -21,8 +21,14 @@ License: MIT
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
+
+# Workaround for older conda-forge libblas/mkl packages that incorrectly set this as a comma-separated string
+if os.environ.get("MKL_INTERFACE_LAYER", "") == "LP64,GNU":
+    os.environ["MKL_INTERFACE_LAYER"] = "LP64"
+    os.environ["MKL_THREADING_LAYER"] = "GNU"
 
 import jax
 import jax.numpy as jnp
@@ -212,6 +218,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["mstep"] = float(f["mstep"])
         if "loop" in f:
             overrides["loop"] = f.getboolean("loop")
+        if "bias_type" in f:
+            overrides["bias_type"] = str(f["bias_type"])
+        if "bias_strength" in f:
+            overrides["bias_strength"] = float(f["bias_strength"])
 
     if "initial state" in config:
         m_sec = config["initial state"]
@@ -227,11 +237,53 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         m_min = config["minimizer"]
         if "tol_fun" in m_min:
             overrides["tau_f"] = float(m_min["tol_fun"])
+        if "eps_a" in m_min:
+            overrides["eps_a"] = float(m_min["eps_a"])
+        if "max_iter" in m_min:
+            overrides["max_iter"] = int(m_min["max_iter"])
+        if "tau_min" in m_min:
+            overrides["tau_min"] = float(m_min["tau_min"])
+        if "tau0" in m_min:
+            overrides["tau0"] = float(m_min["tau0"])
+        if "tau_max" in m_min:
+            overrides["tau_max"] = float(m_min["tau_max"])
+        if "method" in m_min:
+            overrides["method"] = str(m_min["method"])
+        if "pc_iters" in m_min:
+            overrides["pc_iters"] = int(m_min["pc_iters"])
+        if "pc_auto" in m_min:
+            overrides["pc_auto"] = m_min.getboolean("pc_auto")
+        if "pc_force_eta" in m_min:
+            overrides["pc_force_eta"] = float(m_min["pc_force_eta"])
+        if "pc_force_alpha" in m_min:
+            overrides["pc_force_alpha"] = float(m_min["pc_force_alpha"])
+        if "pc_stagnation_nu" in m_min:
+            overrides["pc_stagnation_nu"] = float(m_min["pc_stagnation_nu"])
+        if "memory" in m_min:
+            overrides["memory"] = int(m_min["memory"])
+        if "tn_iters" in m_min:
+            overrides["tn_iters"] = int(m_min["tn_iters"])
+        if "lr" in m_min:
+            overrides["lr"] = float(m_min["lr"])
+        if "mu" in m_min:
+            overrides["mu"] = float(m_min["mu"])
+        if "pc_reg" in m_min:
+            overrides["pc_reg"] = float(m_min["pc_reg"])
+        if "wg_gamma" in m_min:
+            overrides["wg_gamma"] = int(m_min["wg_gamma"])
+        if "wg_threshold" in m_min:
+            overrides["wg_threshold"] = float(m_min["wg_threshold"])
+        if "phi_extrapolate" in m_min:
+            overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
 
     if "poisson" in config:
         p = config["poisson"]
         if "cg_maxiter" in p:
             overrides["cg_maxiter"] = int(p["cg_maxiter"])
+        if "cg_tol" in p:
+            overrides["cg_tol"] = float(p["cg_tol"])
+        if "reg" in p:
+            overrides["poisson_reg"] = float(p["reg"])
 
     return overrides
 
@@ -307,12 +359,30 @@ def main() -> None:
         action="store_true",
         help="Add an airbox shell around the core mesh.",
     )
-    ap.add_argument("--layers", type=int, default=4, help="Number of graded shell layers (>= 1).")
+    ap.add_argument(
+        "--shell-type",
+        type=str,
+        default="hull",
+        choices=["triangles", "hull"],
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+    )
+    ap.add_argument("--layers", type=int, default=None, help="Number of graded shell layers (>= 1).")
     ap.add_argument(
         "--K",
         type=float,
-        default=1.3,
+        default=1.5,
         help="Geometric growth factor for shell layer thickness (> 1).",
+    )
+    ap.add_argument(
+        "--KL",
+        type=float,
+        default=10.0,
+        help="Total outermost geometric scale relative to body (> 1).",
+    )
+    ap.add_argument(
+        "--auto-layers",
+        action="store_true",
+        help="Automatically compute the number of layers L given --KL and --K.",
     )
     ap.add_argument(
         "--beta",
@@ -398,9 +468,15 @@ def main() -> None:
         help="Number of elements processed per loop iteration (chunking to control GPU memory).",
     )
     ap.add_argument(
+        "--operator-mode",
+        choices=["matrix_free", "assembled"],
+        default="assembled",
+        help="Solver operator execution mode: matrix_free (on-the-fly) or assembled (sparse matrix SpMV).",
+    )
+    ap.add_argument(
         "--cg-maxiter",
         type=int,
-        default=400,
+        default=2000,
         help="Maximum iterations for the Poisson PCG solver.",
     )
     ap.add_argument(
@@ -414,6 +490,20 @@ def main() -> None:
         type=float,
         default=1e-12,
         help="Tikhonov regularization constant for the Poisson operator diagonal.",
+    )
+    ap.add_argument(
+        "--cpu-spmv-backend",
+        type=str,
+        default="persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+        choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax", "mkl_ffi"],
+        help="Backend for SpMV operations when running on CPU in assembled mode.",
+    )
+    ap.add_argument(
+        "--poisson-solver",
+        type=str,
+        default="auto",
+        choices=["auto", "jax", "pardiso", "jax_mkl"],
+        help="Solver to use for the magnetostatic Poisson problem (default: auto).",
     )
 
     # loop settings
@@ -437,18 +527,190 @@ def main() -> None:
     )
     ap.add_argument("--dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
     ap.add_argument(
+        "--max-iter",
+        type=int,
+        default=2000,
+        help="Maximum iterations for the energy minimizer per field step.",
+    )
+    ap.add_argument(
+        "--L",
+        type=int,
+        default=None,
+        help="Restart frequency for conjugate gradient methods (default: number of nodes).",
+    )
+    ap.add_argument(
         "--tau-f",
         type=float,
-        default=1e-6,
+        default=1e-8,
         help="Relative energy convergence tolerance for the minimizer.",
     )
     ap.add_argument(
         "--eps-a",
         type=float,
-        default=1e-10,
+        default=1e-12,
         help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
     )
+    ap.add_argument(
+        "--tau0",
+        type=float,
+        default=1e-2,
+        help="Initial step size guess for minimizers.",
+    )
+    ap.add_argument(
+        "--tau-min",
+        type=float,
+        default=1e-6,
+        help="Minimum step size allowed for the BB minimizer.",
+    )
+    ap.add_argument(
+        "--tau-max",
+        type=float,
+        default=1.0,
+        help="Maximum step size allowed for the BB minimizer.",
+    )
+    ap.add_argument(
+        "--bias-type",
+        type=str,
+        default=None,
+        choices=["circular", "random"],
+        help="Type of symmetry-breaking field for mode initialization.",
+    )
+    ap.add_argument(
+        "--bias-strength",
+        type=float,
+        default=0.0,
+        help="Strength of the bias field relative to saturation (e.g., 0.01).",
+    )
 
+    # advanced minimizer options
+    ap.add_argument(
+        "--method",
+        type=str,
+        default="pcohen_hs",
+        choices=[
+            "cohen",
+            "pcg",
+            "pcohen",
+            "pcohen_hs",
+            "pcohen_exact",
+            "pcohen_hs_exact",
+            "lbfgs",
+            "plbfgs",
+            "dplbfgs",
+            "tn_split",
+            "wg_np",
+            "tr",
+            "aapg",
+            "aapg_exact",
+            "pnag",
+            "pcohen_lbfgs",
+            "ptr",
+        ],
+        help="Energy minimizer algorithm (default: pcohen).",
+    )
+    ap.add_argument(
+        "--pc-iters",
+        type=int,
+        default=10,
+        help="Inner iterations for preconditioning (default: 10).",
+    )
+    ap.add_argument(
+        "--pc-auto",
+        action="store_true",
+        default=True,
+        help="Enable automated tuning of preconditioning accuracy (default: True).",
+    )
+    ap.add_argument(
+        "--pc-no-auto",
+        action="store_false",
+        dest="pc_auto",
+        help="Disable automated tuning of preconditioning accuracy.",
+    )
+    ap.add_argument(
+        "--pc-force-eta",
+        type=float,
+        default=0.5,
+        help="Base forcing parameter for adaptive preconditioning (default: 0.5).",
+    )
+    ap.add_argument(
+        "--pc-force-alpha",
+        type=float,
+        default=0.5,
+        help="Exponent forcing parameter for adaptive preconditioning (default: 0.5).",
+    )
+    ap.add_argument(
+        "--pc-stagnation-nu",
+        type=float,
+        default=0.01,
+        help="Relative threshold for quadratic model stagnation detection (default: 0.01).",
+    )
+    ap.add_argument(
+        "--memory",
+        type=int,
+        default=5,
+        help="Memory/History size for L-BFGS and Anderson acceleration (default: 5).",
+    )
+    ap.add_argument(
+        "--tn-iters",
+        type=int,
+        default=5,
+        help="Inner iterations for Newton-CG solvers (default: 5).",
+    )
+    ap.add_argument(
+        "--lr",
+        type=float,
+        default=0.1,
+        help="Learning rate for Nesterov acceleration (default: 0.1).",
+    )
+    ap.add_argument(
+        "--mu",
+        type=float,
+        default=0.9,
+        help="Momentum factor for Nesterov acceleration (default: 0.9).",
+    )
+
+    ap.add_argument(
+        "--pc-reg",
+        type=float,
+        default=0.0,
+        help="Diagonal regularization shift for the preconditioner (default: 0.0).",
+    )
+    ap.add_argument(
+        "--wg-gamma",
+        type=int,
+        default=5,
+        help="Number of steps in convex region before switching to BB (default: 5).",
+    )
+    ap.add_argument(
+        "--wg-threshold",
+        type=float,
+        default=1e-6,
+        help="Convexity threshold (sty) for WG algorithm (default: 1e-6).",
+    )
+    ap.add_argument(
+        "--phi-extrapolate",
+        action="store_true",
+        default=True,
+        help="Enable linear extrapolation of scalar potential for faster Poisson solves (default: True).",
+    )
+    ap.add_argument(
+        "--cpp-mkl",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use the pure C++ MKL minimizer backend for the entire field step (default: True on CPU with MKL, False otherwise).",  # noqa: E501
+    )
+    ap.add_argument(
+        "--no-phi-extrapolate",
+        action="store_false",
+        dest="phi_extrapolate",
+        help="Disable linear extrapolation of scalar potential.",
+    )
+    ap.add_argument(
+        "--data-parallel",
+        action="store_true",
+        default=False,
+        help="Use SPMD Data Parallelism for multi-GPU instead of Operator Parallelism (default: False).",
+    )
     ap.add_argument(
         "--out-dir",
         type=str,
@@ -472,8 +734,33 @@ def main() -> None:
         action="store_true",
         help="Print detailed minimizer iterations at each step.",
     )
+    ap.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Run a dummy warmup step before the hysteresis loop to compile JIT functions.",
+    )
 
     args = ap.parse_args()
+
+    # Dynamic defaults based on platform
+    try:
+        has_gpu = any(d.platform == "gpu" for d in jax.devices())
+    except Exception:
+        has_gpu = False
+
+    try:
+        import ctypes
+
+        ctypes.CDLL("libmkl_rt.so")
+        has_mkl = True
+    except OSError:
+        has_mkl = False
+
+    if args.cpp_mkl is None:
+        args.cpp_mkl = not has_gpu and has_mkl
+
+    if args.poisson_solver == "auto":
+        args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
 
     # Automatic file discovery if modelname is provided
     modelname = args.modelname
@@ -490,7 +777,14 @@ def main() -> None:
     if args.mesh is None:
         ap.error("the following arguments are required: --mesh or modelname")
 
-    data = np.load(args.mesh)
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists() and mesh_path.suffix == "":
+        candidate = mesh_path.with_suffix(".npz")
+        if candidate.exists():
+            mesh_path = candidate
+    args.mesh = str(mesh_path)
+
+    data = np.load(mesh_path)
     knt = np.asarray(data["knt"], dtype=np.float64)
     ijk = np.asarray(data["ijk"])
 
@@ -520,6 +814,8 @@ def main() -> None:
             in_npz=str(tmp_npz),
             layers=args.layers,
             K=args.K,
+            KL=args.KL,
+            auto_layers=args.auto_layers,
             beta=args.beta,
             center=args.center,
             h0=args.h0,
@@ -528,6 +824,7 @@ def main() -> None:
             max_steiner=args.max_steiner,
             no_exact=args.no_exact,
             verbose=args.shell_verbose,
+            shell_type=args.shell_type,
         )
         # Cleanup temporary body file
         if tmp_npz.exists():
@@ -544,7 +841,7 @@ def main() -> None:
     if modelname:
         p2_path = Path(modelname).with_suffix(".p2")
         if p2_path.exists():
-            print(f"[config] Loading overrides from {p2_path}")
+            print(f"[config] Loading base settings from {p2_path}")
             p2_overrides = load_params_p2(p2_path)
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
@@ -641,21 +938,51 @@ def main() -> None:
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
+    # 1. Start with defaults and CLI values
+    param_sources = {}
     params_dict = {
         "h_dir": h_dir,
         "B_start": float(args.B_start) / Js_ref,
         "B_end": float(args.B_end) / Js_ref,
         "dB": float(args.dB) / Js_ref,
+        "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
-        "loop": True,
+        "tau0": float(args.tau0),
+        "tau_min": float(args.tau_min),
+        "tau_max": float(args.tau_max),
+        "cg_maxiter": int(args.cg_maxiter),
+        "cg_tol": float(args.cg_tol),
+        "poisson_reg": float(args.poisson_reg),
+        "loop": False,
         "out_dir": args.out_dir,
         "snapshot_every": int(args.snapshot_every),
         "verbose": args.verbose,
         "Js_ref": float(Js_ref),
+        "bias_type": args.bias_type,
+        "bias_strength": float(args.bias_strength),
+        "method": args.method,
+        "pc_iters": int(args.pc_iters),
+        "pc_auto": bool(args.pc_auto),
+        "pc_force_eta": float(args.pc_force_eta),
+        "pc_force_alpha": float(args.pc_force_alpha),
+        "pc_stagnation_nu": float(args.pc_stagnation_nu),
+        "memory": int(args.memory),
+        "tn_iters": int(args.tn_iters),
+        "lr": float(args.lr),
+        "mu": float(args.mu),
+        "pc_reg": float(args.pc_reg),
+        "wg_threshold": float(args.wg_threshold),
+        "phi_extrapolate": bool(args.phi_extrapolate),
+        "cpp_mkl": bool(args.cpp_mkl),
+        "benchmark": bool(args.benchmark),
+        "poisson_solver": str(args.poisson_solver),
+        "data_parallel": bool(args.data_parallel),
     }
+    for k in params_dict:
+        param_sources[k] = "default"
 
-    # Apply overrides
+    # 2. Merge .p2 overrides
     if p2_overrides:
         # Scale field values by Js_ref (they are provided in Tesla)
         if "B_start" in p2_overrides:
@@ -673,35 +1000,264 @@ def main() -> None:
         p2_overrides.pop("mesh_unit", None)
         p2_overrides.pop("m0_dir", None)
 
-        params_dict.update(p2_overrides)
+        # Merge p2 into defaults
+        for k, v in p2_overrides.items():
+            params_dict[k] = v
+            param_sources[k] = ".p2"
+
+    # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
+    # it should win over BOTH defaults and p2.
+    # We check if the arg flag is actually present in sys.argv.
+    import sys
+
+    # Map destination variable names to the flags that can set them
+    dest_to_flags = {}
+    for action in ap._actions:
+        dest_to_flags[action.dest] = action.option_strings
+
+    # Identify which variables were explicitly set on the CLI
+    explicit_cli_args = set()
+    for dest, flags in dest_to_flags.items():
+        for flag in flags:
+            # Check if any flag matching this dest is in sys.argv
+            # (handles both --flag value and --flag=value)
+            if any(arg.startswith(flag) for arg in sys.argv):
+                explicit_cli_args.add(dest)
+                break
+
+    for dest in explicit_cli_args:
+        if dest in params_dict:
+            params_dict[dest] = getattr(args, dest)
+            param_sources[dest] = "cli"
+            # Re-scale field units if they came from CLI
+            if dest in ["B_start", "B_end", "dB", "mfinal", "mstep"] and params_dict[dest] is not None:
+                params_dict[dest] /= Js_ref
+
+    # Clean up params_dict to only include LoopParams fields
+    import dataclasses
+
+    loop_param_names = {f.name for f in dataclasses.fields(LoopParams)}
+
+    # Save parameter log
+    out_dir_path = Path(args.out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    log_dict = vars(args).copy()
+    log_dict.update(params_dict)
+
+    with open(out_dir_path / "params.log", "w") as f:
+        f.write("| Parameter | Value | Source |\n")
+        f.write("| :--- | :--- | :--- |\n")
+        for k in sorted(log_dict.keys()):
+            if "extrapolate" in k:
+                continue
+            source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
+            f.write(f"| {k} | {log_dict[k]} | {source} |\n")
+            if k == "cg_tol":
+                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.1))
+                f.write(f"| phi_tol | {phi_tol} | derived |\n")
+
+    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
 
     params = LoopParams(**params_dict)
+
+    # Compute per-node bias field
+    B_bias = np.zeros((knt.shape[0], 3))
+    if params.bias_type == "circular":
+        # Compute center of the magnetic part
+        mag_nodes = np.unique(conn[mat_id == 1])
+        if mag_nodes.size > 0:
+            center = np.mean(knt[mag_nodes], axis=0)
+            coords = knt - center
+            bx = -coords[:, 1]
+            by = coords[:, 0]
+            norm = np.sqrt(bx**2 + by**2) + 1e-30
+            B_bias[:, 0] = bx / norm
+            B_bias[:, 1] = by / norm
+    elif params.bias_type == "random":
+        rng = np.random.default_rng(42)
+        B_bias = rng.standard_normal((knt.shape[0], 3))
+        B_bias /= np.linalg.norm(B_bias, axis=1, keepdims=True) + 1e-30
+
+    # Scale by strength relative to saturation (dimensionless in our code)
+    B_bias *= params.bias_strength
+
+    mode = args.operator_mode
+    assembled_kwargs = {}
+    cpu_spmv_backend = args.cpu_spmv_backend
+
+    if mode == "assembled":
+        print("Assembling global sparse operators on CPU...")
+        from amg_utils import (
+            assemble_divergence_matrices_cpu,
+            assemble_poisson_matrix_cpu,
+            get_gpu_assignments,
+            make_sparse_operator,
+        )
+
+        # Ensure grad_phi is computed
+        l_grad_phi = grad_phi if "grad_phi" in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
+
+        A_scipy = assemble_poisson_matrix_cpu(
+            conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
+        )
+        A_diag_cpu = A_scipy.diagonal()
+        A_diag = jnp.asarray(A_diag_cpu)
+
+        # GPU device detection and assignment
+        from poisson_solve import safe_device_put
+
+        try:
+            gpus = jax.devices("gpu")
+            num_gpus = len(gpus)
+        except Exception:
+            gpus = []
+            num_gpus = 0
+
+        if num_gpus >= 2:
+            assignments = get_gpu_assignments(num_gpus, gpus)
+            print(f"[multi-gpu] Found {num_gpus} GPUs. Device assignments: {assignments}")
+            dev_amg = assignments["AMG"]
+            dev_d = assignments["D"]
+            dev_g = assignments["G"]
+        else:
+            dev_amg = dev_d = dev_g = jax.devices()[0]
+
+        A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend)
+        A_sparse = safe_device_put(A_sparse, dev_amg)
+
+        Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
+
+        import scipy.sparse as sp
+
+        if args.cpp_mkl:
+            Dx_coo = Dx_scipy.tocoo()
+            Dy_coo = Dy_scipy.tocoo()
+            Dz_coo = Dz_scipy.tocoo()
+            rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+            cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+            data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+            D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+            D_scipy.sort_indices()
+            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = safe_device_put(D_sparse, dev_d)
+
+            Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+            Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+            Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+            rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+            cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+            data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+            G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+            G_scipy.sort_indices()
+            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = safe_device_put(G_sparse, dev_g)
+        else:
+            D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = safe_device_put(D_sparse, dev_d)
+            N = knt.shape[0]
+            Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
+            Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
+            Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
+            G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = safe_device_put(G_sparse, dev_g)
+            del Gx_scipy, Gy_scipy, Gz_scipy
+
+        del Dx_scipy, Dy_scipy, Dz_scipy
+        Dx_sparse = Dy_sparse = Dz_sparse = None
+        Gx_sparse = Gy_sparse = Gz_sparse = None
+
+        from amg_utils import assemble_exchange_anisotropy_matrix_cpu
+
+        K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+            conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
+        )
+
+        Kx_sparse = Ky_sparse = Kz_sparse = None
+        if num_gpus >= 3:
+            K_eff_coo = K_eff_scipy.tocoo()
+            N = knt.shape[0]
+            P_idx_row = (K_eff_coo.row % 3) * N + (K_eff_coo.row // 3)
+            P_idx_col = (K_eff_coo.col % 3) * N + (K_eff_coo.col // 3)
+            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3 * N, 3 * N))
+            Kx_scipy = K_eff_blocked[:N, :]
+            Ky_scipy = K_eff_blocked[N : 2 * N, :]
+            Kz_scipy = K_eff_blocked[2 * N :, :]
+
+            Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kx_sparse = safe_device_put(Kx_sparse, assignments["Kx"])
+
+            Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Ky_sparse = safe_device_put(Ky_sparse, assignments["Ky"])
+
+            Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kz_sparse = safe_device_put(Kz_sparse, assignments["Kz"])
+
+            K_eff_sparse = None
+        else:
+            K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            if num_gpus == 2:
+                K_eff_sparse = safe_device_put(K_eff_sparse, assignments["Keff"])
+
+        assembled_kwargs = {
+            "A_sparse": A_sparse,
+            "Dx_sparse": None,
+            "Dy_sparse": None,
+            "Dz_sparse": None,
+            "A_diag": A_diag,
+            "K_eff_sparse": K_eff_sparse,
+            "Kx_sparse": Kx_sparse,
+            "Ky_sparse": Ky_sparse,
+            "Kz_sparse": Kz_sparse,
+            "num_gpus": num_gpus,
+            "Gx_sparse": None,
+            "Gy_sparse": None,
+            "Gz_sparse": None,
+            "D_sparse": D_sparse,
+            "G_sparse": G_sparse,
+            "K_eff_scipy": K_eff_scipy,
+            "D_scipy": D_scipy,
+            "G_scipy": G_scipy,
+        }
+        print("[ok] Finished assembly and GPU transfer.")
 
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
-        A_lookup=A_red,
-        K1_lookup=K1_red,
-        Js_lookup=Js_red,
-        k_easy_lookup=k_easy_lookup,
-        m0=m0,
+        A_lookup=jnp.asarray(A_red, dtype=jnp.float64),
+        K1_lookup=jnp.asarray(K1_red, dtype=jnp.float64),
+        Js_lookup=jnp.asarray(Js_red, dtype=jnp.float64),
+        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        m0=jnp.asarray(m0, dtype=jnp.float64),
         params=params,
         V_mag=float(V_mag),
-        node_volumes=node_vols,
-        M_nodal=M_nodal,
+        node_volumes=jnp.asarray(node_vols, dtype=jnp.float64),
+        M_nodal=jnp.asarray(M_nodal, dtype=jnp.float64),
+        B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
         precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
-        cg_maxiter=int(args.cg_maxiter),
-        cg_tol=float(args.cg_tol),
-        poisson_reg=float(args.poisson_reg),
-        boundary_mask=boundary_mask,
+        boundary_mask=jnp.asarray(boundary_mask, dtype=jnp.float64) if boundary_mask is not None else None,
+        mode=mode,
+        cpu_spmv_backend=cpu_spmv_backend,
+        **assembled_kwargs,
     )
 
     # Write .mh file for mammos-mumag compatibility
     mh_name = modelname if modelname else "hysteresis"
     write_mh(Path(args.out_dir) / mh_name, res["history"])
     print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
+
+    # Convert the raw simulation CSV to mammos_entity format
+    from io_utils import convert_sim_csv_to_mammos
+
+    csv_name = params_dict.get("csv_name", "hysteresis.csv")
+    csv_path = Path(args.out_dir) / csv_name
+    mammos_csv_path = Path(args.out_dir) / f"mammos_{csv_name}"
+    convert_sim_csv_to_mammos(csv_path, out_path=mammos_csv_path, Js_ref=params.Js_ref)
+    print(f"[ok] Converted {csv_name} to mammos_entity format at {mammos_csv_path}")
 
 
 if __name__ == "__main__":

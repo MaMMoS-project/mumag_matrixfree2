@@ -1368,9 +1368,9 @@ def mesh_backend_grid_ellipsoid(
 # ------------------------------- Programmatic entry point --------------------
 
 
-def run_single_solid_mesher(
+def run_single_solid_mesher(  # noqa: D417
     *,
-    geom: str = "box",  # "box" | "ellipsoid" | "eye"
+    geom: str = "box",  # "box" | "ellipsoid" | "eye" | "elliptic_cylinder" | "poly" | "poly_gb"
     extent: str | tuple[float, float, float] = "60.0,60.0,60.0",
     h: float = 2.0,
     minratio: float = 1.4,  # meshpy backend only
@@ -1384,13 +1384,35 @@ def run_single_solid_mesher(
     out_vis_name: str | None = None,  # overrides .vtu base name
     number_of_grains=1,
     seed=123,
+    gb_thickness: float = 1.0,
+    gb_h: float = 1.0,
     no_vis: bool = False,
     verbose: bool = False,
+    # Shell parameters
+    add_shell: bool = False,
+    shell_layers: int | None = None,
+    shell_K: float | None = 1.5,
+    shell_KL: float | None = 10.0,
+    shell_auto_layers: bool = False,
+    shell_auto_K: bool = False,
+    shell_beta: float = 1.0,
+    shell_same_scaling: bool = False,
+    shell_center: str | tuple[float, float, float] = "0,0,0",
+    shell_h0: float | None = None,
+    shell_hmax: float | None = None,
+    shell_body_h: float | None = None,
+    shell_max_steiner: int | None = None,
+    shell_no_exact: bool = False,
+    shell_verbose: bool = False,
+    shell_type: str = "hull",
+    # Neper CVT parameters
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
     return_arrays: bool = True,  # NEW: set False to minimize memory
 ) -> tuple[np.ndarray | None, np.ndarray | None, str, str | None]:
     """Build a single-solid tetrahedral mesh.
 
-    Supports box, ellipsoid, eye, cylinder, or poly.
+    Supports box, ellipsoid, eye, cylinder, poly, or poly_gb.
 
     Dispatches to the appropriate geometry and backend implementation,
     writes outputs (.npz and optional .vtu), and returns paths and optionally arrays.
@@ -1410,6 +1432,8 @@ def run_single_solid_mesher(
         out_vis_name (str | None): optional override for VTU path.
         number_of_grains (int): grains for 'poly' geom.
         seed (int): random seed for 'poly' geom.
+        gb_thickness (float): thickness of the grain boundary phase for 'poly_gb'.
+        gb_h (float): target element size for the grain boundary phase in 'poly_gb'.
         no_vis (bool): If True, skip VTU export.
         verbose (bool): logging.
         return_arrays (bool): If False, return None for knt/ijk to save memory.
@@ -1436,12 +1460,9 @@ def run_single_solid_mesher(
     # Build orthonormal frame from user directions (used for both shapes)
     ex, ey, ez = orthonormal_frame(dx, dy, dz)
 
-    # TODO: include the geometry for a elliptic_cylinder shape as option
-    # next to box, eye and ellipsoid. adopt it to the current structure.
-
     # Dispatch geometry + backend
-    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly"):
-        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly'"
+    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"):
+        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly' or 'poly_gb'"
         raise ValueError(msg)
     if backend not in ("meshpy", "grid"):
         raise ValueError("backend must be 'meshpy' or 'grid'")
@@ -1541,10 +1562,6 @@ def run_single_solid_mesher(
             )
 
     elif geom == "poly":
-        if isinstance(extent, str):
-            Lx, Ly, Lz = parse_csv3(extent)
-        else:
-            Lx, Ly, Lz = float(extent[0]), float(extent[1]), float(extent[2])
         knt, ijk = mesh_backend_neper_poly(
             n=int(number_of_grains),
             seed=int(seed),
@@ -1552,7 +1569,61 @@ def run_single_solid_mesher(
             size_y=Ly,
             size_z=Lz,
             h=float(h),
+            neper_tol=neper_tol,
+            neper_timeout=neper_timeout,
         )
+
+    elif geom == "poly_gb":
+        knt, ijk = mesh_backend_meshpy_poly_gb(
+            n=int(number_of_grains),
+            seed=int(seed),
+            size_x=Lx,
+            size_y=Ly,
+            size_z=Lz,
+            h=float(h),
+            t=float(gb_thickness),
+            gb_h=float(gb_h),
+            minratio=float(minratio),
+            verbose=bool(verbose),
+            neper_tol=neper_tol,
+            neper_timeout=neper_timeout,
+        )
+
+    if add_shell:
+        import os
+        import tempfile
+
+        import add_shell
+
+        fd, tmp_npz_path = tempfile.mkstemp(suffix=".tmp_body.npz")
+        try:
+            os.close(fd)
+            # Save core body mesh to temporary NPZ
+            np.savez(tmp_npz_path, knt=knt.astype(np.float64), ijk=ijk.astype(np.int32))
+
+            # Run shell addition pipeline
+            knt, ijk = add_shell.run_add_shell_pipeline(
+                in_npz=tmp_npz_path,
+                layers=shell_layers,
+                K=shell_K,
+                KL=shell_KL,
+                auto_layers=shell_auto_layers,
+                auto_K=shell_auto_K,
+                beta=shell_beta,
+                same_scaling=shell_same_scaling,
+                center=shell_center,
+                h0=shell_h0,
+                hmax=shell_hmax,
+                body_h=shell_body_h,
+                minratio=minratio,
+                max_steiner=shell_max_steiner,
+                no_exact=shell_no_exact,
+                verbose=shell_verbose,
+                shell_type=shell_type,
+            )
+        finally:
+            if os.path.exists(tmp_npz_path):
+                os.remove(tmp_npz_path)
 
     # Resolve output filenames
     base = (out_name or "single_solid").strip()
@@ -1587,8 +1658,222 @@ def run_single_solid_mesher(
         return knt, ijk, out_npz, out_vtu
 
 
+def mesh_backend_meshpy_poly_gb(
+    n: int,
+    seed: int,
+    size_x: float,
+    size_y: float,
+    size_z: float,
+    h: float,
+    t: float,
+    gb_h: float,
+    minratio: float,
+    verbose: bool,
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh a polyhedral volume with a grain boundary phase using Neper and MeshPy.
+
+    Requires 'neper' to be available in the PATH.
+
+    Args:
+        n (int): number of grains.
+        seed (int): random seed.
+        size_x (float): physical dimension x.
+        size_y (float): physical dimension y.
+        size_z (float): physical dimension z.
+        h (float): target element size for grains.
+        t (float): thickness of the grain boundary phase.
+        gb_h (float): target element size for the grain boundary phase.
+        minratio (float): quality parameter.
+        verbose (bool): logging.
+        neper_tol (float | None): stopping tolerance.
+        neper_timeout (float | None): stopping time limit in seconds.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
+    """
+    import os
+    import subprocess
+
+    from scipy.spatial import ConvexHull, HalfspaceIntersection
+
+    if not HAVE_meshpy:
+        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
+
+    opt_stop_parts = []
+    val_to_use = neper_tol if neper_tol is not None else 1e-1
+    opt_stop_parts.append(f"val={val_to_use}")
+    if neper_timeout is not None:
+        opt_stop_parts.append(f"time={neper_timeout}")
+    morphooptistop_str = "||".join(opt_stop_parts)
+
+    cmd_tess = [
+        "neper",
+        "-T",
+        "-n",
+        str(n),
+        "-id",
+        str(seed),
+        "-morpho",
+        "gg",
+        "-morphooptistop",
+        morphooptistop_str,
+        "-domain",
+        f"cube({size_x},{size_y},{size_z}):translate(0,0,0)",
+        "-format",
+        "tess,obj",
+        "-reg",
+        "1",
+    ]
+    subprocess.run(cmd_tess, check=True)
+
+    obj_file = f"n{n}-id{seed}.obj"
+
+    vertices = []
+    groups = {}
+    current_group = None
+    with open(obj_file) as f:
+        for line in f:
+            if line.startswith("v "):
+                parts = line.split()
+                vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            elif line.startswith("g "):
+                current_group = line.split()[1]
+                groups[current_group] = []
+            elif line.startswith("f "):
+                parts = line.split()
+                face = [int(p.split("//")[0]) - 1 for p in parts[1:]]
+                groups[current_group].append(face)
+    vertices = np.array(vertices)
+
+    shrunken_grains = {}
+    for g_name, faces in groups.items():
+        grain_verts = []
+        for f_ in faces:
+            grain_verts.extend(f_)
+        grain_verts = list(set(grain_verts))
+        C_grain = np.mean(vertices[grain_verts], axis=0)
+
+        halfspaces = []
+        for f_ in faces:
+            V_f = vertices[f_]
+            v1 = V_f[1] - V_f[0]
+            v2 = V_f[2] - V_f[0]
+            n_vec = np.cross(v1, v2)
+            n_norm = np.linalg.norm(n_vec)
+            if n_norm < 1e-12:
+                continue
+            n_vec = n_vec / n_norm
+
+            if np.dot(n_vec, V_f[0] - C_grain) < 0:
+                n_vec = -n_vec
+
+            d = np.dot(n_vec, V_f[0])
+            new_d = d - t / 2.0
+            halfspaces.append([n_vec[0], n_vec[1], n_vec[2], -new_d])
+
+        halfspaces = np.array(halfspaces)
+        try:
+            hs = HalfspaceIntersection(halfspaces, C_grain)
+            hull = ConvexHull(hs.intersections)
+            shrunken_grains[g_name] = {"vertices": hs.intersections, "faces": hull.simplices, "centroid": C_grain}
+        except Exception as e:
+            if verbose:
+                print(f"[warn] Error shrinking grain {g_name}, it might be too small: {e}")
+
+    points = []
+    facets = []
+    regions = []
+
+    bb_points = [
+        [0, 0, 0],
+        [size_x, 0, 0],
+        [size_x, size_y, 0],
+        [0, size_y, 0],
+        [0, 0, size_z],
+        [size_x, 0, size_z],
+        [size_x, size_y, size_z],
+        [0, size_y, size_z],
+    ]
+    points.extend(bb_points)
+    bb_faces = [[0, 3, 2, 1], [4, 5, 6, 7], [1, 2, 6, 5], [0, 4, 7, 3], [2, 3, 7, 6], [0, 1, 5, 4]]
+    for f_ in bb_faces:
+        facets.append(f_)
+
+    grain_id = 1
+    for _g_name, data in shrunken_grains.items():
+        base_idx = len(points)
+        V = data["vertices"]
+        F = data["faces"]
+        points.extend(V.tolist())
+
+        for f_ in F:
+            facets.append([base_idx + v for v in f_])
+
+        regions.append(
+            [
+                data["centroid"][0],
+                data["centroid"][1],
+                data["centroid"][2],
+                grain_id,
+                approx_max_volume_from_edge(float(h)),
+            ]
+        )
+        grain_id += 1
+
+    g1_data = list(shrunken_grains.values())[0]
+    C1 = g1_data["centroid"]
+    V1 = g1_data["vertices"][0]
+    vec = V1 - C1
+    vec = vec / np.linalg.norm(vec)
+    gb_point = V1 + vec * (t / 4.0)
+
+    gb_id = grain_id
+    regions.append([gb_point[0], gb_point[1], gb_point[2], gb_id, approx_max_volume_from_edge(float(gb_h))])
+
+    mi = MeshInfo()
+    mi.set_points(points)
+    mi.set_facets(facets)
+    mi.regions.resize(len(regions))
+    for i, r in enumerate(regions):
+        mi.regions[i] = (r[0], r[1], r[2], r[3], r[4])
+
+    opts = Options("pqAa")
+    opts.minratio = float(minratio)
+    opts.regionattrib = True
+    opts.verbose = bool(verbose)
+
+    mesh = tet_build(mi, options=opts, attributes=True, volume_constraints=True, verbose=bool(verbose))
+
+    knt = np.asarray(mesh.points, dtype=np.float64)
+    knt -= np.array([size_x / 2.0, size_y / 2.0, size_z / 2.0])
+
+    tets = np.asarray(mesh.elements, dtype=np.int32)
+    mat_ids = np.asarray(mesh.element_attributes, dtype=np.int32)
+    ijk = np.column_stack([tets, mat_ids])
+
+    if os.path.exists(obj_file):
+        os.remove(obj_file)
+    tess_file = f"n{n}-id{seed}.tess"
+    if os.path.exists(tess_file):
+        os.remove(tess_file)
+
+    if verbose:
+        print(f"[info:poly_gb] Generated {knt.shape[0]} nodes and {ijk.shape[0]} tets.", flush=True)
+
+    return knt, ijk
+
+
 def mesh_backend_neper_poly(
-    n: int, seed: int, size_x: float, size_y: float, size_z: float, h: float
+    n: int,
+    seed: int,
+    size_x: float,
+    size_y: float,
+    size_z: float,
+    h: float,
+    neper_tol: float | None = None,
+    neper_timeout: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Mesh a polyhedral volume using Neper.
 
@@ -1601,6 +1886,8 @@ def mesh_backend_neper_poly(
         size_y (float): physical dimension y.
         size_z (float): physical dimension z.
         h (float): target element size.
+        neper_tol (float | None): stopping tolerance.
+        neper_timeout (float | None): stopping time limit in seconds.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes Nv x 3, Connectivity E x 5).
@@ -1608,6 +1895,13 @@ def mesh_backend_neper_poly(
     import subprocess
 
     # 1) Generate tessellation
+    opt_stop_parts = []
+    val_to_use = neper_tol if neper_tol is not None else 1e-2
+    opt_stop_parts.append(f"val={val_to_use}")
+    if neper_timeout is not None:
+        opt_stop_parts.append(f"time={neper_timeout}")
+    morphooptistop_str = "||".join(opt_stop_parts)
+
     cmd_tess = [
         "neper",
         "-T",
@@ -1618,7 +1912,7 @@ def mesh_backend_neper_poly(
         "-morpho",
         "gg",
         "-morphooptistop",
-        "val=1e-2",
+        morphooptistop_str,
         "-domain",
         f"cube({size_x},{size_y},{size_z}):translate({-size_x / 2},{-size_y / 2},{-size_z / 2})",
         "-reg",
@@ -1626,20 +1920,21 @@ def mesh_backend_neper_poly(
     ]
     subprocess.run(cmd_tess, check=True)
 
-    # Optional preview (kept as-is)
-    cmd_vis = [
-        "neper",
-        "-V",
-        f"n{n}-id{seed}.tess",
-        "-datacellcol",
-        "id",
-        "-print",
-        f"n{n}-id{seed}",
-    ]
-    subprocess.run(cmd_vis, check=True)
+    # Optional preview: Neper's -V export uses POV-Ray, which is not available
+    # on this setup, so keep the command here as documentation only.
+    # cmd_vis = [
+    #     "neper",
+    #     "-V",
+    #     f"n{n}-id{seed}.tess",
+    #     "-datacellcol",
+    #     "id",
+    #     "-print",
+    #     f"n{n}-id{seed}",
+    # ]
+    # subprocess.run(cmd_vis, check=True)
 
     # 2) Mesh tessellation
-    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-format", "vtk"]
+    cmd_mesh = ["neper", "-M", f"n{n}-id{seed}.tess", "-cl", f"{h}", "-order", "1", "-format", "vtk"]
     subprocess.run(cmd_mesh, check=True)
 
     # 3) Load VTK and propagate grain IDs
@@ -1720,7 +2015,7 @@ def mesh_backend_neper_poly(
     # 1) Generate tessellation
     cmd_tess = ["neper", "-T", "-n", str(n), "-id", str(seed), 
                 "-morpho", "gg",
-                "-morphooptistop", "val=1e-2",
+                "-morphooptistop", "val=1e-1",
                 "-domain",
                 f"cube({size_x},{size_y},{size_z}):translate({-size_x/2},"
                 f"{-size_y/2},{-size_z/2})",
@@ -1760,10 +2055,10 @@ def main() -> None:
         "--geom",
         type=str,
         default="box",
-        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly"],
+        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"],
         help="Select geometry type: box (parallelepiped), ellipsoid "
         "(symmetric about local z), eye (Bézier arc based), "
-        "elliptic_cylinder, or poly (Voronoi grains).",
+        "elliptic_cylinder, poly (Voronoi grains), or poly_gb (grains with GB phase).",
     )
     ap.add_argument(
         "--extent",
@@ -1831,6 +2126,124 @@ def main() -> None:
         default=1,
         help="(POLY only) Random seed for tessellation generation.",
     )
+    ap.add_argument(
+        "--gb-thickness",
+        type=float,
+        default=1.0,
+        help="(POLY_GB only) Thickness of the grain boundary phase.",
+    )
+    ap.add_argument(
+        "--gb-h",
+        type=float,
+        default=1.0,
+        help="(POLY_GB only) Target element size for the grain boundary phase.",
+    )
+
+    ap.add_argument(
+        "--neper-tol",
+        type=float,
+        default=None,
+        help="Stopping tolerance for Neper morpho optimization (-morphooptistop val=VAL).",
+    )
+    ap.add_argument(
+        "--neper-timeout",
+        type=float,
+        default=None,
+        help="Stopping time limit in seconds for Neper morpho optimization (-morphooptistop time=TIMEOUT).",
+    )
+
+    # Shell parameters
+    ap.add_argument(
+        "--add-shell",
+        action="store_true",
+        help="Add graded exterior tetrahedral layers (airbox) around the core mesh.",
+    )
+    ap.add_argument(
+        "--shell-type",
+        type=str,
+        default="hull",
+        choices=["triangles", "hull"],
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+    )
+    ap.add_argument(
+        "--layers",
+        type=int,
+        default=None,
+        help="Number of graded tetrahedral shell layers L (>= 1).",
+    )
+    ap.add_argument(
+        "--K",
+        type=float,
+        default=1.5,
+        help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
+    )
+    ap.add_argument(
+        "--KL",
+        type=float,
+        default=10.0,
+        help="Total outermost geometric scale relative to body (> 1).",
+    )
+    ap.add_argument(
+        "--auto-layers",
+        action="store_true",
+        help="Automatically compute the number of layers L given --KL and --K.",
+    )
+    ap.add_argument(
+        "--auto-K",
+        action="store_true",
+        help="Automatically compute the per-layer factor K given --KL and --layers.",
+    )
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Mesh-size/geometry coupling exponent (h_l = h0 * (scale**beta)^(l+1)).",
+    )
+    ap.add_argument(
+        "--same-scaling",
+        action="store_true",
+        help="Shortcut: enforce beta=1.0 and sets target hmax = h0 * K**L.",
+    )
+    ap.add_argument(
+        "--center",
+        type=str,
+        default="0,0,0",
+        help="Ray origin for homothetic expansion as 'cx,cy,cz' (mesh units).",
+    )
+    ap.add_argument(
+        "--h0",
+        type=float,
+        default=None,
+        help="Target edge length for first shell layer. Defaults to 1.5 * body_h.",
+    )
+    ap.add_argument(
+        "--hmax",
+        type=float,
+        default=None,
+        help="Target edge length at the outermost shell boundary (mesh units).",
+    )
+    ap.add_argument(
+        "--body-h",
+        type=float,
+        default=None,
+        help="Body mesh size override. If omitted, derived from surface edge length.",
+    )
+    ap.add_argument(
+        "--max-steiner",
+        type=int,
+        default=None,
+        help="Limit Steiner points added by TetGen (-S#) during shell generation.",
+    )
+    ap.add_argument(
+        "--no-exact",
+        action="store_true",
+        help="Suppress TetGen exact arithmetic (-X) during shell generation.",
+    )
+    ap.add_argument(
+        "--shell-verbose",
+        action="store_true",
+        help="Enable verbose TetGen output during shell generation.",
+    )
 
     # Output naming
     ap.add_argument(
@@ -1882,8 +2295,30 @@ def main() -> None:
             out_vis_name=args.out_vis_name,
             number_of_grains=args.n,
             seed=args.id,
+            gb_thickness=float(args.gb_thickness),
+            gb_h=float(args.gb_h),
             no_vis=bool(args.no_vis),
             verbose=bool(args.verbose),
+            # Shell parameters
+            add_shell=bool(args.add_shell),
+            shell_layers=args.layers,
+            shell_K=args.K,
+            shell_KL=args.KL,
+            shell_auto_layers=bool(args.auto_layers),
+            shell_auto_K=bool(args.auto_K),
+            shell_beta=float(args.beta),
+            shell_same_scaling=bool(args.same_scaling),
+            shell_center=args.center,
+            shell_h0=args.h0,
+            shell_hmax=args.hmax,
+            shell_body_h=args.body_h,
+            shell_max_steiner=args.max_steiner,
+            shell_no_exact=bool(args.no_exact),
+            shell_verbose=bool(args.shell_verbose),
+            shell_type=args.shell_type,
+            # Neper parameters
+            neper_tol=args.neper_tol,
+            neper_timeout=args.neper_timeout,
             # CLI uses default (return_arrays=True).
             # For memory-lean CLI, we could add a flag.
             return_arrays=True,

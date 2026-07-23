@@ -1,0 +1,270 @@
+\documentclass[10pt, a4paper, twocolumn]{article}
+\usepackage[margin=1in]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{cite}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{url}
+\usepackage{tabularx}
+\usepackage{booktabs}
+
+\title{Energy Minimization Methods in Finite Element Micromagnetics: A Comparative Study}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We present a new finite element based micromagnetic solver designed for efficient energy minimization. The problem of finding the equilibrium magnetization configuration in ferromagnetic materials is inherently a non-convex optimization problem due to the unit-length constraint on the magnetization vector. This paper compares various numerical algorithms for computing local minima of the total micromagnetic Gibbs free energy. We trace the historical development of energy minimization methods from early Ritz approaches to modern curvilinear search techniques.
+\end{abstract}
+
+\section{Introduction}
+
+\subsection{Motivation for Energy Minimization}
+The choice between direct energy minimization and time integration of the Landau-Lifshitz-Gilbert (LLG) equation depends fundamentally on the physical phenomena being investigated. Energy minimization is uniquely suited for specific application areas, offering distinct computational advantages, while simultaneously possessing inherent limitations when applied outside its intended scope.
+
+The primary advantage of direct energy minimization is its computational efficiency when determining stable equilibrium configurations, such as remanent states or quasi-static hysteresis loops. By directly seeking the local energy minima of the magnetic system for a given external field, minimization algorithms bypass the costly temporal integration steps required by the LLG equation. Time-domain solvers must resolve high-frequency precessional motions on the picosecond and nanosecond scale to maintain numerical stability. Because these transient dynamics are completely irrelevant when evaluating a purely quasi-static magnetic response, energy minimizers can converge to ground states significantly faster than highly damped LLG integration. Furthermore, direct minimization facilitates the use of advanced transition state frameworks. Techniques such as the string method or the Nudged Elastic Band (NEB) method rely heavily on gradient descent relaxations to calculate minimum energy paths and activation energy barriers for thermally activated transitions, such as nucleation or domain wall depinning. Standard deterministic LLG equations are purely dissipative and trace trajectories downhill in the energy landscape, making them mathematically unable to climb toward saddle points without being augmented by complex, computationally expensive stochastic thermal fluctuation terms.
+
+Conversely, the defining drawback of direct energy minimization is the complete absence of physical time evolution. Minimization algorithms are designed solely to eliminate magnetic torques and locate stationary points on the energy surface. Consequently, they cannot provide any information regarding magnetization dynamics, switching times, precessional frequencies, ferromagnetic resonance (FMR), or the propagation of spin waves. Studying such high-frequency dynamic phenomena fundamentally requires solving the LLG equation to accurately capture the precessional and damping terms. It is important to note that both direct energy minimization and standard deterministic LLG integration halt at local minima. At any local energy minimum, the effective field is collinear with the magnetization, resulting in zero magnetic torque ($\mathbf{m} \times \mathbf{H}_{\mathrm{eff}} = 0$). While stopping at local minima prevents these zero-temperature methods from finding the true global ground state without external thermal fluctuations, this behavior is actually fundamentally necessary to model realistic magnetic materials. As rigorously established in the seminal analytical work by Kinderlehrer and Ma \cite{kinderlehrer1997hysteretic}, the multiplicity of local minimizers within the non-convex micromagnetic energy functional is precisely the mathematical mechanism that gives rise to hysteresis. Rather than physically "jumping" over an energy barrier, the hysteretic event is governed by topological changes in the energy landscape itself, a process extensively characterized in the pioneering work of Schabes and Bertram \cite{Schabes1988}. As the external magnetic field is applied and varied, the position of the local minimum continuously shifts. At a critical field magnitude (the switching field or coercivity), the energy barrier vanishes completely as the local minimum merges with a saddle point. Following this saddle-node bifurcation, the original minimum is annihilated, and the system rapidly relaxes downhill into the new, remaining local minimum, a sequence of events that physically constitutes the hysteretic switching process.
+
+\subsection{Historical Context and Applications}
+The pursuit of stable magnetization states has a long history, with each development addressing specific challenges in optimization, constraint handling, and discretization. Early theoretical treatments relied on the Ritz method, as seen in the analytical approximations developed by W. F. Brown \cite{Brown1963} and A. Aharoni \cite{Aharoni1996}. Their main achievement was finding stable magnetization states in geometrically simple structures. They minimized the total energy with respect to free parameters of a postulated ansatz, which inherently handled the spherical constraint ($|\mathbf{m}|=1$) without requiring a numerical discretization scheme.
+
+The transition to fully numerical treatments was spearheaded by A. E. LaBonte \cite{LaBonte1969}, who performed two-dimensional calculations of Bloch-type domain walls. His main innovation was the direct application of iterative relaxation techniques to minimize local energy. LaBonte handled the spherical constraint through pointwise normalization after each local update, employing a two-dimensional finite difference grid for discretization.
+
+Building upon these early numerical approaches, E. Della Torre significantly advanced three-dimensional micromagnetics in the mid-1980s \cite{DellaTorre1985, DellaTorre1986}. His main achievement was developing numerical models to compute the magnetization and equilibrium states of fine particles through direct energy minimization. To address the severe convergence issues caused by stiff nodes in these iterative micromagnetic problems, he introduced the ``mode pushing'' technique \cite{TorfehIsfahani1983}. This optimization method cooperatively modified the magnetization by estimating and accelerating stiff convergent eigenfunctions. Della Torre handled the spherical constraint by applying pointwise normalization while relaxing the magnetization to minimize total energy across three-dimensional finite difference meshes.
+
+In the late 1980s, the finite element method (FEM) emerged to handle arbitrarily complex sample geometries. Pioneering contributions were made by D. R. Fredkin and T. R. Koehler \cite{Fredkin1990}, who introduced a hybrid finite element and boundary element method for the rigorous computation of the demagnetizing field to calculate equilibrium magnetization patterns. They utilized the Fletcher-Reeves conjugate gradient method for energy minimization and handled the spherical constraint through coordinate transformations or local projection on a finite element mesh. Concurrently, early FEM formulations by A. Bagn{\`e}res-Viallix et al. \cite{Viallix1988} were used to compute micromagnetic domain structures, while R. M. Del Vecchio \cite{DelVecchio1993} focused on macroscopic hysteresis modeling. Both approaches employed conjugate gradient minimization techniques, addressing the unit-length constraint via local angular variables or projection, discretized on finite element meshes.
+
+A major advancement in handling the pointwise norm constraint was established by S. D. Cohen, S. Y. Lin, and M. Luskin \cite{Cohen1989}. Their main achievement was developing a robust adapted conjugate gradient algorithm for molecular orientation and micromagnetics. They handled the spherical constraint by projecting the gradient onto the tangent plane of the unit sphere followed by pointwise renormalization, applying this optimization technique across finite element and finite difference discretizations. To identify the most efficient solver, D. V. Berkov, K. Ramst{\"o}ck, and A. Hubert \cite{Hubert1993} extensively compared various numerical schemes for 3D micromagnetic optimization problems. They evaluated standard conjugate gradients against Newton-type methods, managing the spherical constraint by exploring both angular parameterizations and Cartesian components with renormalization on finite difference grids. 
+
+The mathematical foundations of FEM techniques were later rigorously documented by P. Monk \cite{Monk2003}. In collaboration with O. Vacus and J. Sun, their main achievement was providing rigorous error estimates, accurate discretization schemes, and adaptive algebraic multigrid algorithms \cite{Monk1999, Monk2001, Sun2006}. These solvers were used to efficiently tackle the large linear systems arising from the nonlinear ferromagnetic equations, employing multigrid-accelerated iterative methods and weak formulations to address the spherical constraints within a finite element framework.
+
+On the analytical side, F. Otto and collaborators \cite{DeSimone2002, Otto2006} profoundly influenced numerical approaches by deriving a reduced theory for thin-film micromagnetics. They analyzed domain branching and scaling laws by minimizing simplified two-dimensional variational problems. Within this continuum analytical framework, the spherical constraint was treated analytically, directly motivating the subsequent development of specialized finite element schemes employing Raviart-Thomas discretizations and interior point optimization methods.
+
+Recently, optimization strategies have become highly specialized. D. Goldfarb, Z. Wen, and W. Yin \cite{Wen2009} introduced a curvilinear search method to accelerate the convergence of general energy minimization over spheres. Their numerical line search optimization intrinsically preserved the manifold structure of the sphere constraint without post-step renormalization, applicable across general algebraic discretizations. Focusing on extreme computational efficiency, L. Exl et al. \cite{Exl2014} demonstrated the immense value of preconditioned nonlinear conjugate gradient (NLCG) methods for large-scale micromagnetic energy minimizations. They utilized sparse approximations of the Hessian to cluster the eigenspectrum, handling the spherical constraint via orthogonal projections onto the tangent space within a finite element discretization.
+
+Today, energy minimization is a standard operating mode in several widely used open-source micromagnetic solvers. The Object Oriented MicroMagnetic Framework (OOMMF) \cite{Donahue1999} utilizes a finite difference scheme and implements a dedicated \texttt{Oxs\_CGEvolve} minimization module. This module uses the conjugate gradient method (specifically employing either the Fletcher-Reeves or Polak-Ribi{\`e}re algorithms) combined with a custom line search mechanism that brackets the minimum energy along the search direction. OOMMF rigorously handles the unit-length constraint by geometrically projecting the conjugate search directions orthogonal to the local magnetization vector. The parallel finite element package Magpar \cite{Scholz2003} computes hysteresis curves and ground-state configurations in magnetic nanostructures by directly interfacing with the Toolkit for Advanced Optimization (TAO) library. Specifically, it employs TAO's limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm or nonlinear conjugate gradient routines, handling the constraint through periodic pointwise vector normalization after discrete optimization steps. FastMag \cite{Chang2011} achieves massive acceleration by executing preconditioned conjugate gradient and quasi-Newton solvers entirely on GPU architectures to explore energy landscapes and quasi-static magnetization reversal, addressing the spherical constraint by strictly projecting gradients onto the tangent plane at each finite element mesh node. Finally, the GPU-accelerated finite difference solver MuMax3 \cite{Vansteenkiste2014} efficiently finds local energy ground states for complex topological structures using the \texttt{minimize()} command. This command implements a steepest conjugate gradient method with an adaptive step size, intrinsically enforcing the unit-length constraint by evaluating cross-product formulations of the effective field without performing a full time-dependent integration.
+
+Furthermore, the ecosystem of open-source micromagnetic solvers has expanded to include several other highly specialized packages. The Python-based finite-element package Nmag \cite{Fischbacher2007} historically computed equilibrium states of arbitrarily shaped nanostructures. However, rather than utilizing dedicated direct optimization algorithms, it primarily managed constraints and located minima via highly damped time integration of the Landau-Lifshitz-Gilbert (LLG) equation using the SUNDIALS CVODE solver. The finite-element solver magnum.fe \cite{Abert2013}, built on the FEniCS library, utilizes a semi-implicit weak formulation. For direct energy minimization to locate stable equilibrium states, it explicitly employs the limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm. Additionally, it implements advanced string methods—relying on steepest descent relaxation—to rigorously compute minimum energy paths and energy barriers for nucleation and spin-torque effects. Its modern counterpart, the finite-difference solver magnum.np \cite{Bruckner2023}, is built entirely on the PyTorch machine learning framework. It utilizes a steepest descent method accelerated by the Barzilai-Borwein step-size selection rule to perform highly parallel GPU energy minimization, leveraging PyTorch's automatic differentiation capabilities to naturally extend these optimizations to inverse design problems while maintaining the spherical constraint via nodal renormalization. Fidimag \cite{Bisotti2018}, a finite difference package for atomistic and micromagnetic simulations, relies on explicit steepest descent methods combined with the Barzilai-Borwein step-size selection rule for highly efficient static energy minimization, explicitly preserving the spin magnitude constraint during step updates to investigate topological spin textures like skyrmions. The multifunctional atomistic spin simulation framework Spirit \cite{Muller2019} employs a robust two-stage approach for direct energy minimization: it utilizes the Velocity Projection (VP) method for stability when far from equilibrium, and seamlessly transitions to the quasi-Newton L-BFGS algorithm for rapid convergence near local minima or transition states, preserving the constant spin vector length on an atomistic lattice. Finally, Boris Computational Spintronics \cite{Lepadatu2020} provides a GPU-accelerated multi-physics, multi-mesh environment that implements steepest descent energy minimization routines directly inspired by LaBonte’s method. It iteratively aligns spins with the local effective field to accurately compute static magnetic states in complex multi-layered devices, applying pointwise normalization at each grid node.
+
+\section{The Micromagnetic Optimization Problem}
+
+\subsection{Problem Formulation}
+Micromagnetics, as formalized by W. F. Brown Jr. \cite{Brown1963}, describes the magnetization states of ferromagnetic materials using a continuum approach. The fundamental assumption is that the magnetization vector $\mathbf{M}(\mathbf{r})$ can be represented as $\mathbf{M}(\mathbf{r}) = M_\mathrm{s}(\mathbf{r}) \mathbf{m}(\mathbf{r})$, where $M_\mathrm{s}(\mathbf{r})$ is the spatially varying saturation magnetization and $\mathbf{m}(\mathbf{r})$ is the unit magnetization vector field subject to the local constraint $|\mathbf{m}| = 1$ at all spatial coordinates $\mathbf{r}$.
+
+To find a stable magnetic configuration, one must find a local minimum of the total micromagnetic Gibbs free energy, $E_{\mathrm{tot}}$, which is a functional of $\mathbf{m}$ given by:
+\begin{equation}
+    E_{\mathrm{tot}}[\mathbf{m}] = E_{\mathrm{ex}}[\mathbf{m}] + E_{\mathrm{ani}}[\mathbf{m}] + E_{\mathrm{demag}}[\mathbf{m}] + E_{\mathrm{Z}}[\mathbf{m}].
+\end{equation}
+Here, $E_{\mathrm{ex}}$ denotes the exchange energy penalizing spatial variations of $\mathbf{m}$, $E_{\mathrm{ani}}$ is the magnetocrystalline anisotropy energy preferring specific crystallographic directions, $E_{\mathrm{demag}}$ is the magnetostatic (or demagnetizing) energy resulting from the self-interaction of the magnetic stray field, and $E_{\mathrm{Z}}$ is the Zeeman energy describing the interaction with an external applied magnetic field.
+
+These energy contributions can be explicitly written as volume integrals over the magnetic body $\Omega$. To accurately model realistic, heterogeneous magnetic materials such as granular structures or multi-phase magnets, the intrinsic material properties and the crystallographic orientation are rigorously treated as continuous functions of the spatial coordinate $\mathbf{r}$. The individual energy terms are formulated as follows:
+\begin{align}
+    E_{\mathrm{ex}}[\mathbf{m}] &= \int_{\Omega} A(\mathbf{r}) \left| \nabla \mathbf{m}(\mathbf{r}) \right|^2 \, \mathrm{d}^3 r, \\
+    E_{\mathrm{ani}}[\mathbf{m}] &= \int_{\Omega} K_1(\mathbf{r}) \left( 1 - \left( \mathbf{m}(\mathbf{r}) \cdot \mathbf{e}_{\mathrm{ani}}(\mathbf{r}) \right)^2 \right) \, \mathrm{d}^3 r, \\
+    E_{\mathrm{demag}}[\mathbf{m}] &= -\frac{\mu_0}{2} \int_{\Omega} M_\mathrm{s}(\mathbf{r}) \mathbf{m}(\mathbf{r}) \cdot \mathbf{H}_{\mathrm{demag}}(\mathbf{r}) \, \mathrm{d}^3 r, \\
+    E_{\mathrm{Z}}[\mathbf{m}] &= -\mu_0 \int_{\Omega} M_\mathrm{s}(\mathbf{r}) \mathbf{m}(\mathbf{r}) \cdot \mathbf{H}_{\mathrm{ext}} \, \mathrm{d}^3 r.
+\end{align}
+In these equations, $A(\mathbf{r})$ is the spatially varying exchange stiffness constant, $K_1(\mathbf{r})$ is the spatially varying uniaxial magnetocrystalline anisotropy constant, and $\mathbf{e}_{\mathrm{ani}}(\mathbf{r})$ is the unit vector defining the local easy axis of magnetization. The vacuum permeability is denoted by $\mu_0$. Furthermore, $\mathbf{H}_{\mathrm{demag}}(\mathbf{r})$ is the local demagnetizing field generated by the magnetization distribution itself, and $\mathbf{H}_{\mathrm{ext}}$ is the uniform externally applied magnetic field.
+
+Minimizing the total micromagnetic Gibbs free energy is an inherently non-convex optimization problem due to the pointwise magnitude constraint $|\mathbf{m}(\mathbf{r})| = 1$. The physical solution space is a manifold defined by the Cartesian product of unit spheres, $\mathbb{S}^2$, across all discrete nodes in the magnetic body.
+
+\subsection{The Spherical Constraint and the Cayley Transform}
+A fundamental challenge in developing numerical micromagnetic solvers is ensuring that iterative update steps strictly preserve this non-Euclidean manifold structure. Simple additive gradient updates of the form $\mathbf{m}_{k+1} = \mathbf{m}_k - \tau \mathbf{g}_k$ naturally violate the unit-length constraint. While pointwise geometric renormalization ($\mathbf{m}_{k+1} \leftarrow \mathbf{m}_{k+1}/|\mathbf{m}_{k+1}|$) is commonly employed to correct this drift, it alters the search direction and severely degrades the convergence properties of higher-order methods like conjugate gradient or quasi-Newton algorithms.
+
+To strictly preserve the spherical constraint while preserving the exact theoretical accuracy of the optimization step, our framework utilizes the Cayley transform to map tangent vectors into mathematically exact three-dimensional rotations, adapting the curvilinear search method for spherical constraints pioneered by Goldfarb, Wen, and Yin \cite{Wen2009}. Given the current magnetization state $\mathbf{m}_k$, a search direction vector $\mathbf{d}_k$ lying in the local tangent space (i.e., $\mathbf{m}_k \cdot \mathbf{d}_k = 0$), and a step size $\tau$, we define the generalized rotation vector $\mathbf{k} = \frac{1}{2}\tau (\mathbf{m}_k \times \mathbf{d}_k)$. Geometrically, the rotation vector $\mathbf{k}$ defines both the axis and the magnitude of a 3D rotation. By constructing $\mathbf{k}$ as the cross product of $\mathbf{m}_k$ and $\mathbf{d}_k$, the rotation axis is strictly orthogonal to both the current magnetization and the search direction. The new magnetization state is updated using the Cayley transform formulation:
+\begin{equation}
+    \mathbf{m}_{k+1} = \frac{(1 - |\mathbf{k}|^2)\mathbf{m}_k + 2(\mathbf{k} \times \mathbf{m}_k) + 2(\mathbf{k} \cdot \mathbf{m}_k)\mathbf{k}}{1 + |\mathbf{k}|^2}.
+\end{equation}
+Because this operation is mathematically equivalent to the application of a skew-symmetric rotation matrix $(I - K)^{-1}(I + K)$ acting on $\mathbf{m}_k$, where $K \mathbf{x} = \mathbf{k} \times \mathbf{x}$, it intrinsically guarantees $|\mathbf{m}_{k+1}| = |\mathbf{m}_k| = 1$. When this transformation is applied, it pivots $\mathbf{m}_k$ smoothly towards $\mathbf{d}_k$ along a great circle on the unit sphere, safely bypassing the numerical and mathematical pitfalls of primary geometric renormalization. 
+
+This specific choice of the rotation vector $\mathbf{k}$ is exactly what is needed to step in the direction of $\mathbf{d}_k$. By using the vector triple product property $(\mathbf{A} \times \mathbf{B}) \times \mathbf{C} = (\mathbf{A} \cdot \mathbf{C})\mathbf{B} - (\mathbf{B} \cdot \mathbf{C})\mathbf{A}$, the leading linear term in the Cayley update reduces to $2(\mathbf{k} \times \mathbf{m}_k) = \tau ((\mathbf{m}_k \times \mathbf{d}_k) \times \mathbf{m}_k) = \tau \mathbf{d}_k$. Therefore, for small step sizes, the update behaves as $\mathbf{m}_{k+1} \approx \mathbf{m}_k + \tau \mathbf{d}_k$, accurately descending along the tangent space search direction while the higher-order terms strictly constrain the trajectory to the sphere. Note that while the analytical Cayley transform strictly preserves the unit norm, our numerical implementation applies a final pointwise normalization strictly to mitigate floating-point accumulation drift over millions of iterations.
+
+\subsection{Hysteresis Loop Calculation and Stopping Criteria}
+
+A common application in micromagnetics is the computation of a hysteresis loop, where the external magnetic field $\mathbf{H}_{\mathrm{ext}}$ is varied sequentially in discrete steps. At each external field value, the system must relax to its local minimum energy state to determine the stable equilibrium magnetization configuration. Because the external field is advanced solely based on the assumption that the system has successfully settled into a stable state at the current field, it is essential to rigorously verify that a true local minimum has been reached before terminating the optimization sequence and stepping the field. Premature termination can lead to physically erroneous states and artificially distorted coercivities.
+
+Defining a robust stopping criterion for optimization on a sphere is crucial. For general non-linearly constrained optimization problems, Gill, Murray, and Wright \cite{GillMurray1981} demonstrated that a valid stopping criterion requires the projection of the gradient onto the local tangent space to approach zero. Applying this principle to micromagnetics, standard Euclidean gradient norms are inadequate because the unconstrained gradient vector $\mathbf{g} = -\mathbf{H}_{\mathrm{eff}}$ contains radial components that act perpendicularly to the spherical constraint manifold. Physically, a stationary equilibrium state is reached when the magnetic torque vanishes entirely ($\mathbf{m} \times \mathbf{H}_{\mathrm{eff}} = 0$). Mathematically, this is strictly equivalent to the general requirement: demanding that the gradient projected onto the local tangent plane, defined as $\mathbf{g}_p = \mathbf{g} - (\mathbf{g} \cdot \mathbf{m})\mathbf{m}$, goes to zero.
+
+However, relying solely on a single tolerance for the projected gradient is often inadequate in practice. Termination criteria are vitally important to ensure that an adequate approximation to the true mathematical solution has been found, while minimizing the risk of a false declaration of convergence and avoiding unwarranted iterations that yield no meaningful improvement. It is generally much more robust to assess convergence by simultaneously monitoring the energy change, the magnetization change, and the gradient value. This combination ensures that the algorithm terminates only when the iterative sequence has stopped making significant progress and that the lack of progress is legitimately due to approaching a local minimum, rather than stalling at a non-optimal plateau. Following the unified convergence criteria recommended by Gill, Murray, and Wright \cite{GillMurray1981} for unconstrained optimization (adapted here for the spherical manifold), our implemented solvers declare successful convergence when the following three conditions are met simultaneously:
+\begin{align}
+    E_{k} - E_{k+1} &< \tau_F (1 + |E_{k+1}|), \label{eq:u1} \\
+    || \mathbf{m}_{k+1} - \mathbf{m}_{k} ||_\infty &< 2\sqrt{\tau_F}, \label{eq:u2} \\
+    || \mathbf{g}_p ||_\infty &\le \sqrt[3]{\tau_F} (1 + |E_{k+1}|). \label{eq:u3}
+\end{align}
+Here, $E_{k+1}$ is the total energy at the current iteration, $E_k$ is the total energy at the previous iteration, and the user-specified tolerance $\tau_F$ represents the desired relative precision (i.e., the number of correct significant figures) expected in the final objective function value. Condition \eqref{eq:u1} measures the fractional decrease in the energy, while \eqref{eq:u2} measures the change in the magnetization configuration. In \eqref{eq:u2}, the usual scaling term $(1 + ||\mathbf{m}_{k+1}||_\infty)$ has been replaced by $2$, as the theoretical upper bound for the infinity norm of any unit vector is $1$. Together, these two conditions ensure that the iterative sequence has converged. Condition \eqref{eq:u3} then acts as a safety check to verify that the gradient is sufficiently small, confirming that the current point is indeed a stationary minimum.
+
+In some cases, such as when the starting point is already in a very close neighbourhood of the exact solution, or if an iterate lands squarely on the solution by chance, the algorithm may be unable to make any further measurable progress. Under these circumstances, the relative convergence conditions \eqref{eq:u1}--\eqref{eq:u3} become difficult or impossible to fulfill, which could prevent the algorithm from terminating successfully. To safeguard against this, an alternative stopping criterion is included:
+\begin{equation}
+    || \mathbf{g}_p ||_\infty < \epsilon_A. \label{eq:u4}
+\end{equation}
+This condition terminates the solver if the maximum projected gradient drops below $\epsilon_A$, which represents the absolute precision (or noise level) of the computed gradient. As defined by Gill, Murray, and Wright \cite[Section 2.1.6]{GillMurray1981}, the absolute precision is a positive scalar that provides an upper bound on the absolute error incurred during the floating-point computation of the function. In summary, the algorithm terminates successfully if either the triad of relative conditions \eqref{eq:u1}--\eqref{eq:u3} holds, or if the absolute condition \eqref{eq:u4} is met.
+
+\subsection{The Need for Preconditioning}
+Minimizing the micromagnetic free energy is notoriously difficult due to the presence of vastly different energy scales, a problem that becomes increasingly severe as the computational mesh is refined. The total energy is dominated by a competition between the short-range quantum mechanical exchange interaction and the long-range classical magnetostatic (demagnetizing) field. In a discretized finite element or finite difference framework, the exchange energy operator behaves like a discrete Laplacian. Consequently, the maximum eigenvalue of the system's local Hessian matrix scales inversely with the square of the mesh spacing ($\lambda_{\max} \propto 1/\Delta x^2$), representing highly stiff, high-frequency rotational modes. Conversely, the eigenvalues associated with the magnetostatic and anisotropy energies are largely independent of the mesh size, representing soft, low-frequency macroscopic rotational modes. 
+
+This extreme disparity in eigenvalues results in a massively ill-conditioned optimization problem. As clearly detailed in J. R. Shewchuk's ``An Introduction to the Conjugate Gradient Method Without the Agonizing Pain'' \cite{Shewchuk1994}, the convergence rate of iterative solvers like the conjugate gradient method is fundamentally governed by the condition number $\kappa = \lambda_{\max}/\lambda_{\min}$ of the system matrix. Geometrically, an ill-conditioned energy landscape with a high condition number resembles a long, steep, and narrow valley. Standard optimization algorithms, unaware of the extreme scaling differences, will agonizingly zig-zag across the steep walls of the exchange energy rather than traversing down the shallow valley floor toward the true equilibrium state.
+
+To overcome this, preconditioning is absolutely essential. A preconditioner applies a linear transformation that effectively rescales and warps the energy landscape, clustering the eigenspectrum so that the condition number approaches unity. In this transformed space, the energy contours become roughly spherical, allowing the optimization algorithm to step directly toward the minimum with significantly fewer iterations. 
+
+The micromagnetics community has long recognized the critical need for preconditioning to resolve these stiff systems. Early on, E. Della Torre introduced the ``mode pushing'' technique \cite{TorfehIsfahani1983}, which functioned as a physical preconditioner by estimating and explicitly accelerating the slowly converging eigenmodes. More recently, L. Exl et al. \cite{Exl2014} demonstrated the immense value of mathematically rigorous preconditioning in large-scale finite element micromagnetics. They utilized sparse approximations of the discrete exchange Hessian to precondition the nonlinear conjugate gradient (NLCG) method, effectively neutralizing the mesh-dependent stiffness and drastically reducing the required number of iterations. Similar preconditioning strategies have since been deployed to accelerate quasi-Newton and gradient descent methods in modern GPU-accelerated frameworks \cite{Chang2011}.
+
+\section{Minimization Algorithms}
+In this paper, we propose a new finite element based micromagnetic solver that incorporates and compares several advanced optimization algorithms. Our framework provides a comprehensive suite of minimizers that efficiently explore the total micromagnetic energy landscape while strictly respecting the spherical constraint. 
+
+Before discussing the specific methods, it is highly instructive to outline the generic mathematical blueprint that underpins all iterative minimizers evaluated in this study. Whether employing conjugate gradients, quasi-Newton methods, or accelerated descent schemes, every solver adheres to the overarching execution sequence detailed in Algorithm \ref{alg:generic_minimizer}. 
+
+\begin{algorithm}[H]
+\caption{Generic Preconditioned Iterative Minimization in Micromagnetics}
+\label{alg:generic_minimizer}
+\begin{algorithmic}[1]
+\REQUIRE Initial state $\mathbf{m}_0$, external field $\mathbf{B}_{\mathrm{ext}}$, tolerances
+\FOR{$k = 0, 1, 2, \dots$}
+    \STATE Evaluate total energy $E_k$ and energy gradient $\mathbf{g}_k(\mathbf{m}_k)$ 
+    \IF{Convergence criteria met}
+        \STATE \textbf{break}
+    \ENDIF
+    \STATE Project gradient onto tangent space: $\tilde{\mathbf{g}}_k = \mathbf{g}_k - (\mathbf{m}_k \cdot \mathbf{g}_k)\mathbf{m}_k$
+    \STATE Apply preconditioner $M^{-1}$ to accelerate convergence: $\mathbf{y}_k = M^{-1} \tilde{\mathbf{g}}_k$
+    \STATE Compute search direction $\mathbf{d}_k$ using $\mathbf{y}_k$ and historical step data
+    \STATE Project search direction onto tangent space: $\tilde{\mathbf{d}}_k = \mathbf{d}_k - (\mathbf{m}_k \cdot \mathbf{d}_k)\mathbf{m}_k$
+    \STATE Perform curvilinear line search to determine optimal step length $\alpha_k$
+    \STATE Update magnetization state via Cayley transform: $\mathbf{m}_{k+1} = \mathrm{Cayley}(\mathbf{m}_k, \alpha_k \tilde{\mathbf{d}}_k)$
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+As illustrated in this overarching blueprint, the minimization process relies on a core sequence of fundamental operations: evaluating the effective field gradient, geometrically projecting vectors onto the tangent space, calculating preconditioned descent directions to mitigate numerical stiffness, determining the optimal step size, and applying the Cayley transformation to rigorously preserve the spherical constraint. 
+
+Before introducing the complementary Trust-Region blueprint or discussing the specific solver families, it is essential to theoretically detail the computationally dominant building blocks shared across these methods.
+
+\subsection{Algorithmic Building Blocks}
+
+\subsubsection{Gradient Evaluation via Poisson Solvers}
+The most computationally demanding operation within any iterative micromagnetic minimizer is the evaluation of the total energy gradient $\mathbf{g}_k(\mathbf{m}_k)$. Physically, this gradient corresponds to the negative effective magnetic field ($-\mathbf{H}_{\mathrm{eff}}$). While the localized exchange and crystalline anisotropy interactions can be computed via rapid sparse matrix-vector multiplications, the non-local magnetostatic dipole interaction strictly requires the continuous evaluation of the demagnetizing field. Within a finite element framework, this mathematically mandates solving a large-scale scalar Poisson problem at every single iteration. Consequently, the overall efficiency of the minimization framework is overwhelmingly dictated by the performance of the underlying Poisson solver.
+
+\subsubsection{Solving the Preconditioning System}
+To rapidly converge, modern minimizers must scale the projected gradient by applying an approximate inverse Hessian operator, $M^{-1}$. This preconditioning step ($M \mathbf{y}_k = \tilde{\mathbf{g}}_k$) specifically targets the extreme numerical stiffness introduced by the short-range exchange interactions. In our framework, the preconditioning matrix $M$ is constructed exclusively from the localized, sparse terms of the magnetic Hessian—namely, the exchange and anisotropy contributions—while deliberately omitting the dense, non-local demagnetizing tensor. Solving this sparse linear system at each iteration effectively clusters the stiff eigenspectrum of the exchange operator, transforming a highly ill-conditioned minimization landscape into a mathematically tractable problem.
+
+\subsubsection{Curvilinear Line Search on the Sphere Manifold}
+For line-search-based minimizers (Algorithm \ref{alg:generic_minimizer}), simply selecting a descent direction is insufficient; the solver must rigorously determine an optimal step size $\alpha_k$. Because the magnetization must strictly remain on the unit sphere manifold, standard Euclidean line searches are mathematically invalid. Instead, the solver performs a curvilinear Armijo line search parameterized entirely by the Cayley transform. The algorithm systematically evaluates trial steps of the form $\mathbf{m}(\alpha) = \mathrm{Cayley}(\mathbf{m}_k, \alpha \tilde{\mathbf{d}}_k)$ and verifies the sufficient decrease condition, $E(\mathbf{m}(\alpha)) \le E_k + c_1 \alpha \nabla E_k^T \tilde{\mathbf{d}}_k$. This explicitly ensures monotonic energy reduction while inherently preserving the topological integrity of the magnetic state.
+
+While line search methods represent the majority of our evaluated solvers, an entirely distinct mathematical paradigm is employed by the Trust-Region minimizers. Rather than selecting a search direction and subsequently computing a scalar step length, Trust-Region methods restrict the maximum allowable step size to a strictly enforced radius $\Delta_k$, and solve a constrained quadratic subproblem to find the optimal step within that boundary. The fundamental execution sequence of this secondary class of minimizers is outlined in Algorithm \ref{alg:generic_trust_region}.
+
+\begin{algorithm}[H]
+\caption{Generic Preconditioned Trust-Region Minimization}
+\label{alg:generic_trust_region}
+\begin{algorithmic}[1]
+\REQUIRE Initial state $\mathbf{m}_0$, external field $\mathbf{B}_{\mathrm{ext}}$, initial radius $\Delta_0$, tolerances
+\FOR{$k = 0, 1, 2, \dots$}
+    \STATE Evaluate energy $E_k$ and gradient $\mathbf{g}_k(\mathbf{m}_k)$ 
+    \IF{Convergence criteria met}
+        \STATE \textbf{break}
+    \ENDIF
+    \STATE Project gradient onto tangent space: $\tilde{\mathbf{g}}_k = \mathbf{g}_k - (\mathbf{m}_k \cdot \mathbf{g}_k)\mathbf{m}_k$
+    \STATE Form local quadratic model $m_k(\mathbf{d})$ using the exact or approximate Hessian $\nabla^2 E_k$
+    \STATE Approximately solve the constrained subproblem: 
+           $\min_{\mathbf{d}} m_k(\mathbf{d}) \quad \text{subject to} \quad \|\mathbf{d}\|_{M} \le \Delta_k, \quad \mathbf{m}_k \cdot \mathbf{d} = 0$
+           (e.g., via the Steihaug-Toint preconditioned conjugate gradient method) to obtain step $\mathbf{d}_k$
+    \STATE Evaluate actual energy reduction: $\Delta E = E_k - E(\mathrm{Cayley}(\mathbf{m}_k, \mathbf{d}_k))$
+    \STATE Evaluate predicted model reduction: $\Delta m = m_k(\mathbf{0}) - m_k(\mathbf{d}_k)$
+    \STATE Compute fidelity ratio: $\rho_k = \frac{\Delta E}{\Delta m}$
+    \IF{$\rho_k > \eta$ (successful step)}
+        \STATE Accept step via Cayley transform: $\mathbf{m}_{k+1} = \mathrm{Cayley}(\mathbf{m}_k, \mathbf{d}_k)$
+        \STATE Increase or maintain trust-region radius $\Delta_{k+1}$ based on $\rho_k$
+    \ELSE
+        \STATE Reject step: $\mathbf{m}_{k+1} = \mathbf{m}_k$
+        \STATE Shrink trust-region radius: $\Delta_{k+1} = \gamma \Delta_k$
+    \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+These two foundational blueprints (Algorithm \ref{alg:generic_minimizer} and Algorithm \ref{alg:generic_trust_region}) form the rigorous basis of the specific solvers implemented in our framework. To evaluate their relative performance, the solvers are categorized into five major mathematical families.
+
+\subsection{Conjugate Gradient Methods}
+This class of algorithms utilizes search directions that are conjugate to previous steps with respect to the local energy curvature. Our implementation includes the standard adapted conjugate gradient method for spherical constraints pioneered by Cohen, Lin, and Luskin \cite{Cohen1989}, as well as heavily preconditioned variants (PCG) designed to cluster the stiff exchange eigenspectrum and accelerate convergence in complex microstructures.
+
+The preconditioned Cohen method utilizing the Hestenes-Stiefel (HS) update rule is presented in Algorithm \ref{alg:pcohen_hs}. This algorithm forms the baseline of our benchmarking efforts.
+
+\begin{algorithm}[H]
+\caption{Preconditioned Cohen Conjugate Gradient Method (HS Update)}
+\label{alg:pcohen_hs}
+\begin{algorithmic}[1]
+\REQUIRE Initial state $\mathbf{m}_0$, external field $\mathbf{B}_{\mathrm{ext}}$, tolerances
+\STATE $U_0 \gets \text{PoissonSolve}(\nabla \cdot \mathbf{m}_0)$ \COMMENT{Demag potential}
+\STATE $E_0, \mathbf{g}_0 \gets \text{EnergyAndGradient}(\mathbf{m}_0, U_0, \mathbf{B}_{\mathrm{ext}})$
+\STATE $\tilde{\mathbf{g}}_0 \gets \mathbf{g}_0 - (\mathbf{m}_0 \cdot \mathbf{g}_0)\mathbf{m}_0$ \COMMENT{Project gradient}
+\STATE $\mathbf{y}_0 \gets \text{PreconditionerSolve}(\mathbf{m}_0, \tilde{\mathbf{g}}_0)$ \COMMENT{Local Hessian solve}
+\STATE $\mathbf{d}_0 \gets -\mathbf{y}_0$
+\FOR{$k = 0, 1, 2, \dots$}
+    \STATE $\alpha_k, \mathbf{m}_{k+1}, U_{k+1}, \mathbf{g}_{k+1} \gets \text{LineSearch}(\mathbf{m}_k, \mathbf{d}_k, E_k, U_k, \mathbf{g}_k)$
+    \IF{Convergence Criteria Met}
+        \STATE \textbf{break}
+    \ENDIF
+    \STATE $\tilde{\mathbf{g}}_{k+1} \gets \mathbf{g}_{k+1} - (\mathbf{m}_{k+1} \cdot \mathbf{g}_{k+1})\mathbf{m}_{k+1}$ \COMMENT{Project gradient}
+    \STATE $\mathbf{y}_{k+1} \gets \text{PreconditionerSolve}(\mathbf{m}_{k+1}, \tilde{\mathbf{g}}_{k+1})$ \COMMENT{Local Hessian solve}
+    \STATE $\Delta\tilde{\mathbf{g}} \gets \tilde{\mathbf{g}}_{k+1} - \tilde{\mathbf{g}}_k$
+    \STATE $\beta_{k+1}^{\text{HS}} \gets \frac{\mathbf{y}_{k+1} \cdot \Delta\tilde{\mathbf{g}}}{\mathbf{d}_k \cdot \Delta\tilde{\mathbf{g}}}$ \COMMENT{Hestenes-Stiefel}
+    \STATE $\tilde{\mathbf{d}}_k \gets \mathbf{d}_k - (\mathbf{m}_{k+1} \cdot \mathbf{d}_k)\mathbf{m}_{k+1}$ \COMMENT{Project old direction}
+    \STATE $\mathbf{d}_{k+1} \gets -\mathbf{y}_{k+1} + \max(0, \beta_{k+1}^{\text{HS}}) \tilde{\mathbf{d}}_k$
+    \IF{$\mathbf{d}_{k+1} \cdot \tilde{\mathbf{g}}_{k+1} > 0$}
+        \STATE $\mathbf{d}_{k+1} \gets -\mathbf{y}_{k+1}$ \COMMENT{Ensure descent}
+    \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Accelerated Gradient Methods}
+To overcome the traditionally slow convergence of pure gradient descent, accelerated gradient schemes incorporate historical momentum to propel the system rapidly toward the minimum. We have implemented preconditioned Nesterov Accelerated Gradient (NAG) methods, alongside exact and standard variants of the Accelerated Alternating Projected Gradient (AAPG) method, adapting these powerful convex optimization techniques for the non-convex micromagnetic manifold.
+
+\subsection{Curvilinear Search Methods}
+Unlike methods that step linearly along tangent planes and rely on post-update renormalizations, curvilinear search algorithms evaluate the objective function directly along curves tracing the spherical manifold. We implement the Wen-Goldfarb curvilinear line search \cite{Wen2009}, which intrinsically preserves the norm constraint at every trial point during the line search phase without suffering from tangent-space distortion.
+
+\subsection{Quasi-Newton Methods}
+Quasi-Newton methods build an approximation of the inverse Hessian matrix using historical gradient information to achieve superlinear convergence. We employ the Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm, carefully adapted for spherical manifolds. To further handle the specific stiffness of the micromagnetic exchange interaction, we implement preconditioned (PL-BFGS) and doubly preconditioned variants, as well as a hybrid approach combining the robustness of Cohen's method with L-BFGS acceleration.
+
+\subsection{Newton-Type and Trust Region Methods}
+For problems requiring rigorous evaluation of the local curvature, we implement both Truncated Newton and Trust Region methods. The standard trust region solver constructs its constrained local model using an approximated sparse Hessian—incorporating only near-field and local interactions such as the exchange and crystalline anisotropy energies. Conversely, our advanced preconditioned trust region method utilizes the exact, full dense Hessian (including the long-range magnetostatic interactions) to build the trust region model, while employing the sparse local near-field Hessian strictly as a preconditioner to solve the internal subproblem efficiently.
+\section{Software Implementation}
+
+\subsection{JAX-Based Framework}
+Our implementation utilizes the JAX library to construct a fully differentiable, matrix-free solver. This allows us to leverage constructs such as Just-In-Time (JIT) compilation, automatic differentiation, and robust hardware acceleration on GPUs for extreme performance.
+
+\section{Results and Validation}
+
+\subsection{Validation against Existing Solvers}
+% Validation against C++ solver Exl et al. will be presented here.
+
+\subsection{Comparison of Optimization Algorithms}
+% Results from test_matrixfree2 comparing the different algorithms will be presented here.
+
+\subsection{Hardware Acceleration and Memory Bandwidth Analysis}
+
+Sparse iterative solvers, such as the preconditioned conjugate gradient method utilized in micromagnetic energy minimization, are governed by a complex interplay of hardware limitations. Several authors in the micromagnetics community have previously demonstrated that modern simulation frameworks are heavily memory-bound, noting that the absolute simulation timing often scales directly with the memory bandwidth of the underlying hardware \cite{Vansteenkiste2014, Lepadatu2020, Bruckner2023}. To quantify the limits of computational acceleration when migrating from multi-core central processing units (CPUs) to modern graphics processing units (GPUs), we evaluate our solvers on a highly realistic geometry. 
+
+The test case is a polycrystalline magnet comprising 30 grains of the hard magnetic $\mathrm{Nd_2Fe_{14}B}$ phase separated by a $\mathrm{Nd_{0.5}Fe_{0.5}}$ grain boundary phase. Including the surrounding airbox, this computational mesh contains $N = 1,347,781$ nodes and $8,082,858$ tetrahedral elements. This mesh serves as an representation of typical production workloads in modern computational micromagnetics.
+
+To ensure a fair comparison, we explicitly compare the optimal implementation and algorithm for the CPU against the optimal setup for the GPU. For the multi-core CPU, we utilize a compiled C++ backend combined with Intel MKL \cite{IntelMKL} for BLAS Level 1 and Sparse Matrix-Vector (SpMV) operations, and MKL PARDISO \cite{IntelMKL, Schenk2004} for the Poisson solve. Based on extensive benchmarks in the literature \cite{Schenk2004}, direct sparse LU solvers such as PARDISO provide the most robust and fastest time-to-solution for solving the magnetostatic Poisson problem on CPUs. Conversely, the GPU backend is implemented in JAX, utilizing cuSPARSE \cite{cuSPARSE} for SpMV operations and a highly optimized iterative Algebraic Multigrid (AMG) solver based on the pyamg hierarchy \cite{Bell2023}. This perfectly fits the requirement to use the optimal algorithm for the respective hardware, as AMG is much better suited to the massive parallelism of GPU architectures while direct solvers remain dominant on multi-core CPUs.
+
+In sparse matrix-vector multiplications and dense vector updates (such as the dot products and `axpy` operations central to the conjugate gradient algorithm), the operational intensity is exceptionally low. Consequently, the performance of these algorithms is strictly bounded by the hardware's main memory bandwidth rather than its theoretical floating-point compute capabilities. This memory-bound behavior is a well-known characteristic of many fundamental numerical algorithms, including Sparse Matrix-Vector (SpMV) multiplications, Lattice Boltzmann methods (LBM), and Fast Fourier Transforms (FFT) \cite{Williams2009}.
+
+To establish the theoretical maximum performance of our hardware, we first measured the sustained memory bandwidth of both architectures using industry-standard benchmarks. For the 16-core Intel Xeon CPU, we utilized the standard C-based STREAM benchmark \cite{McCalpin1995}. Running the ``Triad'' kernel (which performs an `axpy` operation: $\mathbf{a} = \mathbf{b} + q \mathbf{c}$), the CPU achieved a sustained memory bandwidth of $80.1$ GB/s. For the NVIDIA A100 (80GB PCIe) GPU, we utilized BabelStream, an implementation of the STREAM benchmark tailored for GPU architectures \cite{Deakin2018}. Running the identical Triad kernel, the A100 achieved a sustained memory bandwidth of $1695.96$ GB/s. Comparing these values, the GPU possesses a memory bandwidth advantage of a factor of approximately $21.2\times$ over the 16-core CPU.
+
+We evaluated the total time to solution and the average time per minimizer iteration for the large polycrystalline mesh on both platforms. On the 16-core CPU, the minimizer required an average of $1.203$ seconds per iteration. On the A100 GPU, the minimizer required merely $0.0527$ seconds per iteration. 
+
+This yields an empirical performance speedup of $22.8\times$ for the GPU over the CPU. This measured speedup in the minimizer iteration time correlates almost perfectly with the measured $21.2\times$ ratio in hardware memory bandwidth between the two platforms. This correlation confirms that the execution time of the matrix-free minimizer scales with the memory bandwidth. The slight additional advantage of the GPU over the raw bandwidth ratio is likely attributable to the massive $40$ MB L2 cache of the A100, which can capture temporal locality during sparse matrix operations more effectively than the CPU's cache hierarchy.
+
+\section{Conclusion}
+
+Future directions in computational micromagnetics must continue to account for architectural memory bandwidth limitations. As demonstrated, the execution speed of energy minimization algorithms using matrix-free methods is bound by memory throughput. Moving forward, as meshes scale to tens of millions of nodes and state vectors exceed the caches of modern GPUs, execution will remain limited by HBM bandwidth limits. Consequently, algorithms designed for the next generation of micromagnetic solvers must prioritize minimizing data movement and maximizing arithmetic intensity to fully exploit modern computational hardware.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

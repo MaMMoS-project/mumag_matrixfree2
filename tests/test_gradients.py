@@ -49,6 +49,7 @@ def setup_geom():
         volume=jnp.asarray(volume, dtype=jnp.float64),
         mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
         grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
+        JinvT=jnp.asarray(JinvT, dtype=jnp.float64),
     )
 
     # NdFeB-like properties
@@ -112,7 +113,7 @@ def test_exchange_gradient(setup_geom):
     )
     m_hel /= np.linalg.norm(m_hel, axis=1, keepdims=True)
 
-    energy_and_grad, _, _ = make_energy_kernels(
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         d["A_lookup"],
         jnp.zeros_like(d["K1_lookup"]),
@@ -122,7 +123,8 @@ def test_exchange_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    _, g_sim = energy_and_grad(m_hel, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3))
+    sparse_ops = {"M_nodal": d["M_nodal"]}
+    _, g_sim = energy_and_grad(m_hel, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
 
     # Test only first 5 nodes for speed
     n_test = 5
@@ -130,7 +132,7 @@ def test_exchange_gradient(setup_geom):
         for j in range(3):
 
             def e_func(m_val):
-                e, _ = energy_and_grad(m_val, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3))
+                e, _ = energy_and_grad(m_val, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
                 return float(e)
 
             eps = 1e-6
@@ -149,8 +151,10 @@ def test_exchange_gradient(setup_geom):
 def test_anisotropy_gradient(setup_geom):
     d = setup_geom
     m_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    solve_U = make_solve_U(
+        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
+    )
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         d["K1_lookup"],
@@ -160,15 +164,16 @@ def test_anisotropy_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    u = solve_U(m_45, jnp.zeros(d["knt"].shape[0]))
-    _, g_sim = energy_and_grad(m_45, u, jnp.zeros(3))
+    sparse_ops = {"M_nodal": d["M_nodal"]}
+    u = solve_U(m_45, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    _, g_sim = energy_and_grad(m_45, u, jnp.zeros(3), sparse_ops=sparse_ops)
 
     n_test = 5
     for i in range(n_test):
         for j in range(3):
 
             def e_func(m_val):
-                e, _ = energy_and_grad(m_val, u, jnp.zeros(3))
+                e, _ = energy_and_grad(m_val, u, jnp.zeros(3), sparse_ops=sparse_ops)
                 return float(e)
 
             eps = 1e-6
@@ -188,8 +193,10 @@ def test_zeeman_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
     b_ext = jnp.array([0.1 / d["Js_si"], 0.0, 0.0])
-    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    solve_U = make_solve_U(
+        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
+    )
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),
@@ -199,15 +206,16 @@ def test_zeeman_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]))
-    _, g_sim = energy_and_grad(m_x, u, b_ext)
+    sparse_ops = {"M_nodal": d["M_nodal"]}
+    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    _, g_sim = energy_and_grad(m_x, u, b_ext, sparse_ops=sparse_ops)
 
     n_test = 5
     for i in range(n_test):
         for j in range(3):
 
             def e_func(m_val):
-                e, _ = energy_and_grad(m_val, u, b_ext)
+                e, _ = energy_and_grad(m_val, u, b_ext, sparse_ops=sparse_ops)
                 return float(e)
 
             eps = 1e-6
@@ -226,8 +234,10 @@ def test_zeeman_gradient(setup_geom):
 def test_demag_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"])
-    energy_and_grad, _, _ = make_energy_kernels(
+    solve_U = make_solve_U(
+        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
+    )
+    energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
         jnp.zeros_like(d["K1_lookup"]),
@@ -237,8 +247,9 @@ def test_demag_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]))
-    _, g_sim = energy_and_grad(m_x, u, jnp.zeros(3))
+    sparse_ops = {"M_nodal": d["M_nodal"]}
+    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    _, g_sim = energy_and_grad(m_x, u, jnp.zeros(3), sparse_ops=sparse_ops)
 
     # Demag gradient g_i = sum_e Js * (Ve/4) * grad_u
     # We test only first few nodes
@@ -250,7 +261,7 @@ def test_demag_gradient(setup_geom):
                 # Note: for demag, U depends on m.
                 # However, make_energy_kernels treats U as an input.
                 # The gradient w.r.t m while holding U fixed is what we implement.
-                e, _ = energy_and_grad(m_val, u, jnp.zeros(3))
+                e, _ = energy_and_grad(m_val, u, jnp.zeros(3), sparse_ops=sparse_ops)
                 return float(e)
 
             eps = 1e-6

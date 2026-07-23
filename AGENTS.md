@@ -1,47 +1,58 @@
-# MaMMoS-MuMag Project Context
+# Agent Rules
 
-This file provides persistent context for the Gemini CLI to ensure engineering consistency and technical accuracy within this repository.
+## Rule 1: Approval Before Code Changes
+Only make changes to the code after receiving explicit approval from the user. Always describe in detail what you plan to do before writing/modifying any code.
 
-## 1. Project Mission
-A high-performance, matrix-free micromagnetics library built on **JAX**. It solves the demagnetization field using an element-wise FEM Poisson solver and minimizes energy using a curvilinear Barzilai-Borwein (BB) method.
+## Rule 2: Relevant Code Changes and Improvements
+Only consider code changes that are directly relevant to the current task given by the user. If you have suggestions for additional improvements, suggest them to the user first. Do not make these improvements until you receive the user's OK. When starting an improvement, formulate a plan and follow Rule 1.
 
-## 2. Engineering Standards
+## Rule 3: Interaction Sequence for Fixes
+When an error occurs or a fix is needed, follow this exact sequence:
+1. Tell the user what went wrong and make a suggestion for the fix.
+2. Ask the user whether they agree with the proposed fix and start the run.
+Do not proactively apply fixes or start scripts without completing this sequence.
 
-### Environment & Tooling
-- **Dependency Management**: Use **Pixi**. Never use `pip` or `conda` directly; always work through `pixi.toml` and defined tasks.
-- **Hardware Targets**: Support both `cpu` and `cuda` environments. Prioritize GPU execution for large-scale simulations.
+## Rule 4: Syntax Check Before Execution
+Always verify the syntax of any modified Python code (e.g., using `python3 -m py_compile` or similar syntax checkers) before running a Python script.
 
-### Coding Style & Types
+## Rule 5: Committing Changes
+Always test the new code thoroughly and ensure it is fully functional (both compilation and execution verify successfully) before committing it to git. Never commit untested or partially broken code. Furthermore, always commit any successful change to git before moving on to a new task.
+
+## Rule 6: No Assumptions Without Confirmation
+Never assume implicit intent regarding modifications, deletions, or scope. If there is any ambiguity about what to keep, remove, or modify, always pause execution and ask the user for explicit confirmation before proceeding.
+
+## Rule 7: Side Effect Rigor
+Before making any code change, rigorously analyze the proposed update strategy to ensure it does not introduce unintended side effects. Explicitly verify whether the change breaks existing functionality elsewhere or requires corresponding updates in other parts of the codebase.
+
+## Rule 8: Stick to the Approved Plan
+When you promise something with a plan and then change the plan this is not acceptable (like change the src). It can only be done after clear argumentation why this is required and further approval.
+
+## Rule 9: No Fabrication of Evidence (Anti-Hallucination Rule)
+Never fabricate, invent, or hallucinate data, log outputs, file contents, or execution times to support an argument or theory. If you need to cite a log file, trace, or terminal output, you must directly extract and quote the exact text from the system using the appropriate tools. If you cannot find the exact evidence or do not have access to the file, you must explicitly state that the data is missing or unavailable.
+
+## Rule 10: Citation and Verifiability
+Every technical argument, explanation of external changes, or factual claim you make must be strictly supported by verifiable evidence. You must explicitly provide the exact reference and a valid, working URL link where the user can independently look up and verify the information. Everything stated in an answer must be based on evidence that is directly accessible to the user via the provided link. Do not state hypotheses or external system behaviors as facts without citing the exact source URL.
+
+## Rule 11: Link Verification
+Before providing any URL to the user, you must verify that the link is valid and points to the correct, existing content. You must actively check the link using a web fetching tool or command (e.g., curl) to ensure it does not return a 404 error or point to a non-existent page. Never guess or construct URLs based on assumptions of a website's structure.
+
+## Rule 12: Resolve Contradictions
+Before making any new argument or claim, you must verify it against your own previous arguments in the chat. If there is a contradiction, you must explicitly resolve it and honestly tell the user which of the previous assumptions was wrong. Always follow the evidence and maintain logical consistency.
+
+
+
+## LaTeX Paper Writing Rules
+- **The Preservation Rule**: Whenever I update, modify, or expand an existing LaTeX file, I must never remove existing content in the file. I must never shorten the LaTeX file by dropping previous essential content. I am only allowed to expand and refine.
+- **The Precision Rule**: I must be very precise, as is strictly required for a scientific paper. This explicitly means I must ensure that every single mathematical symbol and variable is defined properly upon its very first use in the text.
+- **The Fact-Checking Rule**: Never write things you think might have happened. Verify each statement you write to ensure it is correct. Only write if it is based on text in a paper, text in a textbook, or given by numerical and experimental data you have direct access to.
+- **The Post-Writing Fact-Check Rule**: After writing any section, perform a rigorous fact-check of all newly drafted statements against primary sources. You must update and correct the text based on the results of this final check before finalizing it.
+- **The Formal Tone Rule**: Avoid colloquialisms, conversational language, and dramatic or "fancy" phrasing. Always write in a strictly formal, objective, and academic tone appropriate for a scientific publication.
+- **The Consistency Rule**: Whatever is added must be completely consistent with the rest of the paper. Before writing, explicitly check that no sentence or mathematical formulation in the newly added part contradicts established methodologies, previously defined transformations, or existing text within the paper.
+- **Plotting**:
+  - **Legibility**: Ensure font sizes are large enough to be easily readable in both printed publications and presentation slides.
+  - **Distinguishability**: Differentiate data curves using multiple visual cues simultaneously (e.g., combine distinct colors with varying line styles or marker symbols).
+  - **Titles**: Omit plot titles; context and descriptions should be provided in the figure caption instead.
+
+## Coding Style & Types
 - **Documentation**: All functions must use **Google-style docstrings** without type hints in the docstrings. Each parameter must be documented separately.
 - **Type Safety**: Use explicit **Python type hints** for all parameters and return types. Use `jnp.ndarray` (or `Array` alias) for JAX arrays and `np.ndarray` for CPU/IO data.
-- **Floating Point**: Micromagnetic physical verification REQUIRES double precision. Always ensure `jax.config.update("jax_enable_x64", True)` is set in scripts and tests.
-- **Static analysis**: All code must comply with ruff and pre-commit hooks. Adjusting ruff/pre-commit settings is not permitted.
-
-### JAX Implementation Patterns
-- **Matrix-Free**: NEVER assemble a global stiffness matrix. Operations must be computed element-wise.
-- **XLA Fusion**: Avoid high-level abstractions like `jnp.einsum` for small-tensor contractions (e.g., $4 \times 3$ element gradients). Manually unroll these into explicit scalar-vector arithmetic to enable XLA kernel fusion and register utilization.
-- **Pre-scaling**: Pre-calculate all loop-invariant weighted geometry terms (e.g., $A_{red} \cdot V_e$, $K_1 \cdot V_e$) outside the inner JAX loops to reduce FLOP counts.
-- **Batching (Chunking)**: Large meshes must be processed in chunks to manage GPU memory. While `chunk_elems = 100,000` is a documented baseline for mid-range hardware (RTX 4060), this parameter must be **tuned to fit the GPU's L2 cache**. The goal is to maximize cache hit rates and minimize VRAM round-trips during atomic `scatter-add` assembly operations.
-- **JIT & Pytrees**: Use `jax.jit` extensively. Complex states should be managed as registered `jax.tree_util` classes (see `MinimState` in `src/curvilinear_bb_minimizer.py`).
-
-## 3. Physical & Numerical Methodology
-
-### Minimization (Algorithm 2)
-- **Algorithm**: Curvilinear Search for p-Harmonic flows (DOI: 10.1137/080726926).
-- **Unit Length**: Maintain $|m|=1$ via the **Cayley Transform**, avoiding simple normalization.
-- **Stopping Criteria**: Use the **Gill-Murray (1981)** U1-U4 criteria for convergence.
-
-### Poisson Solver
-- **Implementation**: Preconditioned Conjugate Gradient (PCG).
-- **Stability**: Project RHS and initial guess to **zero-mean** for pure Neumann (open boundary) problems to ensure solvability.
-- **Preconditioning**: Default to `amgcl`.
-
-### Validation & Reference
-- **C++ Alignment**: The JAX implementation is the performance benchmark for the native C++ (OpenCL/VexCL) port. Maintain strict mathematical alignment in iteration counts and physical scaling between JAX kernels and the C++ CSR-based reference.
-
-## 4. Repository Structure
-- `src/`: Core library modules (documented and typed).
-- `samples/`: User-facing simulation examples and `.p2` config samples.
-- `benchmarking/`: Native C++ (OpenCL) vs JAX performance comparisons.
-- `tests/`: Physics and gradient verification suite.
-- `develop/`: Magnetoelasticity and ongoing feature development.

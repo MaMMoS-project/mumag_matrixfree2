@@ -1,0 +1,225 @@
+\begin{thebibliography}{10}
+
+\bibitem{Abert2013}
+C.~Abert, L.~Exl, F.~Bruckner, A.~Drews, and D.~Suess.
+\newblock magnum.fe: A micromagnetic finite-element simulation code based on
+  fenics.
+\newblock {\em Journal of Magnetism and Magnetic Materials}, 345:29--35, 2013.
+
+\bibitem{Aharoni1996}
+A.~Aharoni.
+\newblock {\em Introduction to the Theory of Ferromagnetism}.
+\newblock Oxford University Press, 1996.
+
+\bibitem{Viallix1988}
+A.~Bagn{\`e}res-Viallix, P.~Baras, and J.~B. Albertini.
+\newblock A finite element formulation for the micromagnetic problem.
+\newblock {\em IEEE Transactions on Magnetics}, 24(6):2371--2373, 1988.
+
+\bibitem{Bell2023}
+Nathan Bell, Luke~N. Olson, Jacob Schroder, and Ben Southworth.
+\newblock {PyAMG}: Algebraic multigrid solvers in {Python}.
+\newblock {\em Journal of Open Source Software}, 8(87):5495, 2023.
+
+\bibitem{Hubert1993}
+D.~V. Berkov, K.~Ramst{\"o}ck, and A.~Hubert.
+\newblock Solving micromagnetic problems: towards an optimal numerical method.
+\newblock {\em Physica Status Solidi (a)}, 137(1):207--225, 1993.
+
+\bibitem{Bisotti2018}
+M.-A. Bisotti, D.~Cort{\'e}s-Ortu{\~n}o, R.~Pepper, W.~Wang, M.~Beg,
+  T.~Kluyver, and H.~Fangohr.
+\newblock Fidimag--a finite difference atomistic and micromagnetic simulation
+  package.
+\newblock {\em Journal of Open Research Software}, 6(1):22, 2018.
+
+\bibitem{Brown1963}
+W.~F. Brown~Jr.
+\newblock {\em Micromagnetics}.
+\newblock Interscience Publishers, 1963.
+
+\bibitem{Bruckner2023}
+F.~Bruckner, S.~Koraltan, C.~Abert, and D.~Suess.
+\newblock magnum.np: a pytorch based gpu enhanced finite difference
+  micromagnetic simulation framework for high level development and inverse
+  design.
+\newblock {\em Scientific Reports}, 13(1):12054, 2023.
+
+\bibitem{Chang2011}
+R.~Chang, S.~Li, M.~V. Lubarda, B.~Livshitz, and V.~Lomakin.
+\newblock Fastmag: Fast micromagnetic simulator for complex magnetic
+  structures.
+\newblock {\em Journal of Applied Physics}, 109(7):07D358, 2011.
+
+\bibitem{Cohen1989}
+S.~D. Cohen, S.~Y. Lin, and M.~Luskin.
+\newblock Relaxation and gradient methods for molecular orientation in liquid
+  crystals.
+\newblock {\em Computer Physics Communications}, 53(1-3):455--465, 1989.
+
+\bibitem{Deakin2018}
+Tom Deakin, James Price, Matt Martineau, and Simon McIntosh-Smith.
+\newblock Evaluating attainable memory bandwidth of parallel programming models
+  via babelstream.
+\newblock {\em International Journal of Computational Science and Engineering},
+  17(3):247--262, 2018.
+
+\bibitem{DellaTorre1985}
+E.~Della~Torre.
+\newblock Fine particle micromagnetics.
+\newblock {\em IEEE Transactions on Magnetics}, 21(5):1423--1425, 1985.
+
+\bibitem{DellaTorre1986}
+E.~Della~Torre.
+\newblock Magnetization calculation of fine particles.
+\newblock {\em IEEE Transactions on Magnetics}, 22(5):484--489, 1986.
+
+\bibitem{DeSimone2002}
+A.~DeSimone, R.~V. Kohn, S.~M{\"u}ller, and F.~Otto.
+\newblock A reduced theory for thin-film micromagnetics.
+\newblock {\em Communications on Pure and Applied Mathematics},
+  55(11):1408--1460, 2002.
+
+\bibitem{Otto2006}
+A.~DeSimone, R.~V. Kohn, S.~M{\"u}ller, and F.~Otto.
+\newblock Recent analytical developments in micromagnetics.
+\newblock {\em The Science of Hysteresis}, 2:269--381, 2006.
+
+\bibitem{Donahue1999}
+M.~J. Donahue and D.~G. Porter.
+\newblock Oommf user's guide, version 1.0.
+\newblock {\em Interagency Report NISTIR 6376}, 1999.
+
+\bibitem{Exl2014}
+L.~Exl, S.~Bance, F.~Reichel, T.~Schrefl, H.~P. Stimming, and N.~J. Mauser.
+\newblock Preconditioned nonlinear conjugate gradient method for micromagnetic
+  energy minimization.
+\newblock {\em Computer Physics Communications}, 185(8):2256--2267, 2014.
+
+\bibitem{Fischbacher2007}
+T.~Fischbacher, M.~Franchin, G.~Bordignon, and H.~Fangohr.
+\newblock A systematic approach to multiphysics extensions of
+  finite-element-based micromagnetic simulations: Nmag.
+\newblock {\em IEEE Transactions on Magnetics}, 43(6):2896--2898, 2007.
+
+\bibitem{Fredkin1990}
+D.~R. Fredkin and T.~R. Koehler.
+\newblock Finite element methods for micromagnetics.
+\newblock {\em IEEE Transactions on Magnetics}, 26(2):415--417, 1990.
+
+\bibitem{GillMurray1981}
+P.~E. Gill, W.~Murray, and M.~H. Wright.
+\newblock {\em Practical Optimization}.
+\newblock Academic Press, 1981.
+
+\bibitem{Wen2009}
+D.~Goldfarb, Z.~Wen, and W.~Yin.
+\newblock A curvilinear search method for p-harmonic flows on spheres.
+\newblock {\em SIAM Journal on Imaging Sciences}, 2(1):84--109, 2009.
+
+\bibitem{DelVecchio1993}
+R.~S. Hebbert, L.~J. Schwee, and R.~M. Del~Vecchio.
+\newblock A finite-element formulation for micromagnetics.
+\newblock {\em IEEE Transactions on Magnetics}, 29(6):2494--2496, 1993.
+
+\bibitem{IntelMKL}
+{Intel Corporation}.
+\newblock {\em Intel® oneAPI Math Kernel Library Developer Reference}, 2024.
+\newblock
+  \url{https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html}.
+
+\bibitem{kinderlehrer1997hysteretic}
+D.~Kinderlehrer and L.~Ma.
+\newblock The hysteretic event in the computation of magnetization.
+\newblock {\em Journal of Nonlinear Science}, 7(2):101--128, 1997.
+
+\bibitem{LaBonte1969}
+A.~E. LaBonte.
+\newblock Two-dimensional bloch-type domain walls in ferromagnetic films.
+\newblock {\em Journal of Applied Physics}, 40(6):2450--2458, 1969.
+
+\bibitem{Lepadatu2020}
+S.~Lepadatu.
+\newblock Boris computational spintronics—high performance multi-mesh
+  magnetic and spin transport modeling software.
+\newblock {\em Journal of Applied Physics}, 128(24):243902, 2020.
+
+\bibitem{McCalpin1995}
+John~D. McCalpin.
+\newblock Memory bandwidth and machine balance in current high performance
+  computers.
+\newblock {\em IEEE Computer Society Technical Committee on Computer
+  Architecture (TCCA) Newsletter}, December 1995.
+
+\bibitem{Monk2003}
+P.~Monk.
+\newblock {\em Finite Element Methods for Maxwell's Equations}.
+\newblock Oxford University Press, 2003.
+
+\bibitem{Monk1999}
+P.~Monk and O.~Vacus.
+\newblock Error estimates for a numerical scheme for ferromagnetic problems.
+\newblock {\em SIAM Journal on Numerical Analysis}, 36(3):696--718, 1999.
+
+\bibitem{Monk2001}
+P.~Monk and O.~Vacus.
+\newblock Accurate discretization of a non-linear micromagnetic problem.
+\newblock {\em Computer Methods in Applied Mechanics and Engineering},
+  190(40-41):5243--5269, 2001.
+
+\bibitem{Muller2019}
+G.~P. M{\"u}ller, M.~Hoffmann, C.~Di{\ss}elkamp, D.~Sch{\"u}rhoff, S.~Mavros,
+  M.~Sallermann, N.~S. Kiselev, H.~J{\'o}nsson, and S.~Bl{\"u}gel.
+\newblock Spirit: Multifunctional framework for atomistic spin simulations.
+\newblock {\em Physical Review B}, 99(22):224414, 2019.
+
+\bibitem{cuSPARSE}
+{NVIDIA Corporation}.
+\newblock {\em cuSPARSE Library}, 2024.
+\newblock \url{https://developer.nvidia.com/cusparse/}.
+
+\bibitem{Schabes1988}
+M.~E. Schabes and H.~N. Bertram.
+\newblock Magnetization processes in ferromagnetic cubes.
+\newblock {\em Journal of Applied Physics}, 64(3):1347--1357, 1988.
+
+\bibitem{Schenk2004}
+O.~Schenk and K.~G{\"a}rtner.
+\newblock Solving unsymmetric sparse systems of linear equations with pardiso.
+\newblock {\em Future Generation Computer Systems}, 20(3):475--487, 2004.
+
+\bibitem{Scholz2003}
+W.~Scholz, J.~Fidler, T.~Schrefl, D.~Suess, R.~Dittrich, H.~Forster, and
+  V.~Tsiantos.
+\newblock Scalable parallel micromagnetic solvers for magnetic nanostructures.
+\newblock {\em Computational Materials Science}, 28(2):366--383, 2003.
+
+\bibitem{Shewchuk1994}
+J.~R. Shewchuk.
+\newblock An introduction to the conjugate gradient method without the
+  agonizing pain.
+\newblock Technical report, Carnegie Mellon University, 1994.
+
+\bibitem{Sun2006}
+J.~Sun and P.~Monk.
+\newblock An adaptive algebraic multigrid algorithm for micromagnetism.
+\newblock {\em IEEE Transactions on Magnetics}, 42(6):1643--1647, 2006.
+
+\bibitem{TorfehIsfahani1983}
+M.~Torfeh-Isfahani and E.~Della~Torre.
+\newblock Mode pushing and stiff convergent problems.
+\newblock {\em IEEE Transactions on Magnetics}, 19(5):2450--2452, 1983.
+
+\bibitem{Vansteenkiste2014}
+A.~Vansteenkiste, J.~Leliaert, M.~Dvornik, M.~Helsen, F.~Garcia-Sanchez, and
+  B.~Van~Waeyenberge.
+\newblock The design and verification of mumax3.
+\newblock {\em AIP Advances}, 4(10):107133, 2014.
+
+\bibitem{Williams2009}
+S.~Williams, L.~Oliker, R.~Vuduc, J.~Shalf, K.~Yelick, and J.~Demmel.
+\newblock Optimization of sparse matrix-vector multiplication on emerging
+  multicore platforms.
+\newblock {\em Parallel Computing}, 35(3):178--194, 2009.
+
+\end{thebibliography}

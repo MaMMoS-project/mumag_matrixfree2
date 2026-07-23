@@ -4,6 +4,7 @@ Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
 """
 
+import os
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -13,6 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 import pyamg
 import scipy.sparse as sp
+
+HAS_MKL_FFI = False
 
 
 def assemble_poisson_matrix_cpu(
@@ -56,21 +59,18 @@ def assemble_poisson_matrix_cpu(
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
         mask = np.array(boundary_mask)
         boundary_nodes = np.where(mask == 0)[0]
+        is_boundary = mask == 0
 
         # Zero out rows and columns to maintain symmetry
-        # 1. Zero rows
-        for i in boundary_nodes:
-            r_start = A.indptr[i]
-            r_end = A.indptr[i + 1]
-            A.data[r_start:r_end] = 0.0
+        # 1. Zero rows (vectorized)
+        row_indices = np.repeat(np.arange(N), np.diff(A.indptr))
+        A.data[is_boundary[row_indices]] = 0.0
 
-        # 2. Zero columns
-        A = A.tocoo()
-        mask_indices = (mask[A.row] > 0) & (mask[A.col] > 0)
-        A.data = A.data[mask_indices]
-        A.row = A.row[mask_indices]
-        A.col = A.col[mask_indices]
-        A = sp.csr_matrix((A.data, (A.row, A.col)), shape=(N, N))
+        # 2. Zero columns (vectorized)
+        A.data[is_boundary[A.indices]] = 0.0
+
+        # Remove explicit zeros
+        A.eliminate_zeros()
 
     # Add regularization to diagonal
     A = A + reg * sp.eye(N, format="csr")
@@ -99,28 +99,16 @@ def compute_spai0_diagonal(A: sp.csr_matrix) -> np.ndarray:
     Returns:
         np.ndarray: The SPAI0 diagonal elements.
     """
-    N = A.shape[0]
-    m_diag = np.zeros(N)
-
     # Square of each element
-    A_data_sq = A.data**2
+    A_sq = sp.csr_matrix((A.data**2, A.indices, A.indptr), shape=A.shape)
 
-    for i in range(N):
-        row_start = A.indptr[i]
-        row_end = A.indptr[i + 1]
+    # Sum over rows
+    row_sum_sq = np.array(A_sq.sum(axis=1)).ravel()
 
-        row_sum_sq = np.sum(A_data_sq[row_start:row_end])
+    # Diagonal elements A_ii
+    a_ii = A.diagonal()
 
-        # Find diagonal element A_ii
-        a_ii = 0.0
-        for j in range(row_start, row_end):
-            if A.indices[j] == i:
-                a_ii = A.data[j]
-                break
-
-        m_diag[i] = a_ii / (row_sum_sq + 1e-30)
-
-    return m_diag
+    return a_ii / (row_sum_sq + 1e-30)
 
 
 def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict]:
@@ -160,20 +148,230 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
     return hierarchy
 
 
-def csr_to_jax_bCOO(mat: sp.csr_matrix) -> Any:
-    """Convert a SciPy CSR matrix to JAX BCOO (Blocked COO) format.
+def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
+    """Convert a SciPy CSR matrix to JAX CSR format.
 
     Args:
         mat (sp.csr_matrix): Input SciPy sparse matrix.
 
     Returns:
-        jax.experimental.sparse.BCOO: The JAX sparse matrix.
+        jax.experimental.sparse.CSR: The JAX sparse matrix.
     """
     from jax.experimental import sparse
 
-    coo = mat.tocoo()
-    indices = jnp.stack([jnp.asarray(coo.row), jnp.asarray(coo.col)], axis=1)
-    return sparse.BCOO((jnp.asarray(coo.data), jnp.asarray(indices)), shape=coo.shape)
+    return sparse.CSR(
+        (jnp.asarray(mat.data), jnp.asarray(mat.indices), jnp.asarray(mat.indptr)),
+        shape=mat.shape,
+    )
+
+
+@jax.tree_util.register_pytree_node_class
+class SparseOperator:
+    """A wrapper for sparse matrix operations that overrides the matmul (@) operator.
+    This allows JAX to trace both CPU and GPU execution paths cleanly.
+    """  # noqa: D205
+
+    def __init__(self, apply_fn, pytree_parts=()):
+        """Initialize the sparse operator."""
+        self.apply_fn = apply_fn
+        self.pytree_parts = pytree_parts
+
+    def __matmul__(self, other):
+        """Multiply the operator by a vector."""
+        # If there are dynamic JAX arrays (like the GPU CSR object), pass them to apply_fn
+        if len(self.pytree_parts) > 0:
+            return self.apply_fn(self.pytree_parts[0], other)
+        return self.apply_fn(None, other)
+
+    def tree_flatten(self):
+        """Flatten the operator for JAX."""
+        return (self.pytree_parts, (self.apply_fn,))
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        """Unflatten the operator for JAX."""
+        (apply_fn,) = aux_data
+        return cls(apply_fn, pytree_parts=children)
+
+
+class PersistentMKLOperator:
+    """A persistent MKL sparse matrix handle that utilizes the Inspector-Executor API.
+
+    This avoids creating, optimizing, and destroying the MKL handle on every SpMV iteration.
+    """
+
+    def __init__(self, scipy_csr_mat: sp.csr_matrix):
+        """Initialize persistent MKL operator."""
+        import ctypes
+        import ctypes.util
+
+        from sparse_dot_mkl._mkl_interface import MKL, _create_mkl_sparse, _output_dtypes, matrix_descr
+
+        self.scipy_csr_mat = scipy_csr_mat  # IMPORTANT: Keep reference to prevent GC of underlying arrays!
+        self.shape = scipy_csr_mat.shape
+        self.dtype = scipy_csr_mat.dtype
+
+        # 1. Load MKL directly to access the Inspector-Executor functions
+        mkl_lib_path = ctypes.util.find_library("mkl_rt")
+        if not mkl_lib_path:
+            mkl_lib_path = "libmkl_rt.so"
+        self.libmkl = ctypes.cdll.LoadLibrary(mkl_lib_path)
+        self.libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
+        self.libmkl.mkl_sparse_optimize.restype = ctypes.c_int
+
+        # 2. Create the MKL handle
+        self.mkl_a, self.dbl, self.cplx = _create_mkl_sparse(scipy_csr_mat)
+
+        # 3. Optimize the matrix (Inspector stage)
+        self.libmkl.mkl_sparse_optimize(self.mkl_a)
+
+        # 4. Cache necessary execution arguments
+        self.output_dtype = _output_dtypes[(self.dbl, self.cplx)]
+        from sparse_dot_mkl._mkl_interface import _mkl_scalar
+
+        self.scalar = _mkl_scalar(1.0, self.cplx, self.dbl)
+        self.out_scalar = _mkl_scalar(0.0, self.cplx, self.dbl)
+        self.matrix_desc = matrix_descr()
+
+        funcs = {
+            (False, False): MKL._mkl_sparse_s_mv,
+            (True, False): MKL._mkl_sparse_d_mv,
+            (False, True): MKL._mkl_sparse_c_mv,
+            (True, True): MKL._mkl_sparse_z_mv,
+        }
+        self.func = funcs[(self.dbl, self.cplx)]
+
+    def apply(self, x_val):
+        """Apply the MKL operator."""
+        from sparse_dot_mkl._mkl_interface import _out_matrix
+
+        x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
+
+        # Allocate output array (must be dense contiguous)
+        output_arr = _out_matrix((self.shape[0],), self.output_dtype)
+
+        # 10 is SPARSE_OPERATION_NON_TRANSPOSE
+        self.func(10, self.scalar, self.mkl_a, self.matrix_desc, x_np_val, self.out_scalar, output_arr)
+        return output_arr
+
+    def __del__(self):
+        """Clean up MKL handle."""
+        try:
+            from sparse_dot_mkl._mkl_interface import _destroy_mkl_handle
+
+            _destroy_mkl_handle(self.mkl_a)
+        except Exception:
+            pass
+
+
+def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl"):
+    """Creates a fast, multicore CPU SpMV operator via callbacks."""
+    if cpu_spmv_backend == "persistent_mkl":
+        try:
+            import sparse_dot_mkl  # noqa: F401
+        except ImportError:
+            raise ImportError("sparse_dot_mkl is required for persistent_mkl.")  # noqa: B904
+        persistent_op = PersistentMKLOperator(scipy_csr_mat)
+
+        def spmv_callback(x_val, **kwargs):
+            return persistent_op.apply(x_val)
+    elif cpu_spmv_backend == "dot_product_mkl":
+        try:
+            from sparse_dot_mkl import dot_product_mkl
+        except ImportError:
+            raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")  # noqa: B904
+
+        def spmv_callback(x_val, **kwargs):
+            x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+            return dot_product_mkl(scipy_csr_mat, x_np_val)
+    elif cpu_spmv_backend == "scipy":
+
+        def spmv_callback(x_val, **kwargs):
+            x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
+            return scipy_csr_mat @ x_np_val
+    else:
+        raise ValueError(f"Unknown CPU SpMV backend for callback: {cpu_spmv_backend}")
+
+    @jax.jit
+    def fast_cpu_spmv(x_val):
+        result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
+        return jax.pure_callback(spmv_callback, result_shape_dtype, x_val, vectorized=False)
+
+    return fast_cpu_spmv
+
+
+def get_gpu_assignments(num_gpus, devices):
+    """Get GPU device assignments for multi-GPU."""
+    assignments = {}
+    if num_gpus == 2:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[0]
+        assignments["D"] = devices[0]
+        assignments["Keff"] = devices[1]
+    elif num_gpus == 3:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[0]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[1]
+        assignments["Ky"] = devices[2]
+        assignments["Kz"] = devices[2]
+    elif num_gpus == 4:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[2]
+        assignments["Ky"] = devices[3]
+        assignments["Kz"] = devices[3]
+    elif num_gpus == 5:
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[1]
+        assignments["Kx"] = devices[2]
+        assignments["Ky"] = devices[3]
+        assignments["Kz"] = devices[4]
+    else:  # 6 or more
+        assignments["AMG"] = devices[0]
+        assignments["G"] = devices[1]
+        assignments["D"] = devices[2]
+        assignments["Kx"] = devices[3]
+        assignments["Ky"] = devices[4]
+        assignments["Kz"] = devices[5]
+    return assignments
+
+
+def make_sparse_operator(
+    scipy_csr_mat: sp.csr_matrix,
+    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+) -> SparseOperator:
+    """Dynamically creates the optimal sparse operator depending on the active platform."""
+    device = jax.devices()[0]
+
+    if device.platform == "cpu":
+        if cpu_spmv_backend == "jax_default":
+            jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+            return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
+        elif cpu_spmv_backend == "custom_jax":
+            data = jnp.asarray(scipy_csr_mat.data)
+            indices = jnp.asarray(scipy_csr_mat.indices)
+            row_indices = np.repeat(np.arange(scipy_csr_mat.shape[0]), np.diff(scipy_csr_mat.indptr))
+            row_indices = jnp.asarray(row_indices)
+            num_rows = scipy_csr_mat.shape[0]
+
+            def custom_spmv(parts, x):
+                d, idx, r_idx = parts
+                vals = d * x[idx]
+                return jax.ops.segment_sum(vals, r_idx, num_segments=num_rows)
+
+            return SparseOperator(custom_spmv, ((data, indices, row_indices),))
+        elif cpu_spmv_backend == "mkl_ffi":
+            raise ValueError("mkl_ffi backend was removed. Use persistent_mkl instead.")
+        else:
+            cpu_op = make_cpu_csr_op(scipy_csr_mat, cpu_spmv_backend=cpu_spmv_backend)
+            return SparseOperator(lambda _, x: cpu_op(x), ())
+    else:
+        # On GPU: convert to JAX CSR and store it in pytree_parts
+        jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+        return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
 
 
 @partial(jax.jit, static_argnums=(0,))
@@ -302,7 +500,7 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
         Callable: A JIT-compiled function vcycle(rhs, hierarchy).
     """
 
-    def vcycle(r, hierarchy):
+    def vcycle(sparse_ops, r, hierarchy):
         num_levels = len(hierarchy)
 
         def vcycle_recursive(level_idx, b_curr, x_curr):
@@ -322,7 +520,7 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
             if level_idx == 0:
 
                 def apply_A_curr(v):
-                    return apply_A_fine(v)
+                    return apply_A_fine(sparse_ops, v)
             else:
 
                 def apply_A_curr(v):
@@ -368,7 +566,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
         Callable: A JIT-compiled function vcycle(rhs, hierarchy).
     """
 
-    def vcycle(r, hierarchy):
+    def vcycle(sparse_ops, r, hierarchy):
         num_levels = len(hierarchy)
 
         def vcycle_recursive(level_idx, b_curr, x_curr):
@@ -388,7 +586,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
             if level_idx == 0:
 
                 def apply_A_curr(v):
-                    return apply_A_fine(v)
+                    return apply_A_fine(sparse_ops, v)
             else:
 
                 def apply_A_curr(v):
@@ -406,7 +604,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
             b_coarse = lvl["R"] @ r_res
 
             # 4. Recurse
-            x_coarse = jnp.zeros_like(b_coarse)
+            x_coarse = jax.lax.cond(b_coarse[0] == 12345.6789, lambda: b_coarse, lambda: jnp.zeros_like(b_coarse))
             e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
 
             # 5. Prolongation and Correction
@@ -417,6 +615,273 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             return x_curr
 
-        return vcycle_recursive(0, r, jnp.zeros_like(r))
+        # Start with a dynamically-shielded zero vector to prevent XLA from
+        # treating `x_curr` as a static constant and unrolling/folding apply_A_fine.
+        x_start = jax.lax.cond(r[0] == 12345.6789, lambda: r, lambda: jnp.zeros_like(r))
+        return vcycle_recursive(0, r, x_start)
 
-    return jax.jit(vcycle, static_argnums=(1,))
+    return jax.jit(vcycle)
+
+
+def assemble_exchange_matrix_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    A_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> sp.csr_matrix:
+    """Assemble the Exchange stiffness matrix K_ex in CSR format on the CPU.
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
+        A_lookup (np.ndarray): Material exchange constants (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        sp.csr_matrix: The assembled exchange matrix of shape (N, N).
+    """
+    N = np.max(conn) + 1
+    A_elem = A_lookup[mat_id - 1]
+
+    # Ke_ab = 2 * A_ex * Ve * (grad_phi_a . grad_phi_b)
+    Ke = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+    data = Ke.flatten()
+
+    Kex = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
+    Kex.sum_duplicates()
+    return Kex
+
+
+def assemble_divergence_matrices_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    Js_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]:
+    """Assemble the Divergence matrices Dx, Dy, Dz in CSR format on the CPU.
+
+    These matrices map magnetization components to the Poisson charge density.
+    (D_i)_ab^e = Js_e * (Ve / 4) * (grad_phi_a)_i for all column indices b.
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        grad_phi (np.ndarray): Shape function gradients (E, 4, 3).
+        Js_lookup (np.ndarray): Material saturation polarizations (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]: (Dx, Dy, Dz) CSR matrices.
+    """
+    N = np.max(conn) + 1
+    Js_elem = Js_lookup[mat_id - 1]
+    factor = Js_elem * volume / 4.0
+
+    De_x = factor[:, None, None] * np.tile(grad_phi[:, :, 0][:, :, None], (1, 1, 4))
+    De_y = factor[:, None, None] * np.tile(grad_phi[:, :, 1][:, :, None], (1, 1, 4))
+    De_z = factor[:, None, None] * np.tile(grad_phi[:, :, 2][:, :, None], (1, 1, 4))
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+
+    Dx = sp.coo_matrix((De_x.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dx.sum_duplicates()
+
+    Dy = sp.coo_matrix((De_y.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dy.sum_duplicates()
+
+    Dz = sp.coo_matrix((De_z.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+    Dz.sum_duplicates()
+
+    return Dx, Dy, Dz
+
+
+def assemble_anisotropy_matrix_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    K1_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> sp.csr_matrix:
+    """Assemble the Uniaxial Anisotropy stiffness matrix K_an in CSR format on the CPU.
+
+    Local element stiffness contribution:
+    (K_an)_ab^e = - K1_e * (Ve / 10) * (1 + delta_ab)
+
+    Args:
+        conn (np.ndarray): Tetrahedron connectivity (E, 4).
+        volume (np.ndarray): Element volumes (E,).
+        K1_lookup (np.ndarray): Material anisotropy constants (G,).
+        mat_id (np.ndarray): Material IDs per element (E,).
+
+    Returns:
+        sp.csr_matrix: The assembled anisotropy matrix of shape (N, N).
+    """
+    N = np.max(conn) + 1
+    K1_elem = K1_lookup[mat_id - 1]
+    val_elem = -K1_elem * volume / 10.0
+
+    # Local 4x4 matrix: Ke_ab = val_elem * (1.0 + delta_ab)
+    Ke = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+    data = Ke.flatten()
+
+    Kan = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
+    Kan.sum_duplicates()
+    return Kan
+
+
+def assemble_exchange_anisotropy_matrix_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    A_lookup: np.ndarray,
+    K1_lookup: np.ndarray,
+    k_easy_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> sp.csr_matrix:
+    """Assemble the combined Exchange and Anisotropy matrix in CSR format.
+    The resulting matrix is of shape (3N, 3N) to handle cross-component anisotropy.
+    """  # noqa: D205
+    N = np.max(conn) + 1
+    A_elem = A_lookup[mat_id - 1]
+    K1_elem = K1_lookup[mat_id - 1]
+    k_elem = k_easy_lookup[mat_id - 1]  # (E, 3)
+
+    # Kex part (E, 4, 4)
+    Kex_e = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
+
+    # Kan part (E, 4, 4)
+    val_elem = -2.0 * K1_elem * volume / 20.0
+    Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
+
+    # Kex_block: (E, 4, 4, 3, 3)
+    I3 = np.eye(3, dtype=np.float64)
+    Kex_block = Kex_e[:, :, :, None, None] * I3[None, None, None, :, :]
+
+    # Kan_block: (E, 4, 4, 3, 3)
+    kkT = np.einsum("eu,ev->euv", k_elem, k_elem)
+    Kan_block = Kan_e[:, :, :, None, None] * kkT[:, None, None, :, :]
+
+    K_block = Kex_block + Kan_block  # (E, 4, 4, 3, 3)
+
+    # Global rows and cols
+    row_nodes = np.repeat(conn, 4, axis=1).flatten()  # (E*16,)
+    col_nodes = np.tile(conn, (1, 4)).flatten()  # (E*16,)
+
+    # We expand to 3x3 components for each element in the 16 pairs
+    r = 3 * row_nodes[:, None, None] + np.arange(3)[None, :, None]
+    c = 3 * col_nodes[:, None, None] + np.arange(3)[None, None, :]
+    rows, cols = np.broadcast_arrays(r, c)
+    rows = rows.flatten()
+    cols = cols.flatten()
+    data = K_block.flatten()
+
+    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3 * N, 3 * N)).tocsr()
+    K_eff.sum_duplicates()
+    return K_eff
+
+
+def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
+    """Create a JAX linear solver using MKL PARDISO FFI."""
+    import ctypes
+
+    lib_path = None
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    if slurm_job_id:
+        local_lib = f"/tmp/mumag_build_{slurm_job_id}/libcpp_mkl_minimizer.so"
+        if os.path.exists(local_lib):
+            lib_path = local_lib
+
+    if not lib_path and "MUMAG_LIB_OUT" in os.environ:
+        env_lib = os.path.join(os.environ["MUMAG_LIB_OUT"], "libcpp_mkl_minimizer.so")
+        if os.path.exists(env_lib):
+            lib_path = env_lib
+
+    if not lib_path:
+        lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+
+    if not os.path.exists(lib_path):
+        raise ImportError(f"libcpp_mkl_minimizer.so was not found at {lib_path}. Please compile it.")
+    ffi_lib = ctypes.CDLL(lib_path)
+
+    ffi_lib.init_pardiso.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    ffi_lib.init_pardiso.restype = ctypes.c_int64
+    ffi_lib.free_pardiso.argtypes = [ctypes.c_int64]
+    ffi_lib.free_pardiso.restype = None
+
+    # PARDISO mtype=2 requires Upper Triangular
+    import scipy.sparse as sp_sparse
+
+    A_upper = sp_sparse.triu(scipy_csr_mat, format="csr")
+
+    n = A_upper.shape[0]
+    a_data = A_upper.data.astype(np.float64)
+    ia_data = A_upper.indptr.astype(np.int32)
+    ja_data = A_upper.indices.astype(np.int32)
+
+    a_ptr = a_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    ia_ptr = ia_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+    ja_ptr = ja_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+
+    print(f"Initializing MKL PARDISO for {n}x{n} matrix with {a_data.size} nonzeros...")
+    handle_id = ffi_lib.init_pardiso(n, a_ptr, ia_ptr, ja_ptr)
+    if handle_id < 0:
+        raise RuntimeError(f"PARDISO initialization failed with error code {-handle_id}")
+    print("PARDISO initialization successful.")
+
+    ffi_lib.pardiso_solve_direct.argtypes = [
+        ctypes.c_int64,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    ffi_lib.pardiso_solve_direct.restype = ctypes.c_int
+
+    class PardisoHandle:
+        def __init__(self, hid, a, ia, ja):
+            self.handle_id = hid
+            self.a = a
+            self.ia = ia
+            self.ja = ja
+
+        def __del__(self):
+            ffi_lib.free_pardiso(self.handle_id)
+
+    pardiso_obj = PardisoHandle(handle_id, a_data, ia_data, ja_data)
+    jnp.asarray(handle_id, dtype=jnp.int64)
+
+    @jax.jit
+    def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy: Any = None):
+        def cb(b_val):
+            b_np = np.ascontiguousarray(b_val, dtype=np.float64)
+            x_np = np.zeros_like(b_np)
+            b_ptr = b_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            x_ptr = x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            error = ffi_lib.pardiso_solve_direct(pardiso_obj.handle_id, b_ptr, x_ptr)
+            if error != 0:
+                raise RuntimeError(f"PARDISO solve failed with error {error}")
+            return x_np
+
+        result_shape_dtype = jax.ShapeDtypeStruct(b.shape, b.dtype)
+        x = jax.pure_callback(cb, result_shape_dtype, b)
+        return x, jnp.int32(1), jnp.float64(0.0)
+
+    solve_linear.pardiso_obj = pardiso_obj
+    return solve_linear
+
+
+def make_jax_mkl_solve_linear(pyamg_hierarchy, cg_maxiter: int = 2000, cg_tol: float = 1e-8) -> callable:
+    """Create a JAX MKL linear solver."""
+    raise NotImplementedError("make_jax_mkl_solve_linear was removed as JAX FFI is no longer supported.")

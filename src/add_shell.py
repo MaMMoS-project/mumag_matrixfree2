@@ -217,6 +217,23 @@ def remove_degenerate_and_duplicate_tets(knt: np.ndarray, ijk: np.ndarray, vol_e
     return ijk_kept[np.sort(first_idx)]
 
 
+def compute_tet_quality(knt: np.ndarray, tets: np.ndarray) -> np.ndarray:
+    """Computes the normalized volume-to-edge ratio quality metric eta for each tetrahedron."""
+    if tets.size == 0:
+        return np.array([])
+    pts = knt[tets]
+    a, b, c, d = pts[:, 0], pts[:, 1], pts[:, 2], pts[:, 3]
+    ab, ac, ad, bc, bd, cd = b - a, c - a, d - a, c - b, d - b, d - c
+    vols6 = np.abs(np.einsum("ij,ij->i", np.cross(ab, ac), ad))
+    vols = vols6 / 6.0
+    l_ab, l_ac, l_ad = np.einsum("ij,ij->i", ab, ab), np.einsum("ij,ij->i", ac, ac), np.einsum("ij,ij->i", ad, ad)
+    l_bc, l_bd, l_cd = np.einsum("ij,ij->i", bc, bc), np.einsum("ij,ij->i", bd, bd), np.einsum("ij,ij->i", cd, cd)
+    S = l_ab + l_ac + l_ad + l_bc + l_bd + l_cd
+    rms = np.sqrt(np.maximum(S, 1e-12) / 6.0)
+    eta = (6.0 * np.sqrt(2.0) * vols) / (rms**3)
+    return np.clip(eta, 0.0, 1.0)
+
+
 # -------------------------- surface size estimate --------------------------
 
 
@@ -247,6 +264,50 @@ def estimate_body_h_from_surface(knt: np.ndarray, ijk_with_mat: np.ndarray) -> f
     q = knt[edges[:, 1]]
     lens = np.linalg.norm(q - p, axis=1)
     return max(float(np.median(lens)), 1e-12)
+
+
+def subdivide_flat_mesh(V: np.ndarray, F: np.ndarray, levels: int) -> tuple[np.ndarray, np.ndarray]:
+    """Subdivide flat triangles into 4 similar triangles by inserting midpoints on all edges.
+
+    Args:
+        V (np.ndarray): Node coordinates (Nv, 3).
+        F (np.ndarray): Triangle connectivity (Nf, 3).
+        levels (int): Number of subdivision levels.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Subdivided vertices, Subdivided faces).
+    """
+    for _ in range(max(0, levels)):
+        edge_cache = {}
+        new_faces = []
+        new_verts = V.tolist()
+
+        def mid_idx(i: int, j: int) -> int:
+            key = (i, j) if i < j else (j, i)
+            if key in edge_cache:  # noqa: B023
+                return edge_cache[key]  # noqa: B023
+            vi, vj = np.array(new_verts[i]), np.array(new_verts[j])  # noqa: B023
+            vm = 0.5 * (vi + vj)
+            new_verts.append(vm.tolist())  # noqa: B023
+            idx = len(new_verts) - 1  # noqa: B023
+            edge_cache[key] = idx  # noqa: B023
+            return idx
+
+        for i, j, k in F:
+            a = mid_idx(i, j)
+            b = mid_idx(j, k)
+            c = mid_idx(k, i)
+            new_faces.extend(
+                [
+                    [i, a, c],
+                    [a, j, b],
+                    [c, b, k],
+                    [a, b, c],
+                ]
+            )
+        V = np.array(new_verts, dtype=np.float64)
+        F = np.array(new_faces, dtype=np.int32)
+    return V, F
 
 
 # ------------------------------- PLC builders -------------------------------
@@ -317,12 +378,14 @@ def build_layer_nodes(
     return knt, node_map, svecs_layer
 
 
-def make_shell_plc_from_surface(
+def make_shell_plc_from_surface(  # noqa: D417
     knt0: np.ndarray,
     tris0: np.ndarray,
     layers: int,
     K: float,
     center: tuple[float, float, float],
+    shell_type: str = "triangles",
+    target_h: float | None = None,
 ) -> tuple[np.ndarray, list[list[int]], np.ndarray, np.ndarray, dict, list]:
     """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
 
@@ -332,6 +395,7 @@ def make_shell_plc_from_surface(
         layers: number of layers.
         K: per-layer scale.
         center: ray origin.
+        shell_type: 'triangles' or 'hull'.
 
     Returns:
         tuple: (All nodes, facets, seeds, surface vertex indices, node map,
@@ -341,28 +405,131 @@ def make_shell_plc_from_surface(
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
     surf_verts = np.unique(tris0.reshape(-1))
 
-    knt_all, node_map, svecs_layer = build_layer_nodes(knt0, surf_verts, center, K, layers)
+    if shell_type == "hull":
+        from scipy.spatial import ConvexHull
 
-    facets: list[list[int]] = []
-    for layer_idx in range(0, layers + 1):
+        hull = ConvexHull(knt0)
+        hull_verts_orig = np.unique(hull.simplices.reshape(-1))
+        hull_V = knt0[hull_verts_orig].copy()
+        old_to_new = {old: new for new, old in enumerate(hull_verts_orig)}
+        hull_F = np.array([[old_to_new[v] for v in tri] for tri in hull.simplices], dtype=np.int32)
+
+        # Compute subdivision levels
+        levels = 0
+        if target_h is not None and target_h > 0:
+            edges = np.vstack([hull_F[:, [0, 1]], hull_F[:, [1, 2]], hull_F[:, [2, 0]]])
+            lens = np.linalg.norm(hull_V[edges[:, 1]] - hull_V[edges[:, 0]], axis=1)
+            avg_len = np.mean(lens)
+            desired_len = target_h * 2.0  # Allow some coarseness
+            if avg_len > desired_len:
+                levels = int(np.ceil(np.log2(avg_len / desired_len)))
+                levels = min(levels, 4)  # Cap at 4 levels (256x triangles) to prevent explosion
+
+        hull_V, hull_F = subdivide_flat_mesh(hull_V, hull_F, levels)
+        hull_verts = np.arange(len(hull_V))
+        hull_tris = hull_F
+
+        # Build node map & scaling copy for layers 1..L using hull_verts
+        knt_all = knt0.copy()
+        node_map: dict[tuple[int, int], int] = {}
+        for vid in surf_verts:
+            node_map[(int(vid), 0)] = int(vid)
+
+        vmin = np.min(knt0, axis=0)
+        vmax = np.max(knt0, axis=0)
+        ext = vmax - vmin
+        Lmax = float(np.max(ext))
+        c = center.reshape(1, 3)
+        v0 = hull_V - c  # rays from center to hull vertices
+
+        max_anisotropy = 5.0
+        svecs_layer = []
+
+        print(f"{'Layer':>5} | {'sx':>10} | {'sy':>10} | {'sz':>10}")
+        print("-" * 5 + "-+-" + "-" * 10 + "-+-" + "-" * 10 + "-+-" + "-" * 10)
+
+        for layer_idx in range(1, layers + 1):
+            s = K**layer_idx
+            t = layer_idx / layers if layers > 1 else 1.0
+            L_target = s * Lmax
+            sx = np.array([L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float)
+            sv = (1 - t) * np.array([1.0, 1.0, 1.0]) + t * sx
+
+            r = sv.max() / max(sv.min(), 1e-12)
+            if r > max_anisotropy:
+                g = np.exp(np.log(sv).mean())
+                alpha = r / max_anisotropy
+                sv = g * (sv / g) ** (1.0 / alpha)
+
+            print(f"{layer_idx:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
+            pts = c + v0 * sv.reshape(1, 3)
+            start = knt_all.shape[0]
+            knt_all = np.vstack([knt_all, pts])
+            for i, vid in enumerate(hull_verts):
+                node_map[(int(vid), layer_idx)] = start + i
+
+            svecs_layer.append(sv.copy())
+
+        # Build facets
+        facets: list[list[int]] = []
+        # Layer 0 uses the original surface triangles
         for tri in tris0:
-            v = [
-                node_map[(int(tri[0]), layer_idx)],
-                node_map[(int(tri[1]), layer_idx)],
-                node_map[(int(tri[2]), layer_idx)],
-            ]
+            v = [node_map[(int(tri[0]), 0)], node_map[(int(tri[1]), 0)], node_map[(int(tri[2]), 0)]]
             facets.append(v)
+        # Layers 1..L use the scaled convex hull triangles
+        for layer_idx in range(1, layers + 1):
+            for tri in hull_tris:
+                v = [
+                    node_map[(int(tri[0]), layer_idx)],
+                    node_map[(int(tri[1]), layer_idx)],
+                    node_map[(int(tri[2]), layer_idx)],
+                ]
+                facets.append(v)
 
-    # in make_shell_plc_from_surface(...), after knt_all/node_map are ready:
-    tri0 = tris0[0]  # pick a stable triangle
+        # Build seeds:
+        seeds = []
+        # Region 0: between layer 0 (tris0) and layer 1 (hull_tris)
+        tri0 = tris0[0]
+        ctr0 = knt0[tri0].mean(axis=0)
+        sv1 = svecs_layer[0]
+        ctr1 = c.ravel() + (ctr0 - c.ravel()) * sv1
+        seeds.append(0.5 * (ctr0 + ctr1))
 
-    def centroid_at(layer: int) -> np.ndarray:
-        vids = [node_map[(int(v), layer)] for v in tri0]
-        return knt_all[vids].mean(axis=0)
+        # Subsequent regions: between hull layer l and l+1
+        hull_tri0 = hull_tris[0]
 
-    seeds = np.vstack(
-        [0.5 * (centroid_at(layer_idx) + centroid_at(layer_idx + 1)) for layer_idx in range(layers)]
-    ).astype(np.float64)
+        def hull_centroid_at(layer: int) -> np.ndarray:
+            vids = [node_map[(int(v), layer)] for v in hull_tri0]
+            return knt_all[vids].mean(axis=0)
+
+        for layer_idx in range(1, layers):
+            seeds.append(0.5 * (hull_centroid_at(layer_idx) + hull_centroid_at(layer_idx + 1)))
+
+        seeds = np.vstack(seeds).astype(np.float64)
+
+    else:
+        # Standard: copy original surface triangles to each scaled layer
+        knt_all, node_map, svecs_layer = build_layer_nodes(knt0, surf_verts, center, K, layers)
+
+        facets: list[list[int]] = []
+        for layer_idx in range(0, layers + 1):
+            for tri in tris0:
+                v = [
+                    node_map[(int(tri[0]), layer_idx)],
+                    node_map[(int(tri[1]), layer_idx)],
+                    node_map[(int(tri[2]), layer_idx)],
+                ]
+                facets.append(v)
+
+        tri0 = tris0[0]
+
+        def centroid_at(layer: int) -> np.ndarray:
+            vids = [node_map[(int(v), layer)] for v in tri0]
+            return knt_all[vids].mean(axis=0)
+
+        seeds = np.vstack(
+            [0.5 * (centroid_at(layer_idx) + centroid_at(layer_idx + 1)) for layer_idx in range(layers)]
+        ).astype(np.float64)
 
     # Optional sanity check:
     assert seeds.shape == (layers, 3)
@@ -371,7 +538,7 @@ def make_shell_plc_from_surface(
 
 
 # ------------------------------ meshing core ------------------------------
-def add_shell_with_meshpy(
+def add_shell_with_meshpy(  # noqa: D417
     knt0: np.ndarray,
     ijk0: np.ndarray,
     layers: int,
@@ -385,6 +552,7 @@ def add_shell_with_meshpy(
     no_exact: bool,
     verbose: bool,
     same_scaling: bool,
+    shell_type: str = "triangles",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Invoke TetGen to mesh exterior shell layers and merge with the body.
 
@@ -426,7 +594,7 @@ def add_shell_with_meshpy(
 
     # PLC creation
     knt_plc, facets, seeds, surf_verts, node_map, svecs_layer = make_shell_plc_from_surface(
-        knt0, tris0, layers=layers, K=K, center=center
+        knt0, tris0, layers=layers, K=K, center=center, shell_type=shell_type, target_h=h0
     )
 
     mi = MeshInfo()
@@ -448,11 +616,20 @@ def add_shell_with_meshpy(
     gms = [float(np.exp(np.log(sv).mean())) for sv in svecs_layer]  # geometric means (length 'layers')
 
     if hmax is None:
-        scale = 1.0
+        # Prevent explosion for large magnets with fine surface meshes (e.g. 200nm magnet with 2nm mesh)
+        # by ensuring the outer elements are at least a fraction of the total airbox size.
+        ext = np.max(knt0, axis=0) - np.min(knt0, axis=0)
+        Lmax = float(np.max(ext))
+        base_hmax = h0 * (gms[-1] ** beta)
+        # Auto hmax: 20% of the core size scaled by KL
+        auto_hmax = 0.2 * Lmax * gms[-1]
+        resolved_hmax = max(base_hmax, auto_hmax)
     else:
-        # ensure the *outermost* region hits hmax
-        denom = max(h0 * (gms[-1] ** beta), 1e-30)
-        scale = float(hmax) / denom
+        resolved_hmax = float(hmax)
+
+    # ensure the *outermost* region hits the resolved hmax
+    denom = max(h0 * (gms[-1] ** beta), 1e-30)
+    scale = resolved_hmax / denom
 
     mi.regions.resize(layers)
     for layer_idx in range(layers):
@@ -511,13 +688,13 @@ def add_shell_with_meshpy(
 # ----------------------------------------------------------------------
 # Public entry point (importable) – pure in-memory (no writes)
 # ----------------------------------------------------------------------
-def run_add_shell_pipeline(
+def run_add_shell_pipeline(  # noqa: D417
     *,
     in_npz: str,
     # Geometry controls
     layers: int | None = None,
-    K: float | None = None,
-    KL: float | None = None,
+    K: float | None = 1.5,
+    KL: float | None = 10.0,
     auto_layers: bool = False,
     auto_K: bool = False,
     # Mesh-size coupling
@@ -534,6 +711,7 @@ def run_add_shell_pipeline(
     max_steiner: int | None = None,
     no_exact: bool = False,
     verbose: bool = False,
+    shell_type: str = "hull",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Programmatic entry point for adding graded shell layers.
 
@@ -585,6 +763,9 @@ def run_add_shell_pipeline(
     K_val = K
     KL_val = KL
 
+    if (L is None) and (KL_val is not None) and (K_val is not None) and not auto_K:
+        auto_layers = True
+
     if auto_layers:
         if (KL_val is None) or (K_val is None):
             raise ValueError("auto_layers requires both KL and K.")
@@ -619,9 +800,15 @@ def run_add_shell_pipeline(
             log(f"[size] Using user-provided body_h: {body_h_val:.6g}")
 
     if h0 is None:
-        h0_val = 1.5 * body_h_val
-        if verbose:
-            log(f"[size] h0 not given -> set h0 = 1.5 * body_h = {h0_val:.6g}")
+        if hmax is not None:
+            # Derive h0 by scaling down from hmax
+            h0_val = float(hmax) / (K_val ** (L * (1.0 if same_scaling else beta)))
+            if verbose:
+                log(f"[size] h0 not given -> derived from hmax by scaling down: h0 = hmax / K^(L*beta) = {h0_val:.6g}")
+        else:
+            h0_val = 1.5 * body_h_val
+            if verbose:
+                log(f"[size] h0 not given -> set h0 = 1.5 * body_h = {h0_val:.6g}")
     else:
         h0_val = float(h0)
         if verbose:
@@ -668,8 +855,45 @@ def run_add_shell_pipeline(
         no_exact=bool(no_exact),
         verbose=bool(verbose),
         same_scaling=bool(same_scaling),
+        shell_type=shell_type,
     )
-    print("layers = ", L, " nodes = ", len(knt), " elements = ", len(ijk))
+
+    # Analyze and print airbox mesh quality
+    if ijk.shape[1] >= 5:
+        max_mat = int(ijk[:, 4].max())
+        shell_mask = ijk[:, 4] == max_mat
+        tets_shell = ijk[shell_mask, :4].astype(np.int64)
+        tets_core = ijk[~shell_mask, :4].astype(np.int64)
+    else:
+        tets_shell = ijk[:, :4]
+        tets_core = np.array([])
+
+    n_shell = tets_shell.shape[0]
+    n_core = tets_core.shape[0]
+
+    if n_shell > 0:
+        shell_nids = np.unique(tets_shell)
+        shell_pts = knt[shell_nids]
+        mins = np.min(shell_pts, axis=0)
+        maxs = np.max(shell_pts, axis=0)
+        extents = maxs - mins
+        vol_airbox = float(np.prod(extents))
+        q_shell = compute_tet_quality(knt, tets_shell)
+        q_mean, q_min = float(np.mean(q_shell)), float(np.min(q_shell))
+        ext_str = f"[{extents[0]:.1f}, {extents[1]:.1f}, {extents[2]:.1f}]"
+
+        log("\n" + "=" * 70)
+        log("=== AIRBOX MESH ANALYSIS ===")
+        log(f"Core Elements  : {n_core:,}")
+        log(f"Shell Elements : {n_shell:,} (Total: {ijk.shape[0]:,})")
+        log(f"Nodes          : {knt.shape[0]:,}")
+        log(f"Airbox Extents : {ext_str}")
+        log(f"Airbox Volume  : {vol_airbox:.2e}")
+        log(f"Shell Quality  : Mean = {q_mean:.4f}, Min = {q_min:.4f}")
+        log("=" * 70 + "\n")
+    else:
+        log(f"[info] No shell elements added. Core nodes = {knt.shape[0]}, elements = {ijk.shape[0]}")
+
     return knt, ijk
 
 
@@ -697,13 +921,13 @@ def main():
     ap.add_argument(
         "--K",
         type=float,
-        default=None,
+        default=1.5,
         help="Geometric scale factor (> 1) for the outermost shell S_L = K^L * S_0.",
     )
     ap.add_argument(
         "--KL",
         type=float,
-        default=None,
+        default=10.0,
         help="Total outermost geometric scale relative to body (> 1).",
     )
     ap.add_argument(
@@ -765,6 +989,13 @@ def main():
     )
     ap.add_argument("--no-exact", action="store_true", help="Suppress TetGen exact arithmetic (-X).")
     ap.add_argument("--verbose", action="store_true", help="Enable verbose TetGen output.")
+    ap.add_argument(
+        "--shell-type",
+        type=str,
+        default="hull",
+        choices=["triangles", "hull"],
+        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+    )
 
     # NEW: optional VTU export of the merged (body + shells) mesh
     ap.add_argument(
@@ -799,6 +1030,7 @@ def main():
         max_steiner=args.max_steiner,
         no_exact=bool(args.no_exact),
         verbose=bool(args.verbose),
+        shell_type=args.shell_type,
     )
     print(f"[ok] merged in-memory mesh: nodes={knt.shape[0]:,}, tets={ijk.shape[0]:,}")
 

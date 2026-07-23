@@ -1,4 +1,4 @@
-"""test_poisson_convergence.py
+"""test_poisson_convergence.py.
 
 Benchmark script for the Poisson solver.
 Compares CG iterations for:
@@ -10,43 +10,45 @@ Compares CG iterations for:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 import time
-import numpy as np
+from pathlib import Path
+
 import jax
+import numpy as np
+
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
+import jax.numpy as jnp  # noqa: E402
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / "src"))
-from fem_utils import TetGeom
-from loop import compute_volume_JinvT, compute_grad_phi_from_JinvT
-from poisson_solve import make_poisson_ops, estimate_spectral_radius, make_solve_U
-import add_shell
-import mesh
+import add_shell  # noqa: E402
+import mesh  # noqa: E402
+from fem_utils import TetGeom  # noqa: E402
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
+from poisson_solve import make_solve_U  # noqa: E402
+
 
 def benchmark_poisson():
+    """Run Poisson solver convergence benchmark."""
     # 1. Setup Geometry (60 nm cube + 8 layer shell)
     L_cube = 60.0
     h = 2.0
 
     print(f"Creating mesh: cube={L_cube}nm, h={h}nm...")
     knt0, ijk0, _, _ = mesh.run_single_solid_mesher(
-        geom='box', extent=f"{L_cube},{L_cube},{L_cube}", h=h, 
-        backend='grid', no_vis=True, return_arrays=True
+        geom="box", extent=f"{L_cube},{L_cube},{L_cube}", h=h, backend="grid", no_vis=True, return_arrays=True
     )
 
     tmp_path = "tmp_benchmark.npz"
     np.savez(tmp_path, knt=knt0, ijk=ijk0)
     knt, ijk = add_shell.run_add_shell_pipeline(in_npz=tmp_path, layers=8, K=1.4, h0=h, verbose=False)
-    if Path(tmp_path).exists(): Path(tmp_path).unlink()
+    if Path(tmp_path).exists():
+        Path(tmp_path).unlink()
 
     # Save final mesh for C++ comparison
     final_mesh_path = "cube_60nm_shell.npz"
     np.savez(final_mesh_path, knt=knt, ijk=ijk)
     print(f"Final mesh saved to {final_mesh_path}. Total elements: {ijk.shape[0]}")
-
-
 
     tets = ijk[:, :4].astype(np.int64)
     conn32, volume, JinvT = compute_volume_JinvT(knt, tets)
@@ -68,11 +70,7 @@ def benchmark_poisson():
     # 3. Benchmark Loop
     def solve_reporting(precond_type="jacobi"):
         solve_U = make_solve_U(
-            geom, Js_lookup, 
-            precond_type=precond_type, 
-            cg_tol=1e-10, 
-            cg_maxiter=2000, 
-            boundary_mask=boundary_mask
+            geom, Js_lookup, precond_type=precond_type, cg_tol=1e-10, cg_maxiter=2000, boundary_mask=boundary_mask
         )
 
         def run_solve():
@@ -103,7 +101,6 @@ def benchmark_poisson():
             print(f"{pt.capitalize():<12}: FAILED ({e})")
 
     print("-" * 75)
-
 
 
 if __name__ == "__main__":

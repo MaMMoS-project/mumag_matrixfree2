@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Matrix-free micromagnetic simulations with JAX"
 authors = ["MaMMoS-project"]
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-arm64", "osx-64"]
+platforms = ["linux-64", "osx-arm64", "win-64", "osx-64"]
 
 [dependencies]
 python = ">=3.11"
@@ -14,14 +14,32 @@ matplotlib = "*"
 pyamg = "*"
 meshio = "*"
 meshpy = "*"
-neper = "*"
 pip = "*"
 pytest = "*"
 ruff = "*"
 pre-commit = ">=4.6.0,<5"
+gmsh = ">=4.12.2,<5"
+
+[target.unix.dependencies]
+neper = "*"
+
+[target.linux-64.dependencies]
+mkl = "*"
+mkl-include = "*"
+libblas = { version = "*", build = "*mkl" }
+sparse_dot_mkl = "*"
+_openmp_mutex = { version = "*", build = "*_llvm" }
+cmake = "*"
+make = "*"
+cxx-compiler = "*"
+
+[target.linux-64.activation]
+scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
 jaxopt = "*"
+mammos-entity = "*"
+mammos-analysis = "*"
 
 [feature.cpu.pypi-dependencies]
 jax = "*"
@@ -35,17 +53,36 @@ cpu = ["cpu"]
 cuda = ["cuda"]
 
 [tasks]
+# Compile locally to /tmp/ to avoid Slurm filesystem race conditions
+compile = "bash compile_local.sh"
+
+# Compile globally to the shared ../lib/ folder on Ceph
+compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
+
 # Run unit tests. Usage: pixi run test
-test = "JAX_ENABLE_X64=True pytest tests/"
-
-# Run the demagnetization curve sample. 
-# CPU: pixi run sample
-# GPU: pixi run -e cuda sample
-sample = { cmd = "cd samples && ./run_sample.sh" }
-
-# Run Poisson solver performance benchmark (Python vs C++).
-# Usage: pixi run benchmark
-benchmark = { cmd = "cd benchmarking && ./run_benchmarks.sh" }
-
+test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/" }
 # Clean temporary mesh files
-clean = "rm -f *.npz samples/*.npz benchmarking/*.npz"
+clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
+
+
+[target.linux-64.tasks]
+# Run the demagnetization curve sample on Linux (uses MKL). CPU: pixi run sample, GPU: pixi run -e cuda sample
+sample = { cmd = "cd samples && ./run_cube.sh" }
+
+[target.osx-arm64.tasks]
+# Run the demagnetization curve sample on Mac (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
+[target.osx-64.tasks]
+# Run the demagnetization curve sample on Mac (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
+[target.win-64.tasks]
+# Run the demagnetization curve sample on Windows (bypasses MKL)
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
+
+[feature.cuda.tasks]
+# Run the demagnetization curve sample on GPU.
+# Usage: pixi run sample-gpu (will automatically use cuda env if default-environment is set, or pixi run -e cuda sample-gpu)
+sample-gpu = { cmd = "cd samples && ./run_cube.sh" }

@@ -1,0 +1,94 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+
+\title{Multi-GPU Parallelism Strategies for Micromagnetic Minimizers in JAX}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+Based on the \texttt{tr} minimizer and \texttt{poisson\_solve.py} source code, we can make a highly accurate, realistic estimate of communication overhead versus compute speedup. The fundamental difference between parallelization strategies lies in \textbf{where the communication happens relative to the algorithmic loops}.
+
+\section{Assumptions for a Realistic Large Mesh}
+\begin{itemize}
+    \item \textbf{Nodes ($N$):} 10 Million ($10^7$) nodes.
+    \item \textbf{Data Type:} \texttt{float64} (8 bytes per scalar).
+    \item \textbf{Scalar vector size} (e.g., $U$ or $p$): $N \times 8 \text{ bytes} \approx \textbf{80 MB}$.
+    \item \textbf{Vector field size} (e.g., $m$ or $v$): $3N \times 8 \text{ bytes} \approx \textbf{240 MB}$.
+    \item \textbf{Inner TR Iterations ($K_{TR}$):} 5 iterations.
+    \item \textbf{Poisson PCG Iterations ($K_{CG}$):} 100 iterations (a conservative estimate for a preconditioned Poisson solve).
+    \item \textbf{Compute Baseline:} $\sim$2.5 ms for one full matrix-vector product (SpMV) on a single GPU.
+    \item \textbf{Line Search:} \texttt{pcohen\_hs} averages \textbf{2 trial steps} (evaluating Poisson twice). \texttt{tr} evaluates Poisson \textbf{exactly 1 time}.
+    \item \textbf{Hardware:} 4 GPUs. PCIe Gen4 ($\sim$25 GB/s) or NVLink ($\sim$300 GB/s).
+\end{itemize}
+
+\section{Optimal GPU Assignment for Method 1 (Task Parallelism)}
+The beauty of Method 1 is that the optimal mapping of sparse matrices to GPUs is \textbf{universal}. It remains exactly the same regardless of whether you use PCIe or NVLink, and regardless of whether you use the \texttt{tr} or \texttt{pcohen\_hs} minimizer. The goal is to balance the memory load and isolate the heavy inner loops so they do not compete for hardware resources.
+
+To maximize concurrency, you must use the split spatial components (\texttt{Dx\_sparse, Dy\_sparse, Dz\_sparse} and \texttt{Gx\_sparse, Gy\_sparse, Gz\_sparse}) rather than the concatenated \texttt{D} and \texttt{G} matrices.
+
+\subsection*{Recommended 4-GPU Mapping}
+\begin{itemize}
+    \item \textbf{GPU 0:} \texttt{A\_sparse} (Poisson Stiffness)
+    \item \textbf{GPU 1:} \texttt{K\_eff\_sparse} (Exchange/Anisotropy), \texttt{Dx\_sparse}, \texttt{Gx\_sparse}
+    \item \textbf{GPU 2:} \texttt{Dy\_sparse}, \texttt{Gy\_sparse}
+    \item \textbf{GPU 3:} \texttt{Dz\_sparse}, \texttt{Gz\_sparse}
+\end{itemize}
+
+\subsection*{Why this mapping is optimal for all combinations:}
+\begin{enumerate}
+    \item \textbf{Hardware Isolation:} The Poisson PCG loop (\texttt{A\_sparse}) is the most memory-bandwidth intensive operation. By dedicating GPU 0 solely to \texttt{A\_sparse}, the PCG loop gets 100\% of GPU 0's resources without being interrupted.
+    \item \textbf{Hidden Physics (Inner Iterations):} Both \texttt{tr} and \texttt{pcohen\_hs} rely on an inner preconditioner/Newton loop that exclusively uses \texttt{K\_eff\_sparse}. By placing \texttt{K\_eff\_sparse} on GPU 1, it runs on completely separate hardware from GPU 0. Furthermore, when evaluating the final energy, JAX will schedule \texttt{K\_eff\_sparse} (on GPU 1) to run \textit{simultaneously} in the background while the Poisson PCG solver runs on GPU 0.
+    \item \textbf{Perfect Spatial Concurrency:} During the setup phase (computing the RHS), GPUs 1, 2, and 3 will fire simultaneously to compute \texttt{Dx}, \texttt{Dy}, and \texttt{Dz}. After the Poisson solve finishes, they will fire simultaneously again to compute the Demag gradients \texttt{Gx}, \texttt{Gy}, and \texttt{Gz}.
+    \item \textbf{Memory Balance:} \texttt{K\_eff\_sparse} is the largest matrix ($3N \times 3N$). GPUs 1, 2, and 3 only hold tiny $N \times N$ directional matrices, meaning GPU 1 has plenty of free VRAM to comfortably host \texttt{K\_eff\_sparse}.
+\end{enumerate}
+
+\section{Performance Estimates per Outer Minimizer Step}
+
+\begin{table}[h]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrlrl}
+\toprule
+\textbf{Minimizer} & \textbf{Method} & \textbf{Interconnect} & \textbf{Comm. Vol.} & \textbf{Comm. Time} & \textbf{Compute} & \textbf{Total Time} & \textbf{Summary \& Bottlenecks} \\ \midrule
+\texttt{tr} & Task (M1) & PCIe & 0.63 GB & 26 ms & 270 ms & \textbf{$\sim$296 ms} & \textbf{Best for PCIe.} Sequential compute, low comms. \\
+\texttt{tr} & Task (M1) & NVLink & 0.63 GB & 2 ms & 270 ms & \textbf{$\sim$272 ms} & Fails to use NVLink to speed up computation. \\
+\texttt{tr} & Data (M2) & PCIe & 9.53 GB & 390 ms & 68 ms & \textbf{$\sim$458 ms} & \textbf{AVOID.} 4x speedup destroyed by 10GB PCIe transfer. \\
+\texttt{tr} & Data (M2) & NVLink & 9.53 GB & 33 ms & 68 ms & \textbf{$\sim$101 ms} & \textbf{Best for NVLink.} Massive 4x compute speedup. \\ \midrule
+\texttt{pcohen} & Task (M1) & PCIe & 1.25 GB & 51 ms & 528 ms & \textbf{$\sim$579 ms} & Takes $\sim$2x longer due to line search Poisson solves. \\
+\texttt{pcohen} & Task (M1) & NVLink & 1.25 GB & 4 ms & 528 ms & \textbf{$\sim$532 ms} & Bound by sequential compute of the line search. \\
+\texttt{pcohen} & Data (M2) & PCIe & 17.89 GB & 733 ms & 132 ms & \textbf{$\sim$865 ms} & \textbf{WORST.} Line search forces $\sim$18 GB transfer. \\
+\texttt{pcohen} & Data (M2) & NVLink & 17.89 GB & 61 ms & 132 ms & \textbf{$\sim$193 ms} & Fast, but $\sim$2x slower than \texttt{tr} on NVLink. \\ \bottomrule
+\end{tabular}%
+}
+\caption{Estimated performance metrics across different configurations.}
+\end{table}
+
+\section{Key Takeaways}
+
+\begin{enumerate}
+    \item \textbf{Hardware dictates the Method:}
+    \begin{itemize}
+        \item \textbf{No NVLink (PCIe only):} You are strictly bound to \textbf{Method 1 (Task Parallelism / 1 Matrix per GPU)}. Any attempt to use \texttt{all\_gather} across the rows (Method 2) will saturate the motherboard and slow your code down dramatically.
+        \item \textbf{With NVLink:} You must use \textbf{Method 2 (Data Parallelism)}. Method 1 will leave 75\% of your immense compute power sitting idle.
+    \end{itemize}
+
+    \item \textbf{Algorithm dictates the Baseline Time:}
+    \begin{itemize}
+        \item \textbf{\texttt{tr} minimizes Poisson solves:} Because Trust-Region relies on its inner loop (which uses only $K_{eff}$ and is completely isolated from the Poisson equation) and evaluates the actual energy exactly \textit{once}, it is inherently faster per-step than \texttt{pcohen\_hs}.
+        \item \textbf{\texttt{pcohen\_hs} doubles communication and compute:} The Armijo line search is a brute-force exploratory loop. If it takes 2 trial steps to find a descent direction, it has to completely solve the Poisson equation twice, doubling the PCG iterations and doubling the massive cross-GPU data transfers.
+    \end{itemize}
+\end{enumerate}
+
+\section{Final Verdict}
+If you want the fastest possible simulation that fits in memory on a multi-GPU node \textit{without} NVLink, use \textbf{\texttt{tr} + Method 1} (and implement the \texttt{energy\_only} scalar reduction trick to lower the 26 ms communication time even further). If you have NVLink, use \textbf{\texttt{tr} + Method 2}.
+
+\end{document}

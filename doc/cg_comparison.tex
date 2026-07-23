@@ -1,0 +1,191 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\title{High-Performance Manifold Optimization in JAX Micromagnetics: Overcoming CPU Bottlenecks via GPU-Resident CSR SpMV and Comparison with C++}
+\author{MaMMoS Project Team}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report provides a rigorous benchmarking and performance comparison between the high-performance C++/OpenCL micromagnetics code (\texttt{b4vex}) and a new GPU-resident JAX-based framework. We evaluate the convergence properties and wall-clock times of several preconditioned manifold minimizers, including Cohen's Hestenes-Stiefel conjugate gradient, Local Trust Region (\texttt{tr}), and Preconditioned Trust Region (\texttt{ptr}). By transitioning from Coordinate (COO) to Compressed Sparse Row (CSR) format and utilizing NVIDIA cuSPARSE SpMV operations via JAX, we overcome CPU compilation and memory-bandwidth bottlenecks. Benchmarked on a large-scale NdFeB cube mesh containing 1.35 million nodes and 8.08 million tetrahedral elements, the JAX-based Hestenes-Stiefel minimizer achieves a $3.0\times$ wall-clock speedup compared to the C++ baseline, executing the full hysteresis loop in 681 seconds.
+\end{abstract}
+
+\section{Introduction}
+Micromagnetic simulations require the minimization of the Gibbs free energy subject to the non-convex pointwise unit-length constraint of the magnetization vector field, $|\mathbf{m}| = 1$. Gradient descent methods must either use projection techniques or inherently preserve this constraint via Riemannian manifold optimization. This paper compares several Conjugate Gradient variants to establish a baseline for future expansions of the matrix-free JAX framework.
+
+\section{Model and Methodology}
+
+\subsection{Cubic Test Sample}
+The benchmark is conducted on a ferromagnetic cube with dimensions $20 \times 20 \times 20$ nm representing a NdFeB-type grain. To accurately resolve the steep magnetic domain wall profiles, the geometry is discretized using a highly refined tetrahedral finite element mesh. The core computational domain is padded with an ``airbox'' consisting of 4 layers and a geometric expansion factor $K = 2.0$ with an initial air layer thickness of $h_{0,air} = 2$ nm. This results in a massive unstructured mesh containing $8,082,858$ elements and $1,347,781$ nodes, spanning coordinates from $-825$ nm to $+825$ nm. The simulation traces a magnetic hysteresis loop from an external field of $B_{ext} = +2.0$ T down to $-4.0$ T (stopping early when switching is complete, reaching $M_{\text{final}} \le -0.05$ T), passing through the coercive switching field.
+
+\subsection{Demagnetizing Field Computation}
+The core performance bottleneck in finite element micromagnetics is the evaluation of the demagnetizing field, which requires solving a Poisson equation for the magnetic scalar potential. In our JAX-based framework, we employ a completely \textit{matrix-free} assembly strategy. Global stiffness matrices are never instantiated; instead, spatial operators are applied element-wise utilizing explicit scalar-vector arithmetic and XLA kernel fusion to maximize GPU/CPU register utilization and cache locality.
+
+The Poisson equation is solved using a linear Preconditioned Conjugate Gradient (PCG) solver. Given the pure Neumann boundary conditions of the demagnetization problem, both the right-hand side and the initial guess are projected to zero-mean to guarantee solvability. The solver is preconditioned using Algebraic Multigrid (AMGCL), requiring an inner iteration loop (denoted $N_{\text{demag}}$) for every energy evaluation.
+
+\subsection{Energy Minimization Framework}
+Energy minimization is treated as the computation of $p$-Harmonic flows. The unit-length constraint is strictly preserved at each iteration using the Cayley transform, enabling unconstrained optimization techniques to be applied on the spherical manifold. The step acceptance is governed by an Armijo line-search algorithm, and the overall convergence at each field step is dictated by the Gill and Murray \cite{gill1981practical} criteria (U1-U4). 
+
+\section{Optimization Algorithms on the Spherical Manifold}
+We evaluate several variants of the Conjugate Gradient method, differing fundamentally in their manifold-awareness and preconditioning strategies.
+
+\subsection{Spatial Preconditioning Framework}
+The severe numerical stiffness introduced by the micromagnetic exchange operator necessitates the use of spatial preconditioning. Let $\mathbf{g}_{\text{raw}}$ denote the raw unconstrained energy gradient with respect to $\mathbf{m}$, and $\mathbf{g}_{\text{tan}} = \mathbf{g}_{\text{raw}} - (\mathbf{g}_{\text{raw}} \cdot \mathbf{m})\mathbf{m}$ denote its projection onto the local tangent space of the spherical manifold.
+
+For the preconditioned Conjugate Gradient methods (\texttt{pcg}, \texttt{pcohen}, \texttt{pcohen\_hs}), instead of using $\mathbf{g}_{\text{tan}}$ directly as the descent direction, we compute a smoothed gradient vector $\mathbf{y}$ by solving the extensive preconditioner system:
+\begin{equation}
+    P \mathbf{y} = \mathbf{g}_{\text{tan}}
+\end{equation}
+where $P$ is a positive-definite operator approximating the dominant terms of the system's Hessian (primarily the negative Laplacian corresponding to the exchange interaction). This system is solved iteratively using an inner (linear) Conjugate Gradient method. 
+
+To optimize computational performance, the inner solver is dynamically truncated using an automated forcing sequence (a Steihaug-style exit criterion). The inner solve stops when the relative residual reaches a tolerance of $\text{tol} = \min(\eta_{\text{base}}, \|\mathbf{g}_{\text{tan}}\|_\infty^\alpha)$, where $\eta_{\text{base}} \in (0, 1)$ is the base tolerance and $\alpha > 0$ controls the superlinear convergence rate as the outer optimizer approaches the minimum. This ensures that we do not waste computational resources over-solving the preconditioner system when the outer non-linear CG algorithm is still far from the true energy minimum.
+
+Once the smoothed gradient $\mathbf{y}$ is computed, the current search direction $\mathbf{d}$ is updated using the previous step's search direction $\mathbf{d}_{\text{prev}}$ and a scalar update parameter $\beta$, generally taking the form $\mathbf{d} = -\mathbf{y} + \beta \mathbf{d}_{\text{prev}}$.
+
+\subsection{Unpreconditioned Cohen Method and Adaptive Step Sizes}
+To explicitly demonstrate the absolute necessity of spatial preconditioning, we evaluate the unpreconditioned Cohen method (\texttt{cohen}). Instead of solving the global system $P \mathbf{y} = \mathbf{g}_{\text{tan}}$ to compute a smoothed direction, it only applies a local diagonal mass-lumping preconditioner. Let $M_{\text{nodal}}$ be a diagonal matrix containing the magnetic integration volumes (node masses) of the unstructured tetrahedral mesh. The tangent gradient is defined by scaling the unconstrained gradient by the inverse node masses prior to tangent projection, $\mathbf{g}_{\text{tan}} = \Pi_{\mathbf{m}}(M_{\text{nodal}}^{-1} \mathbf{g}_{\text{raw}})$, where $\Pi_{\mathbf{m}}(\mathbf{v}) = \mathbf{v} - (\mathbf{v} \cdot \mathbf{m})\mathbf{m}$ is the tangent projection operator.
+
+While this diagonal scaling is strictly necessary to correct for the geometric irregularities of the mesh (without which the solver would fail entirely), it provides zero spatial smoothing. To mitigate the inefficiency of un-smoothed descent paths, we investigate heuristics for adaptively predicting the initial line-search step length $\tau_0$. Following standard optimization literature (Nocedal and Wright \cite{nocedal1999numerical}), we implement two strategies to dynamically estimate the step size for step $k$, utilizing the known properties from the previous step $k-1$:
+\begin{enumerate}
+    \item \textbf{Energy-based heuristic (\texttt{cohen (energy)})}: Assumes the first-order change in energy will be similar to the previous step. The step length is approximated as:
+    \begin{equation}
+        \tau_0 = \frac{2(E_k - E_{k-1})}{\nabla E_k^T \mathbf{p}_k}
+    \end{equation}
+    where $E_k$ is the total energy at step $k$, and $\mathbf{p}_k$ is the descent search direction.
+    \item \textbf{Gradient-based heuristic (\texttt{cohen (gradient)})}: Assumes the change in the directional derivative is proportional to the step length. It is computed as:
+    \begin{equation}
+        \tau_0 = \tau_{\text{prev}} \frac{\nabla E_{k-1}^T \mathbf{p}_{k-1}}{\nabla E_k^T \mathbf{p}_k}
+    \end{equation}
+    where $\tau_{\text{prev}}$ is the accepted step length from iteration $k-1$.
+\end{enumerate}
+Crucially, because the search direction $\mathbf{p}_k$ is formed from $\mathbf{g}_{\text{tan}}$ which is scaled by $M_{\text{nodal}}^{-1}$, it represents an intensive vector field. Consequently, the directional derivative $\nabla E_k^T \mathbf{p}_k$ is an extensive scalar, ensuring that both adaptive step size estimators are inherently scale-invariant and independent of the total mesh volume. We compare these adaptive methods against a baseline using a fixed initial guess of $\tau_0=1.0$ for all steps (\texttt{cohen (fixed)}).
+
+\subsection{Standard PCG (\texttt{pcg})}
+A naive implementation of the preconditioned conjugate gradient algorithm that updates the search direction using standard Euclidean vector addition. It does not rigorously account for the curvature of the $S^2$ manifold during the transport of vectors between iteration steps.
+
+\subsection{Cohen's Conjugate Gradient (\texttt{pcohen})}
+As originally detailed by Cohen, Lin, and Luskin \cite{Cohen1989}, the proper formulation of the conjugate gradient update on a pointwise constrained manifold requires transporting the previous search direction to the tangent space of the new iterate. In equations (6.1) through (6.4) of their work, they demonstrated that using a transported (or projected) search direction $\tilde{\mathbf{p}}^l$ preserves the exact conjugacy relation $\mathbf{r}^{l+1} \cdot \tilde{\mathbf{p}}^l = 0$ (Eq. 6.3), which rigorously guarantees $\mathbf{r}^{l+1} \cdot \mathbf{r}^{l+1} = \mathbf{r}^{l+1} \cdot \mathbf{p}^{l+1}$ (Eq. 6.4). While Cohen et al. noted that omitting this transport (their Eq. 6.2) did not significantly degrade performance in their liquid crystal tests, our micromagnetic hysteresis simulations reveal that this manifold-aware transport is absolutely essential to prevent line-search collapse.
+
+In our implementation, the update parameter $\beta$ is computed using the \textbf{Polak-Ribière (PR)} formula:
+\begin{equation}
+    \beta_{\text{PR}} = \max\left(0, \frac{\langle \mathbf{y}, \mathbf{g}_{\text{tan}} - \mathbf{g}_{\text{prev}} \rangle}{\langle \mathbf{y}_{\text{prev}}, \mathbf{g}_{\text{prev}} \rangle} \right)
+\end{equation}
+where $\mathbf{g}_{\text{prev}}$ and $\mathbf{y}_{\text{prev}}$ are the tangent gradient and smoothed gradient from the previous iteration, respectively, and $\langle \cdot, \cdot \rangle$ denotes the standard Euclidean inner product.
+
+\subsection{Hestenes-Stiefel Update (\texttt{pcohen\_hs})}
+An alternative formulation uses the \textbf{Hestenes-Stiefel (HS)} formula, which guarantees conjugacy if the line search is exact and provides a built-in self-correction mechanism for inexact Armijo line searches:
+\begin{equation}
+    \beta_{\text{HS}} = \max\left(0, \frac{\langle \mathbf{y}, \mathbf{g}_{\text{tan}} - \mathbf{g}_{\text{prev}} \rangle}{\langle \mathbf{d}_{\text{prev}}, \mathbf{g}_{\text{tan}} - \mathbf{g}_{\text{prev}} \rangle} \right)
+\end{equation}
+
+\subsection{Exact Cayley Transport (\texttt{pcohen\_exact} and \texttt{pcohen\_hs\_exact})}
+While standard Cohen methods project vectors into the tangent space, the exact variants mathematically transport the gradient and search directions along the spherical manifold using the rigorous Cayley transport operator. This preserves the geometric properties of the vectors perfectly, though it introduces minor computational overhead per iteration.
+
+\subsection{Anderson Accelerated Preconditioned Gradient (\texttt{aapg})}
+Anderson Acceleration (AA) is a convergence acceleration technique for fixed-point iterations. By treating the preconditioned gradient $z = P^{-1} \mathbf{g}_{\text{tan}}$ as a residual vector, the \texttt{aapg} method constructs an accelerated descent direction by taking an optimal linear combination of the $m$ previous iterates and their associated residuals. This optimally dampens the oscillatory behavior typical of standard gradient descent. To strictly respect the manifold constraint, the linear combinations are performed in the Euclidean embedding space and then mapped back to the manifold via the Cayley transform. 
+
+\subsection{Exact Anderson Accelerated (\texttt{aapg\_exact})}
+The \texttt{aapg\_exact} variant refines the standard Anderson Acceleration by strictly transporting all historical residuals and iterate differences to the local tangent space of the current iterate using the exact Cayley transport operator, before performing the least-squares optimization. This rigorously preserves the geometric history on the manifold, theoretically offering more accurate acceleration coefficients at the cost of additional vector transport operations.
+
+\subsection{Preconditioned Nesterov Accelerated Gradient \cite{Nesterov1983} (\texttt{pnag})}
+Nesterov Accelerated Gradient (NAG) incorporates momentum to dramatically accelerate the convergence rate of standard gradient descent. The preconditioned variant (\texttt{pnag}) evaluates the exact physical gradient at a Nesterov look-ahead point $\mathbf{m}_{\text{look}} = \mathbf{m}_k + \mu \mathbf{v}_{\text{prev}}$. This look-ahead gradient is then preconditioned via $P^{-1}$ and used to correct the velocity vector. In our framework, we have augmented standard PNAG with an Armijo line search along the corrected velocity direction to dynamically adjust the learning rate, ensuring monotonic energy decrease and guaranteeing robust convergence even when the momentum term becomes highly oscillatory.
+\subsection{Limited-Memory BFGS (\texttt{lbfgs})}
+Limited-Memory BFGS \cite{Nocedal1980}
+While theoretically a quasi-Newton method rather than a Conjugate Gradient algorithm, we include the unpreconditioned Limited-Memory BFGS (\texttt{lbfgs}) to demonstrate the mathematical rigor required to apply history-based optimization on a manifold. Standard L-BFGS approximates the inverse Hessian using secant equations formed from historical step differences $\mathbf{s}_k = \mathbf{m}_k - \mathbf{m}_{k-1}$ and gradient differences $\mathbf{y}_k = \mathbf{g}_k - \mathbf{g}_{k-1}$. To achieve convergence in micromagnetics, two critical geometric and metric corrections are absolutely essential:
+\begin{enumerate}
+    \item \textbf{Metric Consistency:} The inner products used to compute the recursive L-BFGS coefficients must respect the spatial geometry of the unstructured finite element mesh. We achieve this implicitly by defining the step vectors $\mathbf{s}_k$ as \textit{intensive} fields, and the gradient differences $\mathbf{y}_k$ as \textit{extensive} fields (unscaled by the inverse mass matrix $M_{\text{nodal}}^{-1}$). This yields a true directional derivative $\langle \mathbf{s}_k, \mathbf{y}_k \rangle$ invariant to the mesh density. Furthermore, the initial inverse Hessian scalar scaling $\gamma_k$ is computed using the metric-aware extensive product:
+    \begin{equation}
+        \gamma_k = \frac{\langle \mathbf{s}_k, \mathbf{y}_k \rangle}{\langle \mathbf{y}_k, M_{\text{nodal}}^{-1} \mathbf{y}_k \rangle}
+    \end{equation}
+    \item \textbf{Manifold Vector Transport:} The stored history arrays $\mathbf{S}$ and $\mathbf{Y}$ contain vectors belonging to the tangent spaces of previous iterates. Because the tangent plane of the spherical manifold changes at every point, all historical vectors must be rigorously parallel-transported (projected) into the local tangent space of the current iterate $\mathbf{m}_k$ at every step. If this transport is omitted, the linear combination of history vectors yields a search direction with massive non-physical radial components, causing the line-search step to collapse.
+\end{enumerate}
+
+\subsection{Preconditioned L-BFGS (\texttt{plbfgs})}
+To maximize convergence on the stiff micromagnetic mesh, we couple the geometric L-BFGS implementation with an Algebraic Multigrid Preconditioned Conjugate Gradient (AMG-PCG) spatial smoother. The AMG-PCG preconditioner $P^{-1}$ acts as the initial inverse Hessian approximation $H_0$ within the L-BFGS two-loop recursion. Because $P^{-1}$ naturally maps the extensive gradient into a preconditioned intensive vector field, it inherently satisfies the metric consistency requirements. This relies entirely on the AMG-PCG operator to capture the high-frequency spatial stiffness, while the quasi-Newton history arrays (which are rigorously parallel-transported at every step) resolve the low-frequency spherical manifold curvature.
+
+\subsection{Damped Preconditioned L-BFGS (\texttt{dplbfgs})}
+To further regularize the highly non-linear secant equations, the Damped Preconditioned L-BFGS (\texttt{dplbfgs}) incorporates Powell Damping on the extensive gradient differences $\mathbf{y}_k$. The method adaptively linearly interpolates between the true extensive gradient difference $\mathbf{y}_k$ and the preconditioned step $P \mathbf{s}_k$ (where $P$ is the AMG spatial stiffness operator) whenever the curvature condition $\langle \mathbf{s}_k, \mathbf{y}_k \rangle$ threatens to become non-positive-definite. By substituting the dynamically damped $\mathbf{y}_{\text{damped}}$ into the rigorously manifold-transported L-BFGS history arrays, the algorithm guarantees stable positive-definite curvature while retaining the intensive-extensive metric consistency of the spatial preconditioner.
+
+\subsection{L-BFGS Preconditioned Cohen Method (\texttt{pcohen\_lbfgs})}
+The \texttt{pcohen\_lbfgs} method is a powerful hybrid approach that completely replaces the computationally expensive AMG-PCG spatial smoother with the L-BFGS inverse Hessian approximation. Instead of solving a linear Poisson system for the preconditioner, this method computes the preconditioned descent direction $\mathbf{z} = H_k \mathbf{g}_{\text{tan}}$ by passing the tangent gradient through the rigorously manifold-transported L-BFGS history arrays. This direction $\mathbf{z}$ is then injected into the Cohen Polak-Ribière Conjugate Gradient update to formulate the final line-search direction. By entirely eliminating the CPU-bound AMG smoother ($N_{\text{preco}} = 0$) and retaining the computation strictly on the GPU, this method dramatically reduces the wall-clock overhead per step while maintaining a highly accurate, history-aware estimation of the non-linear energy landscape curvature.
+
+\subsection{Split Truncated Newton (\texttt{tn\_split})}
+The Split Truncated Newton method (\texttt{tn\_split}) is a mathematically precise realization of Preconditioned Steepest Descent, where the preconditioner is exactly defined as the local geometric Hessian (exchange and anisotropy interactions, dropping the non-local demagnetization integral). Rather than using an outer Conjugate Gradient loop (which would be redundant and mathematically violate tangent space orthogonality due to normal Hessian components), \texttt{tn\_split} directly solves the local Newton system $P \mathbf{d} = -\mathbf{g}_{\text{tan}}$ at every step using the AMG-PCG solver. Crucially, the inner solver integrates a Steihaug-Toint negative curvature detection mechanism with a strict zero-crossing threshold ($\mathbf{p}^T H \mathbf{p} \le 0.0$), ensuring that it seamlessly falls back to the steepest descent direction upon encountering non-convex regions of the energy landscape without suffering from false-positive aborts due to scaling issues near local minima.
+
+\subsection{Local Trust Region (\texttt{tr})}
+The Local Trust Region method (\texttt{tr}) abandons the line-search entirely in favor of a dynamically constrained Steihaug-Toint search. Similar to \texttt{tn\_split}, the preconditioner serves as the local geometric Hessian. The AMG-PCG solver iteratively minimizes the local quadratic model while strictly enforcing an intensive trust region boundary governed by radius $\Delta$. If the inner solver encounters negative curvature or attempts to step outside the trust region, it mathematically computes the exact intersection with the boundary and terminates. By updating $\Delta$ dynamically based on the classic Nocedal-Wright ratio of actual versus predicted energy reduction, \texttt{tr} rigorously prevents overstepping without requiring any redundant function evaluations or extra Poisson solves.
+
+\subsection{Preconditioned Trust Region (\texttt{ptr})}
+To maximize theoretical accuracy, the Preconditioned Trust Region method (\texttt{ptr}) combines the exact full non-local Hessian with the AMG-PCG spatial smoother. It solves the exact same quadratic model as classical Trust Region, but dynamically preconditions the inner Steihaug-Toint loop using the inverse local Hessian $P^{-1}$. This forces the Steihaug solver to step through a perfectly smoothed energy landscape, driving the required number of outer Newton steps to the absolute theoretical minimum at the cost of evaluating the non-local Poisson demagnetization solver on every inner iteration.
+
+\subsection{Unpreconditioned Wen-Goldfarb (\texttt{wg\_np})}
+The Wen-Goldfarb algorithm (\texttt{wg\_np}) \cite{goldfarb2009curvilinear} is a pure curvilinear search method utilizing Barzilai-Borwein (BB) spectral step sizes. Unlike preconditioned methods, it relies solely on the raw tangent gradient. The algorithm strictly bounds the step size and alternates between two BB estimators ($\tau_1$ and $\tau_2$) to dynamically capture the local inverse Rayleigh quotient. Because the BB step lengths inherently construct a scale-invariant secant approximation over consecutive steps, applying a dynamic spatial preconditioner $P(\mathbf{m})$ mathematically destroys the required historical consistency. Thus, this variant completely drops the preconditioner, allowing the alternating BB steps to blindly traverse the stiff spherical manifold efficiently, switching to pure BB steps after two initial Armijo line search steps.
+
+\section{Benchmarking Results}
+
+Table \ref{tab:results} summarizes the cumulative metrics gathered over the entire hysteresis loop. The metrics include:
+\begin{itemize}
+    \item $N_{\text{iter}}$: Total outer gradient descent steps.
+    \item $N_f$: Total energy/gradient function evaluations (line search steps).
+    \item $N_{\text{preco}}$: Total iterations required to solve the preconditioner system $\mathbf{y} = P^{-1}\mathbf{g}$.
+    \item $N_{\text{demag}}$: Total inner PCG iterations for the demagnetizing field Poisson solver.
+    \item Time: Total simulation wall-clock time.
+\end{itemize}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{lrrrrr}
+        \toprule
+        \textbf{Method} & \textbf{Time (s)} & $N_{\text{iter}}$ & $N_f$ & $N_{\text{preco}}$ & $N_{\text{demag}}$ \\
+        \midrule
+        \texttt{b4vex} (C++ Reference) & 2043.2 & \textbf{10,475} & 23,086 & 102,025 & \textbf{194,927} \\
+        \texttt{pcohen\_hs} (JAX assembled CSR) & \textbf{681.2} & 13,071 & 15,859 & \textbf{97,262} & 186,072 \\
+        \texttt{tr} (JAX assembled CSR)       & 1074.5 & 23,725 & 23,725 & 116,079 & 311,049 \\
+        \texttt{ptr} (JAX assembled CSR)      & 1700.0 & 11,196 & \textbf{11,196} & 206,539 & 562,250 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Cumulative performance metrics across the NdFeB cube hysteresis loop (1.35 million nodes, 8.08 million elements) on an NVIDIA A100 GPU.}
+    \label{tab:results}
+\end{table}
+
+\section{Discussion}
+
+\subsection{Overcoming CPU Compilation and Memory-Bandwidth Bottlenecks}
+The initial implementation of assembled operators in JAX used the Block Coordinate (BCOO) sparse format. While BCOO is suitable for certain GPU operations, it caused severe compilation hangs in XLA when mixed with non-sparse JAX operators, and it suffered from slow execution on large-scale meshes due to sub-optimal memory access patterns.
+
+By migrating to the Compressed Sparse Row (CSR) format (\texttt{jax.experimental.sparse.CSR}), we resolved the JIT compilation hangs (reducing compile times from over 20 minutes to seconds) and unlocked cuSPARSE SpMV acceleration on the GPU. On the CPU, standard SciPy sparse matrix-vector multiplication is strictly single-threaded, creating a severe bottleneck. To resolve this without introducing package environment conflicts, we implemented a custom JAX PyTree wrapper \texttt{SparseOperator} that dynamically dispatches to \texttt{cusparseSpMV} on the GPU and calls the Intel Math Kernel Library (MKL) sparse BLAS routines via \texttt{sparse\_dot\_mkl} and JAX's \texttt{pure\_callback} on the CPU. This ensures optimal multicore parallel SpMV performance on both platforms.
+
+\subsection{Comparative Analysis: JAX vs. C++ Reference}
+Table \ref{tab:results} provides a direct comparison between the JAX assembled CSR solvers and the C++ OpenCL reference (\texttt{b4vex}) on the same NVIDIA A100 GPU hardware.
+
+The JAX implementations show a massive speedup across all tested solvers:
+\begin{itemize}
+    \item \textbf{\texttt{pcohen\_hs} Speedup:} The JAX Hestenes-Stiefel variant of Cohen's Conjugate Gradient method completes the hysteresis loop in \textbf{681.2 seconds}, compared to \textbf{2043.2 seconds} for the C++ reference. This represents a \textbf{$3.0\times$ wall-clock speedup}. While JAX requires slightly more outer iterations (13,071 vs 10,475), the computational cost per step is dramatically lower.
+    \item \textbf{\texttt{tr} Speedup:} The Local Trust Region solver (\texttt{tr}) in JAX achieves a \textbf{$1.9\times$ speedup} (1074.5 s vs 2043.2 s).
+    \item \textbf{\texttt{ptr} Speedup:} The Preconditioned Trust Region solver (\texttt{ptr}) in JAX achieves a \textbf{$1.2\times$ speedup} (1700.0 s vs 2043.2 s).
+\end{itemize}
+
+The primary reasons for JAX's performance superiority are:
+\begin{enumerate}
+    \item \textbf{Full GPU-Resident Execution:} JAX executes the entire optimization loop (including line searches, tangent projections, and history updates) strictly on the GPU. The C++ reference suffers from overhead due to intermediate CPU-GPU data transfers and sequential execution of outer minimizer steps on the CPU host.
+    \item \textbf{XLA Kernel Fusion:} The JAX/XLA compiler automatically fuses element-wise operators (such as coordinate updates and norm calculations) into single GPU kernels, minimizing memory read/write cycles.
+    \item \textbf{cuSPARSE Efficiency:} The JAX CSR backend maps to highly tuned cuSPARSE kernels, which maximize the memory bandwidth utilization of the A100 GPU.
+\end{enumerate}
+
+\subsection{Trust Region Dynamics}
+The comparison between \texttt{tr} and \texttt{ptr} highlights a fundamental trade-off. The Preconditioned Trust Region (\texttt{ptr}) solver uses the exact non-local Hessian (including demagnetization interactions), requiring only 11,196 outer iterations compared to \texttt{tr}'s 23,725. However, because it evaluates the demagnetization Poisson solver at every inner Steihaug iteration, the total number of Poisson solves explodes to 562,250. This makes each outer step in \texttt{ptr} extremely expensive. In contrast, the Local Trust Region (\texttt{tr}) solver approximates the Hessian using only local interactions (exchange and anisotropy), yielding a much faster wall-clock execution (1074.5 s) despite more outer steps.
+
+\section{Conclusion}
+This report has demonstrated that JAX-based micromagnetic solvers, when backed by the optimized CSR sparse format and full GPU-resident execution, can significantly outperform traditional compiled C++/OpenCL codes. Overcoming the CPU parallelization bottlenecks via MKL callbacks enables a high-performance fallback on CPU cluster nodes, while the GPU-native path delivers a $3.0\times$ speedup over C++ on standard A100 hardware. Future work will extend this framework to multi-node MPI scaling and dynamic thermal calculations.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

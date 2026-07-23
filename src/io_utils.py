@@ -266,3 +266,58 @@ def write_vtu_tetra(
     lines.append("</VTKFile>")
 
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def convert_sim_csv_to_mammos(csv_path: str | Path, out_path: str | Path | None = None, Js_ref: float = 1.0) -> None:
+    """Convert the raw hysteresis.csv into a mammos_entity.EntityCollection CSV.
+
+    Args:
+        csv_path (str | Path): Path to the input raw CSV.
+        out_path (str | Path | None): Path to the output CSV. If None, overwrites csv_path.
+        Js_ref (float): Reference saturation polarization in Tesla. Used to rescale energy density.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        return
+
+    out_path = Path(out_path) if out_path else csv_path
+
+    try:
+        import mammos_entity as me
+    except ImportError:
+        print("[warning] mammos_entity not found, skipping CSV conversion")
+        return
+
+    try:
+        # The first row is the header: config, B_ext_T, J_par_T, E, gnorm
+        data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
+        if data.ndim == 1:
+            data = data[None, :]
+        if data.size == 0:
+            return
+
+        config_col = data[:, 0].tolist()
+        B_ext_col = data[:, 1]
+        J_par_col = data[:, 2]
+
+        c = me.EntityCollection(
+            config=me.Entity("Index", config_col),
+            B_ext_T=me.Entity("MagneticFluxDensity", B_ext_col, "T"),
+            J_par_T=me.Entity("MagneticPolarisation", J_par_col, "T"),
+        )
+
+        # Kd_ref to scale dimensionless energy density to J/m^3
+        MU0_SI = 4e-7 * np.pi
+        Kd_ref = (Js_ref**2) / (2.0 * MU0_SI)
+
+        # Add E and gnorm if they exist
+        if data.shape[1] > 3:
+            E_col = data[:, 3] * Kd_ref
+            c.E = me.Entity("EnergyDensity", E_col, "J/m^3")
+        if data.shape[1] > 4:
+            gnorm_col = data[:, 4] * Kd_ref
+            c.gnorm = me.Entity("EnergyDensity", gnorm_col, "J/m^3")
+
+        c.to_csv(out_path)
+    except Exception as e:
+        print(f"[warning] Failed to convert CSV to mammos_entity format: {e}")
