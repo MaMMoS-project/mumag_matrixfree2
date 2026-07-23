@@ -1,7 +1,7 @@
 """Test standard problem 3."""
 
-from dataclasses import replace
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import jax
@@ -14,7 +14,7 @@ import add_shell
 import mesh
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials_krn, load_params_p2
+from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_params_p2
 from poisson_solve import make_solve_U
 
 jax.config.update("jax_enable_x64", True)
