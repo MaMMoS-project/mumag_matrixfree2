@@ -3410,9 +3410,7 @@ def make_minimizer(
         params_dict = dict(params_static)
         params_dict["sparse_ops"] = sparse_ops
 
-        sparse_ops["M_nodal"] = M_nodal
-        if kwargs.get("B_bias") is not None:
-            sparse_ops["B_bias"] = jnp.asarray(kwargs["B_bias"], dtype=m0.dtype)
+        # Injected in minimize wrapper
 
         m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
         U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
@@ -3437,6 +3435,15 @@ def make_minimizer(
         return kernel(state, B_ext, params_dict)
 
     def minimize(m0, B_ext, **params):
+        sparse_ops = params.get("sparse_ops")
+        if sparse_ops is None:
+            sparse_ops = {}
+            params["sparse_ops"] = sparse_ops
+        
+        sparse_ops["M_nodal"] = M_nodal
+        if kwargs.get("B_bias") is not None:
+            sparse_ops["B_bias"] = jnp.asarray(kwargs["B_bias"], dtype=m0.dtype)
+
         if "phi_tol" not in params:
             # The most restrictive relative criterion is u1 (energy) at tau_f.
             # Poisson precision needs to be roughly one order of magnitude better
@@ -3786,10 +3793,6 @@ def make_minimizer(
                 return s_final, E_final, g_raw_final, U_final, m_final
 
             def solve_and_minimize_multigpu(m0, B_ext_vec, U_init, sparse_ops):
-                sparse_ops["M_nodal"] = M_nodal
-                if B_bias is not None:
-                    sparse_ops["B_bias"] = B_bias
-
                 m_local = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
                 U_local, init_demag, _ = solve_U(m_local, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
                 E_local, g_raw_local = energy_and_grad_multigpu(m_local, U_local, B_ext_vec, sparse_ops=sparse_ops)
