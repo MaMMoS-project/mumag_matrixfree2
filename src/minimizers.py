@@ -3439,7 +3439,7 @@ def make_minimizer(
         if sparse_ops is None:
             sparse_ops = {}
             params["sparse_ops"] = sparse_ops
-        
+
         sparse_ops["M_nodal"] = M_nodal
         if kwargs.get("B_bias") is not None:
             sparse_ops["B_bias"] = jnp.asarray(kwargs["B_bias"], dtype=m0.dtype)
