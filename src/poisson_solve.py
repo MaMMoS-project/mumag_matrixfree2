@@ -713,7 +713,8 @@ def make_solve_U(  # noqa: D417
 
             poisson_keys = ["A_sparse", "A_diag", "Dx_sparse", "Dy_sparse", "Dz_sparse"]
             poisson_ops = {k: sparse_ops[k] for k in poisson_keys if k in sparse_ops}
-            U, it, r2 = solve_linear_step(poisson_ops, b, x0, tol, hierarchy_jax)
+            hierarchy = sparse_ops.get("hierarchy_jax")
+            U, it, r2 = solve_linear_step(poisson_ops, b, x0, tol, hierarchy)
 
             if return_info:
                 rel_res = jnp.sqrt(r2 / (bnorm2 + 1e-30))
@@ -752,7 +753,6 @@ def make_solve_U(  # noqa: D417
                 tol: float | None = None,
                 return_info: bool = False,
                 sparse_ops: dict = None,
-                hierarchy_dyn=hierarchy_jax,
             ) -> Array | tuple[Array, int, float]:
                 b = rhs_from_m(sparse_ops, m)
                 bnorm2 = jnp.vdot(b, b)
@@ -761,7 +761,8 @@ def make_solve_U(  # noqa: D417
                     b = b - jnp.mean(b)
                     x0 = x0 - jnp.mean(x0)
 
-                U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy_dyn)
+                hierarchy = sparse_ops.get("hierarchy_jax") if sparse_ops is not None else None
+                U, it, r2 = solve_linear(sparse_ops, b, x0, tol=tol, hierarchy=hierarchy)
 
                 if enforce_zero_mean:
                     U = U - jnp.mean(U)
@@ -773,4 +774,4 @@ def make_solve_U(  # noqa: D417
     if hasattr(solve_linear, "pardiso_obj"):
         solve_U.pardiso_obj = solve_linear.pardiso_obj
 
-    return solve_U
+    return solve_U, hierarchy_jax

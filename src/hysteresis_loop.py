@@ -320,7 +320,7 @@ def run_hysteresis_loop(  # noqa: D417
         mode=mode,
     )
 
-    solve_U = make_solve_U(
+    solve_U, hierarchy_jax = make_solve_U(
         geom,
         jnp.asarray(Js_lookup, dtype=jnp.float64),
         precond_type=precond_type,
@@ -419,6 +419,7 @@ def run_hysteresis_loop(  # noqa: D417
             phi_extrapolate=params.phi_extrapolate,
             L=params.L,
             sparse_ops={
+                "hierarchy_jax": hierarchy_jax,
                 "A_sparse": A_sparse,
                 "Dx_sparse": Dx_sparse,
                 "Dy_sparse": Dy_sparse,
@@ -478,6 +479,7 @@ def run_hysteresis_loop(  # noqa: D417
                 U,
                 params,
                 sparse_ops={
+                    "hierarchy_jax": hierarchy_jax,
                     "A_sparse": A_sparse,
                     "Dx_sparse": Dx_sparse,
                     "Dy_sparse": Dy_sparse,
@@ -535,6 +537,7 @@ def run_hysteresis_loop(  # noqa: D417
                 phi_extrapolate=params.phi_extrapolate,
                 L=params.L,
                 sparse_ops={
+                    "hierarchy_jax": hierarchy_jax,
                     "A_sparse": A_sparse,
                     "Dx_sparse": Dx_sparse,
                     "Dy_sparse": Dy_sparse,
