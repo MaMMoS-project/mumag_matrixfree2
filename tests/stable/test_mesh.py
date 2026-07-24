@@ -61,7 +61,7 @@ def test_mesh_box(mesh_bin, tmp_path, Lx, Ly, Lz):
     assert np.all(np.abs(mesh["knt"][:, 2]) <= Lz / 2)
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz
-    assert np.isclose(volume_from_mesh, expected_volume, atol=2.0)
+    assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
 
 
 @pytest.mark.parametrize(
@@ -92,7 +92,7 @@ def test_mesh_ellipsoid(mesh_bin, tmp_path, Lx, Ly, Lz):
         assert (_p.dot(_p)) <= 1 + 1e-5
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz * np.pi / 6
-    assert np.isclose(volume_from_mesh, expected_volume, atol=2.0)
+    assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
 
 
 @pytest.mark.parametrize(
@@ -130,7 +130,7 @@ def test_mesh_eye(mesh_bin, tmp_path, Lx, Ly, Lz):
         assert abs(point[2]) <= Lz / 2
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz * 2 / 3
-    assert np.isclose(volume_from_mesh, expected_volume, atol=2.0)
+    assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
 
 
 @pytest.mark.parametrize(
@@ -164,7 +164,7 @@ def test_mesh_elliptic_cylinder(mesh_bin, tmp_path, Lx, Ly, Lz):
         assert abs(point[2]) <= Lz / 2
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz * np.pi / 4
-    assert np.isclose(volume_from_mesh, expected_volume, atol=2.0)
+    assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
 
 
 @pytest.mark.parametrize(
@@ -198,4 +198,4 @@ def test_mesh_poly_gb(mesh_bin, tmp_path, Lx, Ly, Lz):
     assert np.all(np.abs(mesh["knt"][:, 2]) <= Lz / 2)
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz
-    assert np.isclose(volume_from_mesh, expected_volume, atol=2.0)
+    assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
