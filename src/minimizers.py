@@ -2976,7 +2976,7 @@ def make_minimizer(
     energy_only = _energy_only_raw
 
     # Compute Jacobi preconditioner using the diagonal of the exchange matrix
-    if kwargs.get("mode", "matrix_free") == "assembled" and Kex_diag is not None:
+    if kwargs.get("mode", "matrix_free") == "assembled":
         pass
     else:
         from energy_kernels import compute_exchange_diagonal

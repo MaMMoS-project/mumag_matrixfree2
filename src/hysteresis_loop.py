@@ -339,16 +339,19 @@ def run_hysteresis_loop(  # noqa: D417
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    from energy_kernels import compute_exchange_diagonal
+    if mode == "assembled" and Kex_diag is not None:
+        d_diag = Kex_diag * (1.0 / V_mag)
+    else:
+        from energy_kernels import compute_exchange_diagonal
 
-    d_diag = compute_exchange_diagonal(
-        geom,
-        jnp.asarray(A_lookup, dtype=jnp.float64),
-        V_mag,
-        chunk_elems=chunk_elems,
-        assembly=energy_assembly,
-        grad_backend=grad_backend,
-    )
+        d_diag = compute_exchange_diagonal(
+            geom,
+            jnp.asarray(A_lookup, dtype=jnp.float64),
+            V_mag,
+            chunk_elems=chunk_elems,
+            assembly=energy_assembly,
+            grad_backend=grad_backend,
+        )
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
 
@@ -462,16 +465,19 @@ def run_hysteresis_loop(  # noqa: D417
             params.M_nodal = M_nodal
             params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
             params.V_mag = V_mag
-            from energy_kernels import compute_exchange_diagonal
+            if mode == "assembled" and Kex_diag is not None:
+                d_diag = Kex_diag * (1.0 / V_mag)
+            else:
+                from energy_kernels import compute_exchange_diagonal
 
-            d_diag = compute_exchange_diagonal(
-                geom,
-                jnp.asarray(A_lookup, dtype=jnp.float64),
-                V_mag,
-                chunk_elems=chunk_elems,
-                assembly=energy_assembly,
-                grad_backend=grad_backend,
-            )
+                d_diag = compute_exchange_diagonal(
+                    geom,
+                    jnp.asarray(A_lookup, dtype=jnp.float64),
+                    V_mag,
+                    chunk_elems=chunk_elems,
+                    assembly=energy_assembly,
+                    grad_backend=grad_backend,
+                )
             params.inv_M_prec = 1.0 / (d_diag + 1e-30)
             m, U, info = cpp_minimize(
                 m,

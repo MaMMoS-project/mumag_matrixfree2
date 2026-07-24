@@ -902,7 +902,7 @@ def main() -> None:
                 conn=jnp.asarray(conn32, dtype=jnp.int32),
                 volume=jnp.asarray(volume, dtype=jnp.float64),
                 mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-                JinvT=jnp.asarray(JinvT, dtype=jnp.float64),
+                JinvT=None if args.operator_mode == "assembled" else jnp.asarray(JinvT, dtype=jnp.float64),
                 grad_phi=None,
                 x_nodes=None,
             )
@@ -1098,6 +1098,11 @@ def main() -> None:
         # Ensure grad_phi is computed
         l_grad_phi = grad_phi if "grad_phi" in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
 
+        # Compute exact pure exchange diagonal on CPU
+        Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+        N_nodes = int(np.max(conn32)) + 1
+        Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=N_nodes)
+
         A_scipy = assemble_poisson_matrix_cpu(
             conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
         )
@@ -1211,6 +1216,7 @@ def main() -> None:
             "Kx_sparse": Kx_sparse,
             "Ky_sparse": Ky_sparse,
             "Kz_sparse": Kz_sparse,
+            "Kex_diag": jnp.asarray(Kex_diag_cpu, dtype=jnp.float64),
             "num_gpus": num_gpus,
             "Gx_sparse": None,
             "Gy_sparse": None,
