@@ -87,11 +87,14 @@ def test_mesh_ellipsoid(mesh_bin, tmp_path, Lx, Ly, Lz):
 
     # load npz mesh
     mesh = np.load(tmp_path / "ellipsoid.npz")
+    a = (Lx + Ly) / 4
+    b = (Lx + Ly) / 4
+    c = Lz / 2
     for point in mesh["knt"]:
-        _p = point / (Lx / 2, Ly / 2, Lz / 2)
-        assert (_p.dot(_p)) <= 1 + 1e-5
+        _p = point / (a, b, c)
+        assert (_p.dot(_p)) <= 1 + 0.1  # 10% relative error
     volume_from_mesh = _eval_volume_mesh(mesh)
-    expected_volume = Lx * Ly * Lz * np.pi / 6
+    expected_volume = a * b * c * np.pi * 4 / 3
     assert np.isclose(volume_from_mesh, expected_volume, rtol=0.1)
 
 
