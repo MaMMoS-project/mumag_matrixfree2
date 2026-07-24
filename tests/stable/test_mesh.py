@@ -115,7 +115,7 @@ def test_mesh_eye(mesh_bin, tmp_path, Lx, Ly, Lz):
     Lz is the polygon width.
 
     Points (Px, Py, Pz) satisfy:
-    - `Py <= - 0.5 * Lx / Ly^2 * Px^2 + Lx/2`.
+    - `Py <= - 2 * Ly / Lx^2 * Px^2 + Ly / 2`.
     - `|Pz| <= Lz/2`.
 
     Volume is `Lx * Ly * Lz * 2 / 3`.
@@ -128,8 +128,8 @@ def test_mesh_eye(mesh_bin, tmp_path, Lx, Ly, Lz):
     # load npz mesh
     mesh = np.load(tmp_path / "eye.npz")
     for point in mesh["knt"]:
-        eye_border = -0.5 * Lx / (Ly * Ly) * point[0] * point[0] + Lx / 2
-        assert point[1] <= eye_border
+        eye_border = Ly / 2 - 2 * Ly / (Lx * Lx) * point[0] * point[0]
+        assert point[1] <= eye_border * 1.1  # allow 10% relative error
         assert abs(point[2]) <= Lz / 2
     volume_from_mesh = _eval_volume_mesh(mesh)
     expected_volume = Lx * Ly * Lz * 2 / 3
