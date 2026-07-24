@@ -148,11 +148,12 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
     return hierarchy
 
 
-def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
+def csr_to_jax_CSR(mat: sp.csr_matrix, device=None) -> Any:
     """Convert a SciPy CSR matrix to JAX CSR format.
 
     Args:
         mat (sp.csr_matrix): Input SciPy sparse matrix.
+        device: Optional target device for allocation.
 
     Returns:
         jax.experimental.sparse.CSR: The JAX sparse matrix.
@@ -160,7 +161,7 @@ def csr_to_jax_CSR(mat: sp.csr_matrix) -> Any:
     from jax.experimental import sparse
 
     return sparse.CSR(
-        (jnp.asarray(mat.data), jnp.asarray(mat.indices), jnp.asarray(mat.indptr)),
+        (jnp.asarray(mat.data, device=device), jnp.asarray(mat.indices, device=device), jnp.asarray(mat.indptr, device=device)),
         shape=mat.shape,
     )
 
@@ -342,19 +343,20 @@ def get_gpu_assignments(num_gpus, devices):
 def make_sparse_operator(
     scipy_csr_mat: sp.csr_matrix,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    device=None,
 ) -> SparseOperator:
     """Dynamically creates the optimal sparse operator depending on the active platform."""
-    device = jax.devices()[0]
+    device_local = device if device is not None else jax.devices()[0]
 
-    if device.platform == "cpu":
+    if device_local.platform == "cpu":
         if cpu_spmv_backend == "jax_default":
-            jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+            jax_csr = csr_to_jax_CSR(scipy_csr_mat, device=device)
             return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
         elif cpu_spmv_backend == "custom_jax":
-            data = jnp.asarray(scipy_csr_mat.data)
-            indices = jnp.asarray(scipy_csr_mat.indices)
+            data = jnp.asarray(scipy_csr_mat.data, device=device)
+            indices = jnp.asarray(scipy_csr_mat.indices, device=device)
             row_indices = np.repeat(np.arange(scipy_csr_mat.shape[0]), np.diff(scipy_csr_mat.indptr))
-            row_indices = jnp.asarray(row_indices)
+            row_indices = jnp.asarray(row_indices, device=device)
             num_rows = scipy_csr_mat.shape[0]
 
             def custom_spmv(parts, x):
@@ -370,7 +372,7 @@ def make_sparse_operator(
             return SparseOperator(lambda _, x: cpu_op(x), ())
     else:
         # On GPU: convert to JAX CSR and store it in pytree_parts
-        jax_csr = csr_to_jax_CSR(scipy_csr_mat)
+        jax_csr = csr_to_jax_CSR(scipy_csr_mat, device=device)
         return SparseOperator(lambda matrix, x: matrix @ x, (jax_csr,))
 
 

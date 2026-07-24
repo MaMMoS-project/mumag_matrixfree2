@@ -1123,7 +1123,7 @@ def main() -> None:
         else:
             dev_amg = dev_d = dev_g = jax.devices()[0]
 
-        A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend)
+        A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_amg)
         A_sparse = safe_device_put(A_sparse, dev_amg)
 
         Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
@@ -1139,7 +1139,7 @@ def main() -> None:
             data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
             D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
             D_scipy.sort_indices()
-            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_d)
             D_sparse = safe_device_put(D_sparse, dev_d)
 
             Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
@@ -1150,18 +1150,18 @@ def main() -> None:
             data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
             G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
             G_scipy.sort_indices()
-            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_g)
             G_sparse = safe_device_put(G_sparse, dev_g)
         else:
             D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_d)
             D_sparse = safe_device_put(D_sparse, dev_d)
             N = knt.shape[0]
             Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
             Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
             Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
             G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_g)
             G_sparse = safe_device_put(G_sparse, dev_g)
             del Gx_scipy, Gy_scipy, Gz_scipy
 
@@ -1186,18 +1186,18 @@ def main() -> None:
             Ky_scipy = K_eff_blocked[N : 2 * N, :]
             Kz_scipy = K_eff_blocked[2 * N :, :]
 
-            Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Kx"])
             Kx_sparse = safe_device_put(Kx_sparse, assignments["Kx"])
 
-            Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Ky"])
             Ky_sparse = safe_device_put(Ky_sparse, assignments["Ky"])
 
-            Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Kz"])
             Kz_sparse = safe_device_put(Kz_sparse, assignments["Kz"])
 
             K_eff_sparse = None
         else:
-            K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
+            K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Keff"] if num_gpus >= 2 else dev_d)
             if num_gpus == 2:
                 K_eff_sparse = safe_device_put(K_eff_sparse, assignments["Keff"])
 
