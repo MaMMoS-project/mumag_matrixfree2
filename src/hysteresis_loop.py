@@ -249,6 +249,7 @@ def run_hysteresis_loop(  # noqa: D417
     Dy_sparse: Any = None,
     Dz_sparse: Any = None,
     A_diag: Any = None,
+    Kex_diag: Any = None,
     K_eff_sparse: Any = None,
     Kx_sparse: Any = None,
     Ky_sparse: Any = None,
