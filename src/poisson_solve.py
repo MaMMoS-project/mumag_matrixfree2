@@ -500,6 +500,7 @@ def make_solve_U(  # noqa: D417
     Dy_sparse: Any = None,  # noqa: F821
     Dz_sparse: Any = None,  # noqa: F821
     A_diag: Any = None,  # noqa: F821
+    A_scipy: Any = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
     poisson_solver: str = "jax",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
@@ -578,20 +579,23 @@ def make_solve_U(  # noqa: D417
             make_jax_amgcl_vcycle,
         )
 
-        if geom.grad_phi is not None:
-            gp = np.array(geom.grad_phi)
+        if A_scipy is not None:
+            A_cpu = A_scipy
         else:
-            from loop import compute_grad_phi_from_JinvT
+            if geom.grad_phi is not None:
+                gp = np.array(geom.grad_phi)
+            else:
+                from loop import compute_grad_phi_from_JinvT
 
-            gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
+                gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
 
-        A_cpu = assemble_poisson_matrix_cpu(
-            np.array(geom.conn),
-            np.array(geom.volume),
-            gp,
-            boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
-            reg=poisson_reg,
-        )
+            A_cpu = assemble_poisson_matrix_cpu(
+                np.array(geom.conn),
+                np.array(geom.volume),
+                gp,
+                boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
+                reg=poisson_reg,
+            )
 
         ml = pyamg.smoothed_aggregation_solver(
             A_cpu, strength="evolution", smooth="energy", max_levels=10, max_coarse=1000
@@ -643,20 +647,23 @@ def make_solve_U(  # noqa: D417
 
         from amg_utils import assemble_poisson_matrix_cpu, make_pardiso_solve_linear
 
-        if geom.grad_phi is not None:
-            gp = np.array(geom.grad_phi)
+        if A_scipy is not None:
+            A_cpu = A_scipy
         else:
-            from loop import compute_grad_phi_from_JinvT
+            if geom.grad_phi is not None:
+                gp = np.array(geom.grad_phi)
+            else:
+                from loop import compute_grad_phi_from_JinvT
 
-            gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
+                gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
 
-        A_cpu = assemble_poisson_matrix_cpu(
-            np.array(geom.conn),
-            np.array(geom.volume),
-            gp,
-            boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
-            reg=poisson_reg,
-        )
+            A_cpu = assemble_poisson_matrix_cpu(
+                np.array(geom.conn),
+                np.array(geom.volume),
+                gp,
+                boundary_mask=np.array(boundary_mask) if boundary_mask is not None else None,
+                reg=poisson_reg,
+            )
 
         solve_linear = make_pardiso_solve_linear(A_cpu)
     elif poisson_solver != "jax_mkl":

@@ -1226,6 +1226,7 @@ def main() -> None:
             "K_eff_scipy": K_eff_scipy,
             "D_scipy": D_scipy,
             "G_scipy": G_scipy,
+            "A_scipy": A_scipy,
         }
         print("[ok] Finished assembly and GPU transfer.")
 

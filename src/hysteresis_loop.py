@@ -263,6 +263,7 @@ def run_hysteresis_loop(  # noqa: D417
     K_eff_scipy: Any = None,
     D_scipy: Any = None,
     G_scipy: Any = None,
+    A_scipy: Any = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
@@ -336,6 +337,7 @@ def run_hysteresis_loop(  # noqa: D417
         A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
         poisson_solver=params.poisson_solver,
+        A_scipy=A_scipy,
     )
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
