@@ -881,28 +881,28 @@ def main() -> None:
 
     if grad_backend == "on_the_fly":
         geom = TetGeom(
-            conn=jnp.asarray(conn32, dtype=jnp.int32),
-            volume=jnp.asarray(volume, dtype=jnp.float64),
-            mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-            x_nodes=jnp.asarray(knt, dtype=jnp.float64),
+            conn=conn32.astype(np.int32),
+            volume=volume.astype(np.float64),
+            mat_id=mat_id.astype(np.int32),
+            x_nodes=knt.astype(np.float64),
         )
     else:
         if grad_backend == "stored_grad_phi":
             grad_phi = compute_grad_phi_from_JinvT(JinvT)
             geom = TetGeom(
-                conn=jnp.asarray(conn32, dtype=jnp.int32),
-                volume=jnp.asarray(volume, dtype=jnp.float64),
-                mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-                grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
+                conn=conn32.astype(np.int32),
+                volume=volume.astype(np.float64),
+                mat_id=mat_id.astype(np.int32),
+                grad_phi=grad_phi.astype(np.float64),
                 JinvT=None,
                 x_nodes=None,
             )
         else:
             geom = TetGeom(
-                conn=jnp.asarray(conn32, dtype=jnp.int32),
-                volume=jnp.asarray(volume, dtype=jnp.float64),
-                mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-                JinvT=None if args.operator_mode == "assembled" else jnp.asarray(JinvT, dtype=jnp.float64),
+                conn=conn32.astype(np.int32),
+                volume=volume.astype(np.float64),
+                mat_id=mat_id.astype(np.int32),
+                JinvT=None if args.operator_mode == "assembled" else JinvT.astype(np.float64),
                 grad_phi=None,
                 x_nodes=None,
             )
@@ -935,7 +935,7 @@ def main() -> None:
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
-    geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
+    geom_Js = replace(geom, volume=vol_Js)
     M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
 
     # 1. Start with defaults and CLI values
@@ -1171,25 +1171,21 @@ def main() -> None:
             del Gx_scipy, Gy_scipy, Gz_scipy
 
         del Dx_scipy, Dy_scipy, Dz_scipy
+        if not args.cpp_mkl:
+            del D_scipy, G_scipy
+            
         Dx_sparse = Dy_sparse = Dz_sparse = None
         Gx_sparse = Gy_sparse = Gz_sparse = None
 
-        from amg_utils import assemble_exchange_anisotropy_matrix_cpu
-
-        K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
-            conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
-        )
+        from amg_utils import assemble_exchange_anisotropy_matrix_cpu, assemble_exchange_anisotropy_blocked_cpu
 
         Kx_sparse = Ky_sparse = Kz_sparse = None
+        K_eff_scipy = None
+
         if num_gpus >= 3:
-            K_eff_coo = K_eff_scipy.tocoo()
-            N = knt.shape[0]
-            P_idx_row = (K_eff_coo.row % 3) * N + (K_eff_coo.row // 3)
-            P_idx_col = (K_eff_coo.col % 3) * N + (K_eff_coo.col // 3)
-            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3 * N, 3 * N))
-            Kx_scipy = K_eff_blocked[:N, :]
-            Ky_scipy = K_eff_blocked[N : 2 * N, :]
-            Kz_scipy = K_eff_blocked[2 * N :, :]
+            Kx_scipy, Ky_scipy, Kz_scipy = assemble_exchange_anisotropy_blocked_cpu(
+                conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
+            )
 
             Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Kx"])
             Kx_sparse = safe_device_put(Kx_sparse, assignments["Kx"])
@@ -1200,11 +1196,19 @@ def main() -> None:
             Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Kz"])
             Kz_sparse = safe_device_put(Kz_sparse, assignments["Kz"])
 
+            del Kx_scipy, Ky_scipy, Kz_scipy
+
             K_eff_sparse = None
         else:
+            K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+                conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
+            )
             K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend, device=assignments["Keff"] if num_gpus >= 2 else dev_d)
             if num_gpus == 2:
                 K_eff_sparse = safe_device_put(K_eff_sparse, assignments["Keff"])
+
+        if not args.cpp_mkl:
+            del K_eff_scipy
 
         assembled_kwargs = {
             "A_sparse": A_sparse,
@@ -1223,9 +1227,9 @@ def main() -> None:
             "Gz_sparse": None,
             "D_sparse": D_sparse,
             "G_sparse": G_sparse,
-            "K_eff_scipy": K_eff_scipy,
-            "D_scipy": D_scipy,
-            "G_scipy": G_scipy,
+            "K_eff_scipy": locals().get("K_eff_scipy"),
+            "D_scipy": locals().get("D_scipy"),
+            "G_scipy": locals().get("G_scipy"),
             "A_scipy": A_scipy,
         }
         print("[ok] Finished assembly and GPU transfer.")

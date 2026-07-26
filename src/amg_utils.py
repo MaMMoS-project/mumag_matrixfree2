@@ -141,7 +141,8 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
 
         # Store dense A for the coarsest level for exact solve
         if i == len(ml.levels) - 1:
-            d["A_dense"] = csr_A.todense()
+            if csr_A.shape[0] < 5000:
+                d["A_dense"] = csr_A.todense()
 
         hierarchy.append(d)
 
@@ -325,10 +326,10 @@ def get_gpu_assignments(num_gpus, devices):
         assignments["Kz"] = devices[3]
     elif num_gpus == 5:
         assignments["AMG"] = devices[0]
-        assignments["Kx"] = devices[0]
         assignments["D"] = devices[1]
         assignments["G"] = devices[2]
-        assignments["Ky"] = devices[3]
+        assignments["Kx"] = devices[3]
+        assignments["Ky"] = devices[4]
         assignments["Kz"] = devices[4]
     else:  # 6 or more
         assignments["AMG"] = devices[0]
@@ -537,7 +538,12 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
             r_res = b_curr - apply_A_curr(x_curr)
 
             # 4. Restriction to level_idx + 1
-            b_coarse = lvl["R"] @ r_res
+            if "R" in lvl:
+                b_coarse = lvl["R"] @ r_res
+            else:
+                # Transpose the JAX CSR natively
+                jax_csr = lvl["P"].pytree_parts[0]
+                b_coarse = jax_csr.T @ r_res
 
             # 5. Recurse (Initial guess for error is zero)
             x_coarse = jnp.zeros_like(b_coarse)
@@ -603,7 +609,11 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
             r_res = b_curr - apply_A_curr(x_curr)
 
             # 3. Restriction
-            b_coarse = lvl["R"] @ r_res
+            if "R" in lvl:
+                b_coarse = lvl["R"] @ r_res
+            else:
+                jax_csr = lvl["P"].pytree_parts[0]
+                b_coarse = jax_csr.T @ r_res
 
             # 4. Recurse
             x_coarse = jax.lax.cond(b_coarse[0] == 12345.6789, lambda: b_coarse, lambda: jnp.zeros_like(b_coarse))
@@ -764,31 +774,62 @@ def assemble_exchange_anisotropy_matrix_cpu(
     val_elem = -2.0 * K1_elem * volume / 20.0
     Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
 
-    # Kex_block: (E, 4, 4, 3, 3)
-    I3 = np.eye(3, dtype=np.float64)
-    Kex_block = Kex_e[:, :, :, None, None] * I3[None, None, None, :, :]
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
 
-    # Kan_block: (E, 4, 4, 3, 3)
-    kkT = np.einsum("eu,ev->euv", k_elem, k_elem)
-    Kan_block = Kan_e[:, :, :, None, None] * kkT[:, None, None, :, :]
+    K_eff = sp.csr_matrix((3 * N, 3 * N), dtype=np.float64)
 
-    K_block = Kex_block + Kan_block  # (E, 4, 4, 3, 3)
+    for i in range(3):
+        for j in range(3):
+            data_ij = Kan_e * (k_elem[:, i] * k_elem[:, j])[:, None, None]
+            if i == j:
+                data_ij += Kex_e
+            
+            # create CSR for this block and add it to the total matrix
+            mat_ij = sp.coo_matrix((data_ij.flatten(), (3 * rows + i, 3 * cols + j)), shape=(3 * N, 3 * N)).tocsr()
+            K_eff = K_eff + mat_ij
 
-    # Global rows and cols
-    row_nodes = np.repeat(conn, 4, axis=1).flatten()  # (E*16,)
-    col_nodes = np.tile(conn, (1, 4)).flatten()  # (E*16,)
-
-    # We expand to 3x3 components for each element in the 16 pairs
-    r = 3 * row_nodes[:, None, None] + np.arange(3)[None, :, None]
-    c = 3 * col_nodes[:, None, None] + np.arange(3)[None, None, :]
-    rows, cols = np.broadcast_arrays(r, c)
-    rows = rows.flatten()
-    cols = cols.flatten()
-    data = K_block.flatten()
-
-    K_eff = sp.coo_matrix((data, (rows, cols)), shape=(3 * N, 3 * N)).tocsr()
-    K_eff.sum_duplicates()
     return K_eff
+
+
+def assemble_exchange_anisotropy_blocked_cpu(
+    conn: np.ndarray,
+    volume: np.ndarray,
+    grad_phi: np.ndarray,
+    A_lookup: np.ndarray,
+    K1_lookup: np.ndarray,
+    k_easy_lookup: np.ndarray,
+    mat_id: np.ndarray,
+) -> tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]:
+    """Assemble the Exchange and Anisotropy matrices directly as blocked components.
+    Returns (Kx, Ky, Kz) each of shape (N, 3N) to save massive amounts of host memory.
+    """
+    N = np.max(conn) + 1
+    A_elem = A_lookup[mat_id - 1]
+    K1_elem = K1_lookup[mat_id - 1]
+    k_elem = k_easy_lookup[mat_id - 1]
+
+    Kex_e = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
+    val_elem = -2.0 * K1_elem * volume / 20.0
+    Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
+
+    rows = np.repeat(conn, 4, axis=1).flatten()
+    cols = np.tile(conn, (1, 4)).flatten()
+
+    def build_K_comp(comp_i):
+        blocks = []
+        for j in range(3):
+            data_ij = Kan_e * (k_elem[:, comp_i] * k_elem[:, j])[:, None, None]
+            if comp_i == j:
+                data_ij += Kex_e
+            mat_ij = sp.coo_matrix((data_ij.flatten(), (rows, cols)), shape=(N, N)).tocsr()
+            blocks.append(mat_ij)
+        return sp.hstack(blocks).tocsr()
+
+    Kx = build_K_comp(0)
+    Ky = build_K_comp(1)
+    Kz = build_K_comp(2)
+    return Kx, Ky, Kz
 
 
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:

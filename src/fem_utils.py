@@ -171,45 +171,33 @@ def assemble_segment_sum(N: int, conn_c: Array, contrib: Array, dtype: Any) -> A
     return jax.ops.segment_sum(val, idx, N).astype(dtype)
 
 
-def compute_node_volumes(geom: TetGeom, chunk_elems: int) -> Array:
-    """Compute the lumped volume at each node.
+def compute_node_volumes(geom: TetGeom, chunk_elems: int = 0) -> Array:
+    """Compute the lumped volume at each node using CPU NumPy.
 
     The nodal volume is defined as the sum of (Ve/4) for all tetrahedra
     connected to that node.
 
     Args:
         geom (TetGeom): The geometry container.
-        chunk_elems (int): The chunk size for element processing.
+        chunk_elems (int): Unused, kept for API compatibility.
 
     Returns:
         Array: Lumped volume at each node (N,).
-
-    Example:
-        >>> vols = compute_node_volumes(geom, 200_000)
     """
-    geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
-    conn, Ve = geom_p.conn, geom_p.volume
-    E_pad = int(conn.shape[0])
-    n_chunks = E_pad // chunk_elems
-
-    if geom_p.x_nodes is not None:
-        N = geom_p.x_nodes.shape[0]
+    import numpy as np
+    
+    if geom.x_nodes is not None:
+        N = geom.x_nodes.shape[0]
     else:
-        import numpy as np
-
         N = int(np.max(geom.conn)) + 1
-
-    def body(i, vol_acc):
-        s = i * chunk_elems
-        conn_c = jax.lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-        Ve_c = jax.lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-        contrib = (Ve_c * 0.25)[:, None]
-        contrib4 = jnp.broadcast_to(contrib, (chunk_elems, 4))
-        # Use segment_sum for better compiler compatibility
-        return vol_acc + assemble_segment_sum(N, conn_c, contrib4, Ve.dtype)
-
-    vol0 = jnp.zeros((N,), dtype=Ve.dtype)
-    return jax.jit(lambda: jax.lax.fori_loop(0, n_chunks, body, vol0))()
+        
+    conn_np = np.asarray(geom.conn)
+    vol_np = np.asarray(geom.volume)
+    
+    weights = np.repeat(vol_np / 4.0, 4)
+    vols = np.bincount(conn_np.flatten(), weights=weights, minlength=N)
+    
+    return vols
 
 
 def _B_split_from_JinvT(JinvT_c: Array, dtype: Any) -> tuple[Array, Array, Array]:

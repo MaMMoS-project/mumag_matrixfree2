@@ -621,9 +621,11 @@ def make_solve_U(  # noqa: D417
                 }
                 if i < len(ml.levels) - 1:
                     level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-                    level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                    if jax.devices()[0].platform == "cpu":
+                        level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
                 else:
-                    level_dict["A_dense"] = jnp.asarray(csr_A.todense())
+                    if csr_A.shape[0] < 5000:
+                        level_dict["A_dense"] = jnp.asarray(csr_A.todense())
                 levels_jax.append(level_dict)
 
             from amg_utils import AMGHierarchy

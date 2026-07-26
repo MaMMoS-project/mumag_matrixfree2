@@ -150,76 +150,75 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
     return np.concatenate([vals_up, vals_up[-2::-1]])
 
 
-@jax.jit
-def jax_compute_volume_averaged_J_parallel(
-    m_nodes: jnp.ndarray,
-    conn: jnp.ndarray,
-    volume: jnp.ndarray,
-    mat_id: jnp.ndarray,
-    Js_lookup: jnp.ndarray,
-    h_dir: jnp.ndarray,
-) -> jnp.ndarray:
-    """Compute volume-averaged magnetic polarization parallel to h_dir (JAX version).
+def cpu_compute_volume_averaged_J_parallel(
+    m_nodes: np.ndarray,
+    conn: np.ndarray,
+    volume: np.ndarray,
+    mat_id: np.ndarray,
+    Js_lookup: np.ndarray,
+    h_dir: np.ndarray,
+) -> float:
+    """Compute volume-averaged magnetic polarization parallel to h_dir (CPU version).
 
     Args:
-        m_nodes (jnp.ndarray): Nodal unit magnetization vectors.
-        conn (jnp.ndarray): Tetrahedron connectivity.
-        volume (jnp.ndarray): Element volumes.
-        mat_id (jnp.ndarray): Element material IDs.
-        Js_lookup (jnp.ndarray): Saturation polarization table.
-        h_dir (jnp.ndarray): Field direction vector.
+        m_nodes (np.ndarray): Nodal unit magnetization vectors.
+        conn (np.ndarray): Tetrahedron connectivity.
+        volume (np.ndarray): Element volumes.
+        mat_id (np.ndarray): Element material IDs.
+        Js_lookup (np.ndarray): Saturation polarization table.
+        h_dir (np.ndarray): Field direction vector.
 
     Returns:
-        jnp.ndarray: Scalar averaged polarization component.
+        float: Scalar averaged polarization component.
     """
-    h = h_dir / (jnp.linalg.norm(h_dir) + 1e-30)
+    h = h_dir / (np.linalg.norm(h_dir) + 1e-30)
 
     # Average m over tets
     m_e = m_nodes[conn]  # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
+    m_avg = np.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties
     Js_e = Js_lookup[mat_id - 1]  # (E,)
     J_e = Js_e[:, None] * m_avg  # (E, 3)
 
     # Magnetic volume (only where Js > 0)
-    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+    Vmag = np.sum(np.where(Js_e > 0, volume, 0.0)) + 1e-30
 
     # Volume average
-    J_avg = jnp.sum(volume[:, None] * J_e, axis=0) / Vmag
-    return jnp.dot(J_avg, h)
+    J_avg = np.sum(volume[:, None] * J_e, axis=0) / Vmag
+    return float(np.dot(J_avg, h))
 
 
-def jax_compute_volume_averaged_m(
-    m_nodes: jnp.ndarray,
-    conn: jnp.ndarray,
-    volume: jnp.ndarray,
-    mat_id: jnp.ndarray,
-    Js_lookup: jnp.ndarray,
-) -> jnp.ndarray:
-    """Compute volume-averaged magnetization components (mx, my, mz) (JAX version).
+def cpu_compute_volume_averaged_m(
+    m_nodes: np.ndarray,
+    conn: np.ndarray,
+    volume: np.ndarray,
+    mat_id: np.ndarray,
+    Js_lookup: np.ndarray,
+) -> np.ndarray:
+    """Compute volume-averaged magnetization components (mx, my, mz) (CPU version).
 
     Only averages over magnetic material regions (Js > 0).
 
     Args:
-        m_nodes (jnp.ndarray): Nodal unit magnetization vectors.
-        conn (jnp.ndarray): Tetrahedron connectivity.
-        volume (jnp.ndarray): Element volumes.
-        mat_id (jnp.ndarray): Element material IDs.
-        Js_lookup (jnp.ndarray): Saturation polarization table.
+        m_nodes (np.ndarray): Nodal unit magnetization vectors.
+        conn (np.ndarray): Tetrahedron connectivity.
+        volume (np.ndarray): Element volumes.
+        mat_id (np.ndarray): Element material IDs.
+        Js_lookup (np.ndarray): Saturation polarization table.
 
     Returns:
-        jnp.ndarray: Average unit vector (3,).
+        np.ndarray: Average unit vector (3,).
     """
     # Average m over tets
     m_e = m_nodes[conn]  # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
+    m_avg = np.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties: only average over magnetic parts
     Js_e = Js_lookup[mat_id - 1]  # (E,)
-    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+    Vmag = np.sum(np.where(Js_e > 0, volume, 0.0)) + 1e-30
 
-    m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
+    m_vol_avg = np.sum(np.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
     return m_vol_avg
 
 
@@ -391,6 +390,38 @@ def run_hysteresis_loop(  # noqa: D417
     if params.benchmark and not getattr(params, "cpp_mkl", False):
         print("Warming up JIT compiler...")
         B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
+        warmup_sparse_ops = {
+            "hierarchy_jax": hierarchy_jax,
+            "A_sparse": A_sparse,
+            "A_diag": A_diag,
+            "K_eff_sparse": K_eff_sparse,
+            "num_gpus": num_gpus,
+            "inv_M_rel": inv_M_rel,
+            "inv_M_prec": inv_M_prec,
+            "M_rel": M_rel,
+        }
+        if boundary_mask is not None:
+            warmup_sparse_ops["boundary_mask"] = boundary_mask
+
+        if D_sparse is not None:
+            warmup_sparse_ops["D_sparse"] = D_sparse
+        else:
+            warmup_sparse_ops["Dx_sparse"] = Dx_sparse
+            warmup_sparse_ops["Dy_sparse"] = Dy_sparse
+            warmup_sparse_ops["Dz_sparse"] = Dz_sparse
+            
+        if G_sparse is not None:
+            warmup_sparse_ops["G_sparse"] = G_sparse
+        else:
+            warmup_sparse_ops["Gx_sparse"] = Gx_sparse
+            warmup_sparse_ops["Gy_sparse"] = Gy_sparse
+            warmup_sparse_ops["Gz_sparse"] = Gz_sparse
+            
+        if Kx_sparse is not None:
+            warmup_sparse_ops["Kx_sparse"] = Kx_sparse
+            warmup_sparse_ops["Ky_sparse"] = Ky_sparse
+            warmup_sparse_ops["Kz_sparse"] = Kz_sparse
+
         _m, _U, _ = minimize(
             m,
             B_ext_warmup,
@@ -424,27 +455,7 @@ def run_hysteresis_loop(  # noqa: D417
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
             L=params.L,
-            sparse_ops={
-                "hierarchy_jax": hierarchy_jax,
-                "A_sparse": A_sparse,
-                "Dx_sparse": Dx_sparse,
-                "Dy_sparse": Dy_sparse,
-                "Dz_sparse": Dz_sparse,
-                "A_diag": A_diag,
-                "K_eff_sparse": K_eff_sparse,
-                "Kx_sparse": Kx_sparse,
-                "Ky_sparse": Ky_sparse,
-                "Kz_sparse": Kz_sparse,
-                "num_gpus": num_gpus,
-                "Gx_sparse": Gx_sparse,
-                "Gy_sparse": Gy_sparse,
-                "Gz_sparse": Gz_sparse,
-                "D_sparse": D_sparse,
-                "G_sparse": G_sparse,
-                "inv_M_rel": inv_M_rel,
-                "inv_M_prec": inv_M_prec,
-                "M_rel": M_rel,
-            },
+            sparse_ops=warmup_sparse_ops,
         )
         _m.block_until_ready()
         _U.block_until_ready()
@@ -545,27 +556,7 @@ def run_hysteresis_loop(  # noqa: D417
                 pc_reg=params.pc_reg,
                 phi_extrapolate=params.phi_extrapolate,
                 L=params.L,
-                sparse_ops={
-                    "hierarchy_jax": hierarchy_jax,
-                    "A_sparse": A_sparse,
-                    "Dx_sparse": Dx_sparse,
-                    "Dy_sparse": Dy_sparse,
-                    "Dz_sparse": Dz_sparse,
-                    "A_diag": A_diag,
-                    "K_eff_sparse": K_eff_sparse,
-                    "Kx_sparse": Kx_sparse,
-                    "Ky_sparse": Ky_sparse,
-                    "Kz_sparse": Kz_sparse,
-                    "num_gpus": num_gpus,
-                    "Gx_sparse": Gx_sparse,
-                    "Gy_sparse": Gy_sparse,
-                    "Gz_sparse": Gz_sparse,
-                    "D_sparse": D_sparse,
-                    "G_sparse": G_sparse,
-                    "inv_M_rel": inv_M_rel,
-                    "inv_M_prec": inv_M_prec,
-                    "M_rel": M_rel,
-                },
+                sparse_ops=warmup_sparse_ops,
             )
             # Accurate timing: wait for GPU to finish
             m.block_until_ready()
@@ -580,16 +571,23 @@ def run_hysteresis_loop(  # noqa: D417
         total_evals += info.get("evals", info.get("nf", 0))
         total_demag_iters += info.get("demag_iters", info.get("icg", 0))
 
-        # Compute volume averages
-        Jpar = jax_compute_volume_averaged_J_parallel(
-            m,
-            geom.conn,
-            geom.volume,
-            geom.mat_id,
-            jnp.asarray(Js_lookup),
-            jnp.asarray(h),
+        # Compute volume averages on CPU
+        m_cpu = np.asarray(m)
+        Jpar = cpu_compute_volume_averaged_J_parallel(
+            m_cpu,
+            np.asarray(geom.conn),
+            np.asarray(geom.volume),
+            np.asarray(geom.mat_id),
+            np.asarray(Js_lookup),
+            np.asarray(h),
         )
-        m_avg = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
+        m_avg = cpu_compute_volume_averaged_m(
+            m_cpu,
+            np.asarray(geom.conn),
+            np.asarray(geom.volume),
+            np.asarray(geom.mat_id),
+            np.asarray(Js_lookup)
+        )
 
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref
