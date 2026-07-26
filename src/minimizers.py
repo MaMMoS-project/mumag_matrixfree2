@@ -33,29 +33,7 @@ from jax import lax
 
 Array = jnp.ndarray
 
-import os  # noqa: E402
-
-_DISABLE_P2P = os.environ.get("JAX_DISABLE_P2P", "0").strip() == "1"
-
-
-def safe_device_put(x, target_device):
-    """Safely transfer data to a device.
-    If JAX_DISABLE_P2P=1, routes through the CPU to bypass broken PCIe hardware switches.
-    Otherwise, uses native jax.device_put for optimal NVLink/PCIe P2P performance.
-    """  # noqa: D205
-    try:
-        if hasattr(x, "device") and x.device() == target_device:
-            return x
-    except Exception:
-        pass
-
-    if _DISABLE_P2P:
-        try:
-            cpu_dev = jax.devices("cpu")[0]
-            return jax.device_put(jax.device_put(x, cpu_dev), target_device)
-        except Exception:
-            pass
-    return jax.device_put(x, target_device)
+from jax_utils import safe_device_put, safe_device_put_fanout, safe_device_put_fanin_concat
 
 
 # -----------------------------------------------------------------------------
@@ -3482,18 +3460,21 @@ def make_minimizer(
                     g_gpu = mvp_Keff(sparse_ops["K_eff_sparse"], v_gpu)
                     return safe_device_put(g_gpu, master_device)
                 else:
-                    vx = safe_device_put(v_flat, assignments["Kx"])
-                    vy = safe_device_put(v_flat, assignments["Ky"])
-                    vz = safe_device_put(v_flat, assignments["Kz"])
+                    vx, vy, vz = safe_device_put_fanout(
+                        v_flat, 
+                        (assignments["Kx"], assignments["Ky"], assignments["Kz"]), 
+                        source_device=master_device
+                    )
 
                     gx_gpu = mvp_K_component(sparse_ops["Kx_sparse"], vx)
                     gy_gpu = mvp_K_component(sparse_ops["Ky_sparse"], vy)
                     gz_gpu = mvp_K_component(sparse_ops["Kz_sparse"], vz)
 
-                    gx = safe_device_put(gx_gpu, master_device)
-                    gy = safe_device_put(gy_gpu, master_device)
-                    gz = safe_device_put(gz_gpu, master_device)
-                    return jnp.concatenate([gx, gy, gz])
+                    return safe_device_put_fanin_concat(
+                        [gx_gpu, gy_gpu, gz_gpu], 
+                        [assignments["Kx"], assignments["Ky"], assignments["Kz"]],
+                        target_device=master_device
+                    )
 
             def local_grad_only_multigpu(v, sparse_ops=None):
                 N = v.shape[0]
