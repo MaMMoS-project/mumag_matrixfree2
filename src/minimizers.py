@@ -2953,20 +2953,7 @@ def make_minimizer(
     energy_and_grad = _energy_and_grad_raw
     energy_only = _energy_only_raw
 
-    # Compute Jacobi preconditioner using the diagonal of the exchange matrix
-    if kwargs.get("mode", "matrix_free") == "assembled":
-        pass
-    else:
-        from energy_kernels import compute_exchange_diagonal
 
-        compute_exchange_diagonal(
-            geom,
-            A_lookup,
-            V_mag,
-            chunk_elems=kwargs.get("chunk_elems", 200_000),
-            assembly=kwargs.get("assembly", "segment_sum"),
-            grad_backend=kwargs.get("grad_backend", "stored_grad_phi"),
-        )
 
     if method == "cohen":
         step_fn = make_cohen_minimizer(energy_and_grad, energy_only, solve_U, cg_tol)

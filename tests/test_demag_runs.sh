@@ -48,6 +48,21 @@ rm -f "$OUT_DIR"/cube_20nm.*
 JAX_PLATFORMS=cpu pixi run python ../src/loop.py cube_20nm --add-shell --out-dir "$OUT_DIR" --cpu-spmv-backend scipy --no-cpp-mkl --poisson-solver jax > "$LOG_DIR/run3_cpu_scipy.log" 2>&1
 check_switching_field "$OUT_DIR/cube_20nm.mh"
 
+echo "=== Test 4: GPU with --benchmark and --method tr ==="
+rm -f "$OUT_DIR"/cube_20nm.*
+pixi run -e cuda python ../src/loop.py cube_20nm --add-shell --benchmark --method tr --out-dir "$OUT_DIR" > "$LOG_DIR/run4_gpu_tr.log" 2>&1
+check_switching_field "$OUT_DIR/cube_20nm.mh"
+
+echo "=== Test 5: CPU with C++ minimizer and --method tr ==="
+rm -f "$OUT_DIR"/cube_20nm.*
+JAX_PLATFORMS=cpu pixi run python ../src/loop.py cube_20nm --add-shell --method tr --out-dir "$OUT_DIR" > "$LOG_DIR/run5_cpu_cpp_tr.log" 2>&1
+check_switching_field "$OUT_DIR/cube_20nm.mh"
+
+echo "=== Test 6: CPU with scipy and --method tr ==="
+rm -f "$OUT_DIR"/cube_20nm.*
+JAX_PLATFORMS=cpu pixi run python ../src/loop.py cube_20nm --add-shell --method tr --out-dir "$OUT_DIR" --cpu-spmv-backend scipy --no-cpp-mkl --poisson-solver jax > "$LOG_DIR/run6_cpu_scipy_tr.log" 2>&1
+check_switching_field "$OUT_DIR/cube_20nm.mh"
+
 echo "=== Comparing Logs ==="
 pixi run python -c "
 import sys
@@ -68,7 +83,13 @@ def parse_log(log_path):
     return res
 
 ref_log = '$LOG_DIR/run2_cpu_cpp.log'
-logs_to_check = ['$LOG_DIR/run1_gpu.log', '$LOG_DIR/run3_cpu_scipy.log']
+logs_to_check = [
+    '$LOG_DIR/run1_gpu.log',
+    '$LOG_DIR/run3_cpu_scipy.log',
+    '$LOG_DIR/run4_gpu_tr.log',
+    '$LOG_DIR/run5_cpu_cpp_tr.log',
+    '$LOG_DIR/run6_cpu_scipy_tr.log'
+]
 
 ref_data = parse_log(ref_log)
 if not ref_data:
@@ -104,7 +125,7 @@ if fail:
 " || exit 1
 
 echo "=== Performance Report ==="
-for log in "$LOG_DIR"/run1_gpu.log "$LOG_DIR"/run2_cpu_cpp.log "$LOG_DIR"/run3_cpu_scipy.log; do
+for log in "$LOG_DIR"/run1_gpu.log "$LOG_DIR"/run2_cpu_cpp.log "$LOG_DIR"/run3_cpu_scipy.log "$LOG_DIR"/run4_gpu_tr.log "$LOG_DIR"/run5_cpu_cpp_tr.log "$LOG_DIR"/run6_cpu_scipy_tr.log; do
     echo "--- $(basename "$log") ---"
     grep -E "Hysteresis loop finished|Total minimizer iterations|Total preconditioner iterations|Total function evaluations|Total Poisson" "$log" || echo "No timing data found."
     echo ""

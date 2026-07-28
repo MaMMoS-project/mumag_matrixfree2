@@ -108,7 +108,6 @@ def make_poisson_ops(  # noqa: D417
     grad_backend: GradBackend = "stored_grad_phi",
     assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
-    mode: str = "matrix_free",
     A_sparse: Any | None = None,  # noqa: F821
     Dx_sparse: Any | None = None,  # noqa: F821
     Dy_sparse: Any | None = None,  # noqa: F821
@@ -139,183 +138,33 @@ def make_poisson_ops(  # noqa: D417
             rhs_from_m: Computes demag RHS from magnetization m.
             assemble_diag: Computes the diagonal of A.
     """
-    if mode == "assembled":
 
-        def apply_A(sparse_ops: dict, U: Array) -> Array:
-            y = sparse_ops["A_sparse"] @ U
-            boundary_mask_dyn = sparse_ops.get("boundary_mask")
-            if boundary_mask_dyn is not None:
-                y = y * boundary_mask_dyn
-            return y
-
-        def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
-            if "D_sparse" in sparse_ops and sparse_ops["D_sparse"] is not None:
-                m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
-                y = sparse_ops["D_sparse"] @ m_flat
-            else:
-                y = (
-                    sparse_ops["Dx_sparse"] @ m[:, 0]
-                    + sparse_ops["Dy_sparse"] @ m[:, 1]
-                    + sparse_ops["Dz_sparse"] @ m[:, 2]
-                )
-            boundary_mask_dyn = sparse_ops.get("boundary_mask")
-            if boundary_mask_dyn is not None:
-                y = y * boundary_mask_dyn
-            return y
-
-        def assemble_diag(sparse_ops: dict, N: int) -> Array:
-            return sparse_ops["A_diag"]
-
-        return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(1,))
-
-    geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
-    conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
-    Js_lookup = jnp.asarray(Js_lookup)
-
-    E_pad = int(conn.shape[0])
-    n_chunks = E_pad // chunk_elems
-    n_chunks_dyn = jnp.asarray(n_chunks, dtype=jnp.int32)
-
-    if geom_p.x_nodes is not None:
-        N = int(geom_p.x_nodes.shape[0])
-    else:
-        import numpy as np
-
-        N = int(np.max(geom.conn)) + 1
-
-    _get_B = _make_B_getter(geom_p, chunk_elems, grad_backend)
-
-    def apply_A(sparse_ops, U: Array) -> Array:
-        """Compute the matrix-vector product A @ U.
-
-        Optimization Choice: Matrix-free implementation.
-        Rather than storing the global stiffness matrix A (which can be 100s of GBs
-        for large meshes), we compute the product by re-evaluating the local
-        FEM contributions on the fly. This turns a memory-bound problem into a
-        compute-bound one, which is ideal for modern GPUs.
-        """
-        dtype = U.dtype
-
-        def body(i: int, y_acc: Array) -> Array:
-            s = i * chunk_elems
-            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            Bx, By, Bz = _get_B(conn_c, s, dtype)
-            U_e = U[conn_c]
-
-            # Unrolled element gradient: grad_U = sum_b U_b * grad_phi_b
-            # Manual unrolling here minimizes temporary array creation and
-            # improves register allocation in the XLA-compiled kernel.
-            grad_Ux = Bx[:, 0] * U_e[:, 0] + Bx[:, 1] * U_e[:, 1] + Bx[:, 2] * U_e[:, 2] + Bx[:, 3] * U_e[:, 3]
-            grad_Uy = By[:, 0] * U_e[:, 0] + By[:, 1] * U_e[:, 1] + By[:, 2] * U_e[:, 2] + By[:, 3] * U_e[:, 3]
-            grad_Uz = Bz[:, 0] * U_e[:, 0] + Bz[:, 1] * U_e[:, 1] + Bz[:, 2] * U_e[:, 2] + Bz[:, 3] * U_e[:, 3]
-
-            # Unrolled node contribution: contrib_a = Ve * (grad_phi_a . grad_U)
-            contrib = Ve_c[:, None] * (Bx * grad_Ux[:, None] + By * grad_Uy[:, None] + Bz * grad_Uz[:, None])
-
-            if assembly == "scatter":
-                return assemble_scatter(y_acc, conn_c, contrib)
-            else:
-                return y_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
-
-        y0 = jnp.zeros_like(U)
-        y = lax.fori_loop(0, n_chunks_dyn, body, y0)
-        y = y + jnp.asarray(reg, dtype=dtype) * U
-
-        # Choice: Dirichlet boundary conditions (U=0) are enforced by zeroing out
-        # the corresponding rows of the operator.
+    def apply_A(sparse_ops: dict, U: Array) -> Array:
+        y = sparse_ops["A_sparse"] @ U
         boundary_mask_dyn = sparse_ops.get("boundary_mask")
         if boundary_mask_dyn is not None:
             y = y * boundary_mask_dyn
         return y
 
-    def rhs_from_m(sparse_ops, m: Array) -> Array:
-        dtype = m.dtype
+    def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
+        if "D_sparse" in sparse_ops and sparse_ops["D_sparse"] is not None:
+            m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+            y = sparse_ops["D_sparse"] @ m_flat
+        else:
+            y = (
+                sparse_ops["Dx_sparse"] @ m[:, 0]
+                + sparse_ops["Dy_sparse"] @ m[:, 1]
+                + sparse_ops["Dz_sparse"] @ m[:, 2]
+            )
+        boundary_mask_dyn = sparse_ops.get("boundary_mask")
+        if boundary_mask_dyn is not None:
+            y = y * boundary_mask_dyn
+        return y
 
-        def body(i: int, b_acc: Array) -> Array:
-            s = i * chunk_elems
-            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
-            Bx, By, Bz = _get_B(conn_c, s, dtype)
-            Js_c = Js_lookup[mat_c - 1].astype(dtype)
-            m_e = m[conn_c]
+    def assemble_diag(sparse_ops: dict, N: int) -> Array:
+        return sparse_ops["A_diag"]
 
-            # Unrolled RHS: contrib_a = (Js * Ve / 4) * (sum_b m_b . grad_phi_a)
-            mx_sum = m_e[:, 0, 0] + m_e[:, 1, 0] + m_e[:, 2, 0] + m_e[:, 3, 0]
-            my_sum = m_e[:, 0, 1] + m_e[:, 1, 1] + m_e[:, 2, 1] + m_e[:, 3, 1]
-            mz_sum = m_e[:, 0, 2] + m_e[:, 1, 2] + m_e[:, 2, 2] + m_e[:, 3, 2]
-
-            dot_term = 0.25 * (Bx * mx_sum[:, None] + By * my_sum[:, None] + Bz * mz_sum[:, None])
-
-            contrib = (Ve_c * Js_c)[:, None] * dot_term
-            if assembly == "scatter":
-                return assemble_scatter(b_acc, conn_c, contrib)
-            else:
-                return b_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
-
-        b0 = jnp.zeros((m.shape[0],), dtype=dtype)
-        return lax.fori_loop(0, n_chunks_dyn, body, b0)
-
-    def assemble_diag(sparse_ops, N: int) -> Array:
-        dtype = jnp.float64
-
-        def body(i: int, d_acc: Array) -> Array:
-            s = i * chunk_elems
-            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            Ve_c = lax.dynamic_slice(Ve, (s,), (chunk_elems,))
-            Bx, By, Bz = _get_B(conn_c, s, dtype)
-            # Unrolled norm squared: |grad_phi_a|^2
-            local = Ve_c[:, None] * (Bx**2 + By**2 + Bz**2)
-            if assembly == "scatter":
-                return assemble_scatter(d_acc, conn_c, local)
-            else:
-                return d_acc + assemble_segment_sum(N, conn_c, local, dtype)
-
-        d0 = jnp.zeros((N,), dtype=dtype)
-        d = lax.fori_loop(0, n_chunks_dyn, body, d0)
-        return d + jnp.asarray(reg, dtype=dtype)
-
-    return (
-        jax.jit(apply_A),
-        jax.jit(rhs_from_m),
-        jax.jit(assemble_diag, static_argnums=(1,)),
-    )
-
-
-def estimate_spectral_radius(
-    apply_A: Callable[[Array], Array],
-    Mdiag: Array,
-    boundary_mask: Array | None,
-    N: int,
-    n_iters: int = 15,
-) -> float:
-    """Estimate the spectral radius (max eigenvalue) of M^-1 A using the power method.
-
-    Args:
-        apply_A (Callable): Matrix-vector product.
-        Mdiag (Array): Preconditioning diagonal.
-        boundary_mask (Array | None): Dirichlet boundary mask.
-        N (int): Number of nodes.
-        n_iters (int, optional): Power method iterations. Defaults to 15.
-
-    Returns:
-        float: Estimated spectral radius.
-    """
-    key = jax.random.PRNGKey(42)
-    v = jax.random.normal(key, (N,), dtype=jnp.float64)
-    if boundary_mask is not None:
-        v = v * boundary_mask
-
-    def body(i: int, v_curr: Array) -> Array:
-        v_next = apply_A(None, v_curr) / (Mdiag + 1e-30)
-        if boundary_mask is not None:
-            v_next = v_next * boundary_mask
-        return v_next / (jnp.linalg.norm(v_next) + 1e-30)
-
-    v_final = lax.fori_loop(0, n_iters, body, v)
-    lam_max = jnp.vdot(v_final, (apply_A(None, v_final) / (Mdiag + 1e-30)))
-    return float(lam_max)
+    return jax.jit(apply_A), jax.jit(rhs_from_m), jax.jit(assemble_diag, static_argnums=(1,))
 
 
 def make_pcg_solve(
@@ -472,7 +321,6 @@ def make_solve_U(  # noqa: D417
     enforce_zero_mean: bool | None = None,
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
-    mode: str = "matrix_free",
     A_sparse: Any = None,  # noqa: F821
     Dx_sparse: Any = None,  # noqa: F821
     Dy_sparse: Any = None,  # noqa: F821
@@ -522,7 +370,6 @@ def make_solve_U(  # noqa: D417
         grad_backend=grad_backend,
         assembly=assembly,
         boundary_mask=boundary_mask,
-        mode=mode,
         A_sparse=A_sparse,
         Dx_sparse=Dx_sparse,
         Dy_sparse=Dy_sparse,

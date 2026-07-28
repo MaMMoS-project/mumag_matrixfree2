@@ -94,7 +94,6 @@ def make_energy_kernels(  # noqa: D417
     chunk_elems: int = 200_000,
     assembly: Assembly = "segment_sum",
     grad_backend: GradBackend = "stored_grad_phi",
-    mode: str = "matrix_free",
     Kex_sparse: Any | None = None,
     Gx_sparse: Any | None = None,
     Gy_sparse: Any | None = None,
@@ -142,349 +141,56 @@ def make_energy_kernels(  # noqa: D417
     """
     inv_Vmag = 1.0 / V_mag
 
-    if mode == "assembled":
 
-        def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
-            N = m.shape[0]
-            dtype = m.dtype
-            B_ext = jnp.asarray(B_ext, dtype=dtype)
-
-            # Using K_eff which combines Exchange and Anisotropy
-            m_flat = m.reshape(-1)
-            g_ex_an_flat = sparse_ops["K_eff_sparse"] @ m_flat
-            g_ex_an = g_ex_an_flat.reshape(N, 3)
-
-            # 3. Demag gradient: G @ U (shape (N, 3))
-            if "G_sparse" in sparse_ops and sparse_ops["G_sparse"] is not None:
-                g_dem_flat = sparse_ops["G_sparse"] @ U
-                g_dem = g_dem_flat.reshape(3, -1).T
-            else:
-                g_dem_x = sparse_ops["Gx_sparse"] @ U
-                g_dem_y = sparse_ops["Gy_sparse"] @ U
-                g_dem_z = sparse_ops["Gz_sparse"] @ U
-                g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
-
-            # 4. Zeeman gradient
-            B_eff = B_ext[None, :]
-            B_bias_dyn = sparse_ops.get("B_bias")
-            if B_bias_dyn is not None:
-                B_eff = B_eff + B_bias_dyn
-            M_nodal_dyn = sparse_ops["M_nodal"]
-            g_z = -2.0 * M_nodal_dyn[:, None] * B_eff
-
-            # Total gradient
-            g_total = g_ex_an + g_dem + g_z
-
-            # Energy calculation trick: E = 0.5 * sum(m * (g_total + g_z))
-            E = 0.5 * jnp.sum(m * (g_total + g_z))
-            return E * inv_Vmag, g_total * inv_Vmag
-
-        def energy_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
-            E, _ = energy_and_grad(m, U, B_ext, sparse_ops)
-            return E
-
-        def grad_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
-            _, g = energy_and_grad(m, U, B_ext, sparse_ops)
-            return g
-
-        def local_grad_only(v: Array, sparse_ops: dict = None) -> Array:
-            N = v.shape[0]
-            v_flat = v.reshape(-1)
-            g_flat = sparse_ops["K_eff_sparse"] @ v_flat
-            g_ex_an = g_flat.reshape(N, 3)
-            return g_ex_an * inv_Vmag
-
-        return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
-
-    geom_p, E_orig = pad_geom_for_chunking(geom, chunk_elems)
-    conn, Ve, mat_id = geom_p.conn, geom_p.volume, geom_p.mat_id
-
-    # Inverse volume normalization
-    inv_Vmag = 1.0 / V_mag
-
-    # Pre-calculate material-weighted geometry terms to save multiplications
-    # in the loop.
-    g_ids = mat_id - 1
-    A_Ve = 2.0 * A_lookup[g_ids] * Ve
-    K1_Ve = 2.0 * K1_lookup[g_ids] * Ve / 20.0
-    Js_Ve = 2.0 * Js_lookup[g_ids] * Ve / 4.0
-
-    # Magnetoelastic terms (per element)
-    if k1me is not None:
-        k1me_padded = jnp.zeros(conn.shape[0])
-        k1me_padded = k1me_padded.at[: k1me.shape[0]].set(k1me)
-        k1mep_padded = jnp.zeros(conn.shape[0])
-        if k1me_p is not None:
-            k1mep_padded = k1mep_padded.at[: k1me_p.shape[0]].set(k1me_p)
-
-        Kx_Ve = 2.0 * (k1me_padded + k1mep_padded) * Ve / 20.0
-        Ky_Ve = 2.0 * (k1me_padded - k1mep_padded) * Ve / 20.0
-    else:
-        Kx_Ve = None
-        Ky_Ve = None
-
-    if grad_backend == "stored_grad_phi":
-        if geom_p.grad_phi is None:
-            raise ValueError("stored_grad_phi requires geom.grad_phi")
-        grad_phi = geom_p.grad_phi
-        grad_phi_x = grad_phi[:, :, 0]
-        grad_phi_y = grad_phi[:, :, 1]
-        grad_phi_z = grad_phi[:, :, 2]
-        JinvT = None
-        x_nodes = None
-    elif grad_backend == "stored_JinvT":
-        if geom_p.JinvT is None:
-            raise ValueError("stored_JinvT requires geom.JinvT")
-        grad_phi = None
-        JinvT = geom_p.JinvT
-        x_nodes = None
-    else:
-        if geom_p.x_nodes is None:
-            raise ValueError("on_the_fly requires geom.x_nodes")
-        grad_phi = None
-        JinvT = None
-        x_nodes = geom_p.x_nodes
-
-    E_pad = int(conn.shape[0])
-    n_chunks = E_pad // chunk_elems
-    n_chunks_dyn = jnp.asarray(n_chunks, dtype=jnp.int32)
-
-    # Ensure all lookups are JAX arrays
-    A_lookup = jnp.asarray(A_lookup)
-    K1_lookup = jnp.asarray(K1_lookup)
-    Js_lookup = jnp.asarray(Js_lookup)
-    k_easy_lookup = jnp.asarray(k_easy_lookup)
-
-    def _get_B(conn_c: Array, s: int, dtype: Any) -> tuple[Array, Array, Array]:
-        if grad_backend == "stored_grad_phi":
-            bx = lax.dynamic_slice(grad_phi_x, (s, 0), (chunk_elems, 4)).astype(dtype)
-            by = lax.dynamic_slice(grad_phi_y, (s, 0), (chunk_elems, 4)).astype(dtype)
-            bz = lax.dynamic_slice(grad_phi_z, (s, 0), (chunk_elems, 4)).astype(dtype)
-            return bx, by, bz
-        elif grad_backend == "stored_JinvT":
-            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
-            return _B_split_from_JinvT(JinvT_c, dtype)
-        else:
-            x_e = x_nodes[conn_c].astype(dtype)
-            JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
-            return _B_split_from_JinvT(JinvT_c, dtype)
-
-    def local_grad_only(v: Array, sparse_ops: dict = None) -> Array:
-        """Compute the action of the local Hessian (Ex + An) on vector v.
-
-        Used for PCG preconditioning.
-        """
-        N = v.shape[0]
-        dtype = v.dtype
-
-        def body(i: int, g_acc: Array) -> Array:
-            s = i * chunk_elems
-            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
-            Bx, By, Bz = _get_B(conn_c, s, dtype)
-            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
-
-            a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
-            q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
-            k_c = k_easy_lookup[mat_c - 1].astype(dtype)
-            v_e = v[conn_c]
-
-            # 1. Exchange
-            vx_e, vy_e, vz_e = v_e[:, :, 0], v_e[:, :, 1], v_e[:, :, 2]
-
-            grad_vx_x = Bx[:, 0] * vx_e[:, 0] + Bx[:, 1] * vx_e[:, 1] + Bx[:, 2] * vx_e[:, 2] + Bx[:, 3] * vx_e[:, 3]
-            grad_vx_y = By[:, 0] * vx_e[:, 0] + By[:, 1] * vx_e[:, 1] + By[:, 2] * vx_e[:, 2] + By[:, 3] * vx_e[:, 3]
-            grad_vx_z = Bz[:, 0] * vx_e[:, 0] + Bz[:, 1] * vx_e[:, 1] + Bz[:, 2] * vx_e[:, 2] + Bz[:, 3] * vx_e[:, 3]
-
-            grad_vy_x = Bx[:, 0] * vy_e[:, 0] + Bx[:, 1] * vy_e[:, 1] + Bx[:, 2] * vy_e[:, 2] + Bx[:, 3] * vy_e[:, 3]
-            grad_vy_y = By[:, 0] * vy_e[:, 0] + By[:, 1] * vy_e[:, 1] + By[:, 2] * vy_e[:, 2] + By[:, 3] * vy_e[:, 3]
-            grad_vy_z = Bz[:, 0] * vy_e[:, 0] + Bz[:, 1] * vy_e[:, 1] + Bz[:, 2] * vy_e[:, 2] + Bz[:, 3] * vy_e[:, 3]
-
-            grad_vz_x = Bx[:, 0] * vz_e[:, 0] + Bx[:, 1] * vz_e[:, 1] + Bx[:, 2] * vz_e[:, 2] + Bx[:, 3] * vz_e[:, 3]
-            grad_vz_y = By[:, 0] * vz_e[:, 0] + By[:, 1] * vz_e[:, 1] + By[:, 2] * vz_e[:, 2] + By[:, 3] * vz_e[:, 3]
-            grad_vz_z = Bz[:, 0] * vz_e[:, 0] + Bz[:, 1] * vz_e[:, 1] + Bz[:, 2] * vz_e[:, 2] + Bz[:, 3] * vz_e[:, 3]
-
-            Km_x = Bx * grad_vx_x[:, None] + By * grad_vx_y[:, None] + Bz * grad_vx_z[:, None]
-            Km_y = Bx * grad_vy_x[:, None] + By * grad_vy_y[:, None] + Bz * grad_vy_z[:, None]
-            Km_z = Bx * grad_vz_x[:, None] + By * grad_vz_y[:, None] + Bz * grad_vz_z[:, None]
-
-            contrib = a_ve_c[:, None, None] * jnp.stack([Km_x, Km_y, Km_z], axis=2)
-
-            # 2. Anisotropy
-            proj_v = v_e[:, :, 0] * k_c[:, None, 0] + v_e[:, :, 1] * k_c[:, None, 1] + v_e[:, :, 2] * k_c[:, None, 2]
-            sum_proj = (proj_v[:, 0] + proj_v[:, 1] + proj_v[:, 2] + proj_v[:, 3])[:, None]
-            factor = -q_ve_c[:, None] * (sum_proj + proj_v)
-            contrib = contrib + factor[..., None] * k_c[:, None, :]
-
-            # 3. Magnetoelastic
-            if Kx_Ve is not None:
-                kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
-                ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
-                vx_e, vy_e = v_e[:, :, 0], v_e[:, :, 1]
-                sum_vx = (vx_e[:, 0] + vx_e[:, 1] + vx_e[:, 2] + vx_e[:, 3])[:, None]
-                sum_vy = (vy_e[:, 0] + vy_e[:, 1] + vy_e[:, 2] + vy_e[:, 3])[:, None]
-                gx_me = kx_ve_c[:, None] * (sum_vx + vx_e)
-                gy_me = ky_ve_c[:, None] * (sum_vy + vy_e)
-                contrib = contrib.at[:, :, 0].add(gx_me)
-                contrib = contrib.at[:, :, 1].add(gy_me)
-
-            if assembly == "scatter":
-                g_acc = assemble_scatter(g_acc, conn_c, contrib)
-            else:
-                g_acc = g_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
-            return g_acc
-
-        g_local = lax.fori_loop(0, n_chunks_dyn, body, jnp.zeros((N, 3), dtype=dtype))
-        return g_local * inv_Vmag
-
-    def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:  # noqa: D417
-        """Compute the total dimensionless energy and gradient.
-
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            U (Array): Nodal scalar potential (N,).
-            B_ext (Array): Dimensionless external field vector (3,).
-
-        Returns:
-            tuple[Array, Array]: (Total Energy, Total Gradient N, 3).
-        """
+    def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
         N = m.shape[0]
         dtype = m.dtype
-        # B_ext is expected to be reduced: b_ext = B_ext / Js_ref
         B_ext = jnp.asarray(B_ext, dtype=dtype)
 
-        def body(i: int, g_acc: Array) -> Array:
-            s = i * chunk_elems
-            conn_c = lax.dynamic_slice(conn, (s, 0), (chunk_elems, 4))
-            mat_c = lax.dynamic_slice(mat_id, (s,), (chunk_elems,))
-            Bx, By, Bz = _get_B(conn_c, s, dtype)
+        # Using K_eff which combines Exchange and Anisotropy
+        m_flat = m.reshape(-1)
+        g_ex_an_flat = sparse_ops["K_eff_sparse"] @ m_flat
+        g_ex_an = g_ex_an_flat.reshape(N, 3)
 
-            mask = chunk_mask(E_orig, s, chunk_elems, dtype)
+        # 3. Demag gradient: G @ U (shape (N, 3))
+        if "G_sparse" in sparse_ops and sparse_ops["G_sparse"] is not None:
+            g_dem_flat = sparse_ops["G_sparse"] @ U
+            g_dem = g_dem_flat.reshape(3, -1).T
+        else:
+            g_dem_x = sparse_ops["Gx_sparse"] @ U
+            g_dem_y = sparse_ops["Gy_sparse"] @ U
+            g_dem_z = sparse_ops["Gz_sparse"] @ U
+            g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
 
-            # Slice pre-scaled properties and apply mask
-            a_ve_c = lax.dynamic_slice(A_Ve, (s,), (chunk_elems,)) * mask
-            q_ve_c = lax.dynamic_slice(K1_Ve, (s,), (chunk_elems,)) * mask
-            j_ve_c = lax.dynamic_slice(Js_Ve, (s,), (chunk_elems,)) * mask
-
-            k_c = k_easy_lookup[mat_c - 1].astype(dtype)
-
-            m_e = m[conn_c]
-            U_e = U[conn_c]
-
-            # 1. Exchange Gradient (Quadratic)
-            mx_e, my_e, mz_e = m_e[:, :, 0], m_e[:, :, 1], m_e[:, :, 2]
-
-            grad_mx_x = Bx[:, 0] * mx_e[:, 0] + Bx[:, 1] * mx_e[:, 1] + Bx[:, 2] * mx_e[:, 2] + Bx[:, 3] * mx_e[:, 3]
-            grad_mx_y = By[:, 0] * mx_e[:, 0] + By[:, 1] * mx_e[:, 1] + By[:, 2] * mx_e[:, 2] + By[:, 3] * mx_e[:, 3]
-            grad_mx_z = Bz[:, 0] * mx_e[:, 0] + Bz[:, 1] * mx_e[:, 1] + Bz[:, 2] * mx_e[:, 2] + Bz[:, 3] * mx_e[:, 3]
-
-            grad_my_x = Bx[:, 0] * my_e[:, 0] + Bx[:, 1] * my_e[:, 1] + Bx[:, 2] * my_e[:, 2] + Bx[:, 3] * my_e[:, 3]
-            grad_my_y = By[:, 0] * my_e[:, 0] + By[:, 1] * my_e[:, 1] + By[:, 2] * my_e[:, 2] + By[:, 3] * my_e[:, 3]
-            grad_my_z = Bz[:, 0] * my_e[:, 0] + Bz[:, 1] * my_e[:, 1] + Bz[:, 2] * my_e[:, 2] + Bz[:, 3] * my_e[:, 3]
-
-            grad_mz_x = Bx[:, 0] * mz_e[:, 0] + Bx[:, 1] * mz_e[:, 1] + Bx[:, 2] * mz_e[:, 2] + Bx[:, 3] * mz_e[:, 3]
-            grad_mz_y = By[:, 0] * mz_e[:, 0] + By[:, 1] * mz_e[:, 1] + By[:, 2] * mz_e[:, 2] + By[:, 3] * mz_e[:, 3]
-            grad_mz_z = Bz[:, 0] * mz_e[:, 0] + Bz[:, 1] * mz_e[:, 1] + Bz[:, 2] * mz_e[:, 2] + Bz[:, 3] * mz_e[:, 3]
-
-            Km_x = Bx * grad_mx_x[:, None] + By * grad_mx_y[:, None] + Bz * grad_mx_z[:, None]
-            Km_y = Bx * grad_my_x[:, None] + By * grad_my_y[:, None] + Bz * grad_my_z[:, None]
-            Km_z = Bx * grad_mz_x[:, None] + By * grad_mz_y[:, None] + Bz * grad_mz_z[:, None]
-
-            contrib = a_ve_c[:, None, None] * jnp.stack([Km_x, Km_y, Km_z], axis=2)
-
-            # 2. Uniaxial Anisotropy Gradient (Quadratic)
-            v_e = m_e[:, :, 0] * k_c[:, None, 0] + m_e[:, :, 1] * k_c[:, None, 1] + m_e[:, :, 2] * k_c[:, None, 2]
-
-            sum_v = (v_e[:, 0] + v_e[:, 1] + v_e[:, 2] + v_e[:, 3])[:, None]
-            factor = -q_ve_c[:, None] * (sum_v + v_e)
-            contrib = contrib + factor[..., None] * k_c[:, None, :]
-
-            # 3. Demag Gradient (Quadratic)
-            grad_ux = Bx[:, 0] * U_e[:, 0] + Bx[:, 1] * U_e[:, 1] + Bx[:, 2] * U_e[:, 2] + Bx[:, 3] * U_e[:, 3]
-            grad_uy = By[:, 0] * U_e[:, 0] + By[:, 1] * U_e[:, 1] + By[:, 2] * U_e[:, 2] + By[:, 3] * U_e[:, 3]
-            grad_uz = Bz[:, 0] * U_e[:, 0] + Bz[:, 1] * U_e[:, 1] + Bz[:, 2] * U_e[:, 2] + Bz[:, 3] * U_e[:, 3]
-
-            grad_u = jnp.stack([grad_ux, grad_uy, grad_uz], axis=1)
-
-            contrib = contrib + j_ve_c[:, None, None] * grad_u[:, None, :]
-
-            # 4. Magnetoelastic Anisotropy (Quadratic)
-            if Kx_Ve is not None:
-                kx_ve_c = lax.dynamic_slice(Kx_Ve, (s,), (chunk_elems,)) * mask
-                ky_ve_c = lax.dynamic_slice(Ky_Ve, (s,), (chunk_elems,)) * mask
-
-                mx_e = m_e[:, :, 0]
-                my_e = m_e[:, :, 1]
-
-                sum_mx = (mx_e[:, 0] + mx_e[:, 1] + mx_e[:, 2] + mx_e[:, 3])[:, None]
-                sum_my = (my_e[:, 0] + my_e[:, 1] + my_e[:, 2] + my_e[:, 3])[:, None]
-
-                gx_me = kx_ve_c[:, None] * (sum_mx + mx_e)
-                gy_me = ky_ve_c[:, None] * (sum_my + my_e)
-
-                contrib = contrib.at[:, :, 0].add(gx_me)
-                contrib = contrib.at[:, :, 1].add(gy_me)
-
-            if assembly == "scatter":
-                g_acc = assemble_scatter(g_acc, conn_c, contrib)
-            else:
-                g_acc = g_acc + assemble_segment_sum(N, conn_c, contrib, dtype)
-
-            return g_acc
-
-        # Compute sum of quadratic gradients (Ex + An + Demag)
-        g_quad = lax.fori_loop(0, n_chunks_dyn, body, jnp.zeros((N, 3), dtype=dtype))
-
-        # 4. Zeeman Gradient (Linear)
+        # 4. Zeeman gradient
         B_eff = B_ext[None, :]
         B_bias_dyn = sparse_ops.get("B_bias")
         if B_bias_dyn is not None:
             B_eff = B_eff + B_bias_dyn
-
         M_nodal_dyn = sparse_ops["M_nodal"]
         g_z = -2.0 * M_nodal_dyn[:, None] * B_eff
 
-        # Total Gradient
-        g_total = g_quad + g_z
+        # Total gradient
+        g_total = g_ex_an + g_dem + g_z
 
-        # Total Energy calculation choice.
-        # Mathematical Trick:
-        # For quadratic terms (Ex, An, Demag): m^T * g_quad = 2 * E_quad
-        # For linear terms (Zeeman): m^T * g_z = E_z
-        # Total F = E_quad + E_z = 0.5 * (2 * E_quad + 2 * E_z)
-        # Therefore, F = 0.5 * m^T * (g_quad + 2 * g_z) = 0.5 * m^T * (g_total + g_z)
-        # This avoids separate energy integrations and ensures consistency.
+        # Energy calculation trick: E = 0.5 * sum(m * (g_total + g_z))
         E = 0.5 * jnp.sum(m * (g_total + g_z))
-
         return E * inv_Vmag, g_total * inv_Vmag
 
-    def energy_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:  # noqa: D417
-        """Compute only the total dimensionless energy.
-
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            U (Array): Nodal scalar potential (N,).
-            B_ext (Array): Dimensionless external field vector (3,).
-
-        Returns:
-            Array: Scalar dimensionless energy.
-        """
-        E, _ = energy_and_grad(m, U, B_ext)
+    def energy_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
+        E, _ = energy_and_grad(m, U, B_ext, sparse_ops)
         return E
 
-    def grad_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:  # noqa: D417
-        """Compute only the total energy gradient.
-
-        Args:
-            m (Array): Nodal unit magnetization vectors (N, 3).
-            U (Array): Nodal scalar potential (N,).
-            B_ext (Array): Dimensionless external field vector (3,).
-
-        Returns:
-            Array: Energy gradient vectors (N, 3).
-        """
-        _, g = energy_and_grad(m, U, B_ext)
+    def grad_only(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> Array:
+        _, g = energy_and_grad(m, U, B_ext, sparse_ops)
         return g
+
+    def local_grad_only(v: Array, sparse_ops: dict = None) -> Array:
+        N = v.shape[0]
+        v_flat = v.reshape(-1)
+        g_flat = sparse_ops["K_eff_sparse"] @ v_flat
+        g_ex_an = g_flat.reshape(N, 3)
+        return g_ex_an * inv_Vmag
 
     return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
 
