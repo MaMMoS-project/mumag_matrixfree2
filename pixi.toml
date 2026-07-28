@@ -61,6 +61,8 @@ compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/b
 
 # Run unit tests. Usage: pixi run test
 test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/" }
+# Run the demagnetization curve shell script test
+test-demag = "bash tests/test_demag_runs.sh"
 # Clean temporary mesh files
 clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
 

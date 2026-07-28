@@ -387,40 +387,41 @@ def run_hysteresis_loop(  # noqa: D417
 
     U = jnp.zeros(m.shape[0], dtype=m.dtype)
 
+    warmup_sparse_ops = {
+        "hierarchy_jax": hierarchy_jax,
+        "A_sparse": A_sparse,
+        "A_diag": A_diag,
+        "K_eff_sparse": K_eff_sparse,
+        "num_gpus": num_gpus,
+        "inv_M_rel": inv_M_rel,
+        "inv_M_prec": inv_M_prec,
+        "M_rel": M_rel,
+    }
+    if boundary_mask is not None:
+        warmup_sparse_ops["boundary_mask"] = boundary_mask
+
+    if D_sparse is not None:
+        warmup_sparse_ops["D_sparse"] = D_sparse
+    else:
+        warmup_sparse_ops["Dx_sparse"] = Dx_sparse
+        warmup_sparse_ops["Dy_sparse"] = Dy_sparse
+        warmup_sparse_ops["Dz_sparse"] = Dz_sparse
+        
+    if G_sparse is not None:
+        warmup_sparse_ops["G_sparse"] = G_sparse
+    else:
+        warmup_sparse_ops["Gx_sparse"] = Gx_sparse
+        warmup_sparse_ops["Gy_sparse"] = Gy_sparse
+        warmup_sparse_ops["Gz_sparse"] = Gz_sparse
+        
+    if Kx_sparse is not None:
+        warmup_sparse_ops["Kx_sparse"] = Kx_sparse
+        warmup_sparse_ops["Ky_sparse"] = Ky_sparse
+        warmup_sparse_ops["Kz_sparse"] = Kz_sparse
+
     if params.benchmark and not getattr(params, "cpp_mkl", False):
         print("Warming up JIT compiler...")
         B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
-        warmup_sparse_ops = {
-            "hierarchy_jax": hierarchy_jax,
-            "A_sparse": A_sparse,
-            "A_diag": A_diag,
-            "K_eff_sparse": K_eff_sparse,
-            "num_gpus": num_gpus,
-            "inv_M_rel": inv_M_rel,
-            "inv_M_prec": inv_M_prec,
-            "M_rel": M_rel,
-        }
-        if boundary_mask is not None:
-            warmup_sparse_ops["boundary_mask"] = boundary_mask
-
-        if D_sparse is not None:
-            warmup_sparse_ops["D_sparse"] = D_sparse
-        else:
-            warmup_sparse_ops["Dx_sparse"] = Dx_sparse
-            warmup_sparse_ops["Dy_sparse"] = Dy_sparse
-            warmup_sparse_ops["Dz_sparse"] = Dz_sparse
-            
-        if G_sparse is not None:
-            warmup_sparse_ops["G_sparse"] = G_sparse
-        else:
-            warmup_sparse_ops["Gx_sparse"] = Gx_sparse
-            warmup_sparse_ops["Gy_sparse"] = Gy_sparse
-            warmup_sparse_ops["Gz_sparse"] = Gz_sparse
-            
-        if Kx_sparse is not None:
-            warmup_sparse_ops["Kx_sparse"] = Kx_sparse
-            warmup_sparse_ops["Ky_sparse"] = Ky_sparse
-            warmup_sparse_ops["Kz_sparse"] = Kz_sparse
 
         _m, _U, _ = minimize(
             m,
