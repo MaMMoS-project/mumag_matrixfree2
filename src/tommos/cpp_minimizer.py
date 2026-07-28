@@ -21,7 +21,7 @@ if not lib_path and "MUMAG_LIB_OUT" in os.environ:
 
 # 3. Fallback to shared Ceph drive
 if not lib_path:
-    lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
+    lib_path = os.path.join(os.path.dirname(__file__), "../../lib/libcpp_mkl_minimizer.so")
 
 if not lib_path or not os.path.exists(lib_path):
     lib = None

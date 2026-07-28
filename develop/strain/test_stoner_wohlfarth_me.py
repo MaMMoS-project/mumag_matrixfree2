@@ -19,10 +19,10 @@ import jax.numpy as jnp  # noqa: E402
 from curvilinear_bb_minimizer import MinimState, cayley_update, tangent_grad  # noqa: E402
 from jax import lax  # noqa: E402
 
-from energy_kernels import make_energy_kernels  # noqa: E402
-from fem_utils import TetGeom, compute_node_volumes  # noqa: E402
-from io_utils import ensure_dir  # noqa: E402
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
+from tommos.energy_kernels import make_energy_kernels  # noqa: E402
+from tommos.fem_utils import TetGeom, compute_node_volumes  # noqa: E402
+from tommos.io_utils import ensure_dir  # noqa: E402
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
 
 
 def parse_inp_with_data(path: str):

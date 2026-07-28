@@ -1593,7 +1593,7 @@ def run_single_solid_mesher(  # noqa: D417
         import os
         import tempfile
 
-        import add_shell
+        from . import add_shell
 
         fd, tmp_npz_path = tempfile.mkstemp(suffix=".tmp_body.npz")
         try:

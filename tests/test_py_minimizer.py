@@ -4,18 +4,16 @@ import sys
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-
-from amg_utils import (
+from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
     assemble_poisson_matrix_cpu,
     make_sparse_operator,
 )
-from fem_utils import TetGeom, compute_node_volumes
-from hysteresis_loop import LoopParams
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
-from minimizers import make_minimizer
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.hysteresis_loop import LoopParams
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+from tommos.minimizers import make_minimizer
 
 
 def test():
@@ -110,7 +108,7 @@ def test():
     )
 
     # Setup Solve_U
-    from poisson_solve import make_solve_U
+    from tommos.poisson_solve import make_solve_U
 
     solve_U = make_solve_U(
         geom,
@@ -163,7 +161,7 @@ def test():
 
     print("Running JAX minimize...")
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    from energy_kernels import compute_exchange_diagonal
+    from tommos.energy_kernels import compute_exchange_diagonal
 
     d_diag = compute_exchange_diagonal(
         geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"

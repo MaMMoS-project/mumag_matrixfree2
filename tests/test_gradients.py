@@ -1,4 +1,3 @@
-import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -7,15 +6,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent.parent / "src"))
-
-import add_shell
-import mesh
-from energy_kernels import make_energy_kernels
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
-from poisson_solve import make_solve_U
+from tommos import add_shell, mesh
+from tommos.energy_kernels import make_energy_kernels
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT
+from tommos.poisson_solve import make_solve_U
 
 jax.config.update("jax_enable_x64", True)
 

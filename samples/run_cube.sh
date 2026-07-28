@@ -17,12 +17,12 @@ echo "Parameters from cube_20nm.p2"
 
 # 1. Generate Mesh
 echo "Step 1: Generating core cube mesh..."
-python ../src/mesh.py --geom box --extent ${L},${L},${L} --h ${H} --backend grid --out-name cube_${L}nm --no-vis
+python -m tommos.mesh --geom box --extent ${L},${L},${L} --h ${H} --backend grid --out-name cube_${L}nm --no-vis
 
 # 2. Run Micromagnetics Simulation
 echo "Step 2: Running hysteresis loop simulation..."
 mkdir -p ${OUT_DIR}
-python ../src/loop.py cube_${L}nm \
+python -m tommos.loop cube_${L}nm \
     --out-dir ${OUT_DIR} \
     --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
     --benchmark \

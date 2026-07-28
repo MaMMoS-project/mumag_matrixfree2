@@ -4,7 +4,6 @@ import sys
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import os
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,9 +12,7 @@ import scipy.sparse as sp
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
 
-# Append src to path to import amg_utils
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-from amg_utils import make_cpu_csr_op
+from tommos.amg_utils import make_cpu_csr_op
 
 
 def test_jit_mkl():

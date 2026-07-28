@@ -34,10 +34,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-import add_shell
-from fem_utils import TetGeom
-from hysteresis_loop import LoopParams, run_hysteresis_loop
-from io_utils import write_mh
+from . import add_shell
+from .fem_utils import TetGeom
+from .hysteresis_loop import LoopParams, run_hysteresis_loop
+from .io_utils import write_mh
 
 jax.config.update("jax_enable_x64", True)
 
@@ -926,7 +926,7 @@ def main() -> None:
     boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
 
     # Preconditioning: compute lumped node volumes and magnetic moments M_nodal
-    from fem_utils import compute_node_volumes
+    from .fem_utils import compute_node_volumes
 
     node_vols = compute_node_volumes(geom, chunk_elems=int(args.chunk_elems))
 
@@ -1088,7 +1088,7 @@ def main() -> None:
 
     if mode == "assembled":
         print("Assembling global sparse operators on CPU...")
-        from amg_utils import (
+        from .amg_utils import (
             assemble_divergence_matrices_cpu,
             assemble_poisson_matrix_cpu,
             get_gpu_assignments,
@@ -1105,7 +1105,7 @@ def main() -> None:
         A_diag = jnp.asarray(A_diag_cpu)
 
         # GPU device detection and assignment
-        from poisson_solve import safe_device_put
+        from .poisson_solve import safe_device_put
 
         try:
             gpus = jax.devices("gpu")
@@ -1169,7 +1169,7 @@ def main() -> None:
         Dx_sparse = Dy_sparse = Dz_sparse = None
         Gx_sparse = Gy_sparse = Gz_sparse = None
 
-        from amg_utils import assemble_exchange_anisotropy_matrix_cpu
+        from .amg_utils import assemble_exchange_anisotropy_matrix_cpu
 
         K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
             conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
@@ -1251,7 +1251,7 @@ def main() -> None:
     print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
 
     # Convert the raw simulation CSV to mammos_entity format
-    from io_utils import convert_sim_csv_to_mammos
+    from .io_utils import convert_sim_csv_to_mammos
 
     csv_name = params_dict.get("csv_name", "hysteresis.csv")
     csv_path = Path(args.out_dir) / csv_name

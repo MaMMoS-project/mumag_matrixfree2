@@ -51,12 +51,9 @@ def main():
     args = parser.parse_args()
 
     run_dir = Path(__file__).resolve().parent
-    base_dir = run_dir.parent.parent.resolve()
     base_structures_dir = run_dir / "base_structures"
     evaluations_dir = run_dir / "evaluations"
     evaluations_dir.mkdir(parents=True, exist_ok=True)
-
-    loop_script = base_dir / "src" / "loop.py"
 
     struct_dirs = sorted(base_structures_dir.glob("structure_*"))
     if not struct_dirs:
@@ -99,7 +96,7 @@ def main():
 
         # Run loop.py
         print(f"\n--- Running loop.py for {struct_name} ---")
-        loop_cmd = [sys.executable, str(loop_script), "isotrop", "--mesh", "isotrop.npz", "--add-shell"]
+        loop_cmd = [sys.executable, "-m", "tommos.loop", "isotrop", "--mesh", "isotrop.npz", "--add-shell"]
         subprocess.run(loop_cmd, cwd=run_struct_dir, check=True)
 
 
