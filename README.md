@@ -217,6 +217,11 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
 ```
 
+**Create a mesh from a polygon in an external file**
+```bash
+pixi run python3 src/mesh.py --geom polygon --polygon-thickness 10 --polygon-file examples/polygons/test_polygon.txt --out-name test_polygon_no_shell
+```
+
 **2. Create a 20nm Cube Mesh with an Auto-Generated Airbox:**
 ```bash
 pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
