@@ -283,8 +283,10 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 ### `src/mesh.py` (Meshing Tool)
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. |
+| `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, `polygon`, etc. |
 | `--extent` | CSV | Full dimensions `Lx,Ly,Lz` of the core mesh. |
+| `--polygon-thickness` | float | Thickness of a 3D shape created from a polygon. |
+| `--polygon-file` | string | Path to external file with the polygon. |
 | `--h` | float | Target characteristic edge length. |
 | `--n` | int | (Poly / Poly_GB only) Number of grains for the polycrystalline generation. |
 | `--neper-timeout` | int | Timeout in seconds for the Neper Voronoi tessellation. |
