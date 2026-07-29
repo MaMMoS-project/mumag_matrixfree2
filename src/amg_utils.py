@@ -149,22 +149,178 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
     return hierarchy
 
 
+@jax.tree_util.register_pytree_node_class
+class DistributedCSR:
+    """A distributed CSR sparse matrix for multi-GPU support using JAX.
+
+    Provides a uniform API for both single and multi-GPU matrix-vector multiplication.
+    """
+
+    def __init__(
+        self,
+        data: jnp.ndarray,
+        indices: jnp.ndarray,
+        indptr: jnp.ndarray,
+        shape: tuple[int, int],
+        mesh: jax.sharding.Mesh | None = None,
+    ):
+        """Initialize the DistributedCSR sparse matrix.
+
+        Args:
+            data (jnp.ndarray): Non-zero values.
+            indices (jnp.ndarray): Column indices.
+            indptr (jnp.ndarray): Row pointers.
+            shape (tuple[int, int]): Shape of the sparse matrix.
+            mesh (jax.sharding.Mesh | None, optional): Target sharding mesh. Defaults to None.
+        """
+        self.data = data
+        self.indices = indices
+        self.indptr = indptr
+        self.shape = shape
+        self.mesh = mesh
+
+    def tree_flatten(self):
+        """Flatten the DistributedCSR for JAX."""
+        return ((self.data, self.indices, self.indptr), (self.shape, self.mesh))
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        """Unflatten the DistributedCSR for JAX."""
+        shape, mesh = aux_data
+        data, indices, indptr = children
+        return cls(data, indices, indptr, shape, mesh)
+
+    @classmethod
+    def from_scipy(cls, scipy_mat: sp.csr_matrix, mesh: jax.sharding.Mesh | None = None, device=None) -> "DistributedCSR":
+        """Create a DistributedCSR from a SciPy CSR matrix.
+
+        Args:
+            scipy_mat (sp.csr_matrix): Input SciPy sparse matrix.
+            mesh (jax.sharding.Mesh | None, optional): Target JAX sharding mesh.
+            device: Optional target single device for allocation.
+
+        Returns:
+            DistributedCSR: The JAX distributed sparse matrix.
+        """
+        if mesh is None:
+            # Single GPU Path: Standard JAX CSR without padding
+            return cls(
+                jnp.asarray(scipy_mat.data, device=device),
+                jnp.asarray(scipy_mat.indices, device=device),
+                jnp.asarray(scipy_mat.indptr, device=device),
+                scipy_mat.shape,
+                mesh=None,
+            )
+
+        # Multi GPU Path: Explicit Sharding
+        num_devices = mesh.shape["devices"]
+        n_rows = scipy_mat.shape[0]
+        if n_rows % num_devices != 0:
+            raise ValueError(f"Rows ({n_rows}) must be divisible by number of devices ({num_devices})")
+        rows_per_block = n_rows // num_devices
+
+        # Split matrix row-wise and find max_nnz
+        blocks = [scipy_mat[i * rows_per_block : (i + 1) * rows_per_block, :] for i in range(num_devices)]
+        max_nnz = max(block.nnz for block in blocks)
+
+        # Pad blocks to max_nnz
+        data_list, indices_list, indptr_list = [], [], []
+        for block in blocks:
+            pad_len = max_nnz - block.nnz
+            data_padded = np.pad(block.data, (0, pad_len))
+            indices_padded = np.pad(block.indices, (0, pad_len))
+
+            data_list.append(data_padded)
+            indices_list.append(indices_padded)
+            indptr_list.append(block.indptr)
+
+        # Stack into arrays with a leading device dimension by concatenating (flat arrays)
+        data_stacked = jnp.asarray(np.concatenate(data_list))
+        indices_stacked = jnp.asarray(np.concatenate(indices_list))
+        indptr_stacked = jnp.asarray(np.concatenate(indptr_list))
+
+        # Explicitly shard across the mesh
+        P = jax.sharding.PartitionSpec("devices")
+        data_sharded = jax.device_put(data_stacked, jax.sharding.NamedSharding(mesh, P))
+        indices_sharded = jax.device_put(indices_stacked, jax.sharding.NamedSharding(mesh, P))
+        indptr_sharded = jax.device_put(indptr_stacked, jax.sharding.NamedSharding(mesh, P))
+
+        return cls(data_sharded, indices_sharded, indptr_sharded, scipy_mat.shape, mesh)
+
+    def dot(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Matrix-vector multiplication.
+
+        Args:
+            x (jnp.ndarray): Input vector.
+
+        Returns:
+            jnp.ndarray: Output vector.
+        """
+        return self.__matmul__(x)
+
+    def __matmul__(self, x: jnp.ndarray) -> jnp.ndarray:
+        """Matrix-vector multiplication overload.
+
+        Args:
+            x (jnp.ndarray): Input vector.
+
+        Returns:
+            jnp.ndarray: Output vector.
+        """
+        from jax.experimental import sparse
+
+        if self.mesh is None:
+            # Single GPU Path
+            csr = sparse.CSR((self.data, self.indices, self.indptr), shape=self.shape)
+            return csr @ x
+
+        # Multi GPU Path
+        from jax.experimental.shard_map import shard_map
+
+        P = jax.sharding.PartitionSpec("devices")
+
+        def _dot(data_loc, indices_loc, indptr_loc, x_loc):
+            # Gather full vector from all devices
+            x_full = jax.lax.all_gather(x_loc, "devices", tiled=True)
+
+            # Reconstruct local CSR matrix slice
+            local_shape = (self.shape[0] // self.mesh.shape["devices"], self.shape[1])
+            csr_loc = sparse.CSR((data_loc, indices_loc, indptr_loc), shape=local_shape)
+
+            # Local matrix-vector multiplication
+            return csr_loc @ x_full
+
+        _dot_sharded = jax.jit(shard_map(_dot, mesh=self.mesh, in_specs=(P, P, P, P), out_specs=P))
+        return _dot_sharded(self.data, self.indices, self.indptr, x)
+
+    @property
+    def T(self):
+        """Transpose.
+
+        Returns:
+            Any: The transposed matrix (only supported on single GPU for now).
+        """
+        from jax.experimental import sparse
+
+        if self.mesh is None:
+            csr = sparse.CSR((self.data, self.indices, self.indptr), shape=self.shape)
+            return csr.T
+        raise NotImplementedError("Distributed transpose is not yet implemented.")
+
+
 def csr_to_jax_CSR(mat: sp.csr_matrix, device=None) -> Any:
-    """Convert a SciPy CSR matrix to JAX CSR format.
+    """Convert a SciPy CSR matrix to JAX DistributedCSR format.
 
     Args:
         mat (sp.csr_matrix): Input SciPy sparse matrix.
-        device: Optional target device for allocation.
+        device: Optional target device or jax.sharding.Mesh for allocation.
 
     Returns:
-        jax.experimental.sparse.CSR: The JAX sparse matrix.
+        DistributedCSR: The JAX sparse matrix wrapper.
     """
-    from jax.experimental import sparse
-
-    return sparse.CSR(
-        (jnp.asarray(mat.data, device=device), jnp.asarray(mat.indices, device=device), jnp.asarray(mat.indptr, device=device)),
-        shape=mat.shape,
-    )
+    if isinstance(device, jax.sharding.Mesh):
+        return DistributedCSR.from_scipy(mat, mesh=device)
+    return DistributedCSR.from_scipy(mat, device=device)
 
 
 @jax.tree_util.register_pytree_node_class
