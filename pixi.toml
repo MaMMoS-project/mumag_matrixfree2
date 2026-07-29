@@ -59,8 +59,8 @@ compile = "bash compile_local.sh"
 # Compile globally to the shared ../lib/ folder on Ceph
 compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
 
-# Run unit tests. Usage: pixi run test
-test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/" }
+# Run unit tests and demag script. Usage: pixi run test
+test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/ && bash tests/test_demag_runs.sh" }
 # Run the demagnetization curve shell script test
 test-demag = "bash tests/test_demag_runs.sh"
 # Clean temporary mesh files
