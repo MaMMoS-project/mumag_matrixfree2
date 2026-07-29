@@ -186,10 +186,7 @@ def compute_node_volumes(geom: TetGeom, chunk_elems: int = 0) -> Array:
     """
     import numpy as np
     
-    if geom.x_nodes is not None:
-        N = geom.x_nodes.shape[0]
-    else:
-        N = int(np.max(geom.conn)) + 1
+    N = geom.x_nodes.shape[0] if geom.x_nodes is not None else int(np.max(geom.conn)) + 1
         
     conn_np = np.asarray(geom.conn)
     vol_np = np.asarray(geom.volume)
