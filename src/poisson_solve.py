@@ -19,84 +19,12 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 
-from fem_utils import (  # noqa: E402
-    TetGeom,
-    _B_split_from_JinvT,
-    _compute_JinvT_from_coords,
-    assemble_scatter,
-    assemble_segment_sum,
-    pad_geom_for_chunking,
-)
+from fem_utils import TetGeom
 
 Array = jnp.ndarray
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 PrecondType = Literal["none", "jacobi", "chebyshev", "amg", "amgcl"]
 Assembly = Literal["scatter", "segment_sum"]
-
-from jax_utils import safe_device_put
-
-
-_GRAD_HAT = jnp.array(
-    [
-        [-1.0, -1.0, -1.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ],
-    dtype=jnp.float64,
-)
-
-
-def _make_B_getter(
-    geom_p: TetGeom, chunk_elems: int, grad_backend: GradBackend
-) -> Callable[[Array, int, jnp.dtype], tuple[Array, Array, Array]]:
-    """Create a helper function to retrieve shape function gradients for a chunk.
-
-    Args:
-        geom_p (TetGeom): Padded geometry container.
-        chunk_elems (int): Size of element chunks.
-        grad_backend (GradBackend): Strategy for gradients.
-
-    Returns:
-        Callable: A function _get_B(connectivity, chunk_start_index, dtype) -> (Bx, By, Bz).
-    """
-    if grad_backend == "stored_grad_phi":
-        if geom_p.grad_phi is None:
-            raise ValueError("stored_grad_phi requires geom.grad_phi")
-        grad_phi = geom_p.grad_phi
-        grad_phi_x = grad_phi[:, :, 0]
-        grad_phi_y = grad_phi[:, :, 1]
-        grad_phi_z = grad_phi[:, :, 2]
-
-        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
-            bx = lax.dynamic_slice(grad_phi_x, (s, 0), (chunk_elems, 4)).astype(dtype)
-            by = lax.dynamic_slice(grad_phi_y, (s, 0), (chunk_elems, 4)).astype(dtype)
-            bz = lax.dynamic_slice(grad_phi_z, (s, 0), (chunk_elems, 4)).astype(dtype)
-            return bx, by, bz
-
-        return _get_B
-
-    if grad_backend == "stored_JinvT":
-        if geom_p.JinvT is None:
-            raise ValueError("stored_JinvT requires geom.JinvT")
-        JinvT = geom_p.JinvT
-
-        def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
-            JinvT_c = lax.dynamic_slice(JinvT, (s, 0, 0), (chunk_elems, 3, 3)).astype(dtype)
-            return _B_split_from_JinvT(JinvT_c, dtype)
-
-        return _get_B
-
-    if geom_p.x_nodes is None:
-        raise ValueError("on_the_fly requires geom.x_nodes")
-    x_nodes = geom_p.x_nodes
-
-    def _get_B(conn_c: Array, s: int, dtype) -> tuple[Array, Array, Array]:
-        x_e = x_nodes[conn_c].astype(dtype)
-        JinvT_c = _compute_JinvT_from_coords(x_e, dtype)
-        return _B_split_from_JinvT(JinvT_c, dtype)
-
-    return _get_B
 
 
 def make_poisson_ops(  # noqa: D417

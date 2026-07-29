@@ -52,31 +52,13 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 
-from fem_utils import (  # noqa: E402
-    TetGeom,
-    _B_split_from_JinvT,
-    _compute_JinvT_from_coords,
-    assemble_scatter,
-    assemble_segment_sum,
-    chunk_mask,
-    pad_geom_for_chunking,
-)
+from fem_utils import TetGeom
 
 MU0 = 4e-7 * jnp.pi
 Array = jnp.ndarray
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 Assembly = Literal["scatter", "segment_sum"]
-
-_GRAD_HAT = jnp.array(
-    [
-        [-1.0, -1.0, -1.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ],
-    dtype=jnp.float64,
-)
 
 
 def make_energy_kernels(  # noqa: D417
