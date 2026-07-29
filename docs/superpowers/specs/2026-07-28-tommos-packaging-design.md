@@ -26,6 +26,12 @@ separate later stages.
    `tommos` project.
 5. Native-wheel integration may be delayed. The initial packaging change will
    not claim that a wheel contains or installs the C++/oneMKL backend.
+6. Native compilation and MKL-accelerated execution are supported only on
+   Linux x86-64. Linux installations obtain oneMKL from Intel's PyPI packages;
+   an externally installed oneMKL is not a supported alternative.
+7. macOS uses the existing portable SciPy/JAX code paths without oneMKL.
+   Windows is not a target because the complete project dependency set is not
+   available there.
 
 The Python Packaging User Guide documents both the `src/<package>/` layout and
 its requirement for an installation, normally an editable installation during
@@ -178,10 +184,11 @@ The following are explicitly outside the initial package conversion:
 
 ## 6. Stage 2: Native Build Integration
 
-Stage 2 is divided into three milestones. The first supported deliverable is a
-reproducible Linux x86-64 source/HPC build against an externally managed oneMKL
-runtime. A publishable native wheel is a later milestone and must not be implied
-by merely changing the build backend.
+Stage 2 is divided into three milestones. The supported native deliverable is a
+Linux x86-64 build whose build and runtime oneMKL dependencies come from
+Intel's PyPI packages. macOS remains a portable-only target, and Windows is out
+of scope. A publishable native wheel is a later milestone and must not be
+implied by merely changing the build backend.
 
 ### 6.1 Capability boundaries
 
@@ -252,7 +259,7 @@ Tests for this milestone must cover lookup precedence, missing and incompatible
 libraries, lazy loading, explicit-request failures, automatic fallback, ABI
 mismatch, and separate probing of `sparse_dot_mkl`.
 
-### 6.3 Stage 2B: Reproducible source/HPC build
+### 6.3 Stage 2B: Reproducible PyPI-oneMKL build
 
 After Stage 2A is green, replace setuptools with `scikit-build-core`, which
 documents packaging CMake-built libraries consumed through `ctypes`:
@@ -260,57 +267,66 @@ documents packaging CMake-built libraries consumed through `ctypes`:
 
 Modernize CMake so that it:
 
-1. discovers oneMKL through its CMake package rather than hard-coded
-   `CONDA_PREFIX` paths;
-2. links through the imported `MKL::MKL` target;
+1. discovers the PyPI-installed `mkl-devel` distribution rather than using
+   hard-coded `CONDA_PREFIX` paths or searching for an external oneMKL;
+2. links the versioned dynamic oneMKL runtime exposed by that distribution,
+   using its CMake configuration where available;
 3. retains OpenMP as an explicit dependency;
 4. uses `install(TARGETS ...)` to place the library under `tommos/_native/`;
 5. disables `-march=native`, `-ffast-math`, and similar host-specific flags by
    default;
-6. exposes local/HPC optimization as explicit, documented CMake options;
-7. keeps all build products outside the source tree.
+6. keeps all build products outside the source tree.
 
 Intel documents `MKLConfig.cmake`, `find_package(MKL CONFIG REQUIRED)`, and the
 `MKL::MKL` imported target:
 [Intel oneMKL CMake configuration](https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-linux/2025-0/cmake-config-for-onemkl.html).
 
-The source-build contract must document the compiler, CMake, OpenMP, and oneMKL
-requirements and the supported CMake search-path mechanism. The existing Pixi
-path remains available during this milestone as a tested compatibility
-environment, but CMake must no longer depend on Pixi-specific directory
-layouts.
+The build contract must declare `mkl-devel` as a Linux x86-64 build dependency
+and discover its installed files without requiring `MKLROOT`. Intel states that
+PyPI installation does not set `MKLROOT` and that the Linux `mkl-devel` package
+does not provide unversioned dynamic-library symlinks:
+[Intel oneMKL PyPI guidance](https://www.intel.com/content/www/us/en/docs/onemkl/get-started-guide/2024-1/overview.html).
+Before the CMake change, inspect the installed distribution files and shared
+object names in a clean build environment. Use that evidence to select the
+exact versioned library and to make the CMake lookup deterministic.
 
-Artifacts produced here are for local/HPC installation and CI validation. They
+The existing Pixi path remains available during this milestone as a tested
+compatibility environment, but CMake must no longer depend on Pixi-specific
+directory layouts. An externally managed oneMKL installation is not part of the
+build contract.
+
+Artifacts produced here are for local installation and CI validation. They
 must not be published as generally usable native wheels until Stage 2C passes.
 
 ### 6.4 Stage 2C: Native-wheel delivery
 
-Before publishing native wheels, choose and legally verify one oneMKL delivery
-model:
-
-1. require a separately installed runtime;
-2. bundle permitted runtime libraries into repaired wheels;
-3. statically link permitted components; or
-4. publish only the source distribution and external-runtime build contract.
-
-Intel lists distinct `mkl`, `mkl-devel`, and `mkl-static` packages:
+Publish a Linux x86-64 native wheel that declares platform-conditioned runtime
+dependencies on Intel's `mkl` wheel and `sparse-dot-mkl`. Do not copy oneMKL
+libraries into the `tommos` wheel, statically link oneMKL, or add an
+external-runtime mode. Intel documents distinct `mkl`, `mkl-devel`, and
+`mkl-include` PyPI packages:
 [Intel oneMKL installation options](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-download.html).
-The repository still lacks sufficient licensing evidence to choose a
-redistribution model.
 
-The first wheel target, if approved, is Linux x86-64 with a conservative,
-explicit CPU baseline. macOS, Windows, Linux ARM, and CUDA support require
-separate implemented and tested compiler, library-name, OpenMP, runtime, and
-repair strategies.
+The native wheel target is Linux x86-64 with a conservative, explicit CPU
+baseline. The macOS wheel remains portable and excludes the Linux-only MKL
+dependencies. Windows and Linux ARM wheels are not targets. CUDA remains a
+separate Python dependency variant and does not change the CPU native-library
+platform scope.
 
-The wheel policy must also address `sparse_dot_mkl`; packaging
+The Linux wheel must address both MKL-dependent capabilities: packaging
 `libcpp_mkl_minimizer` alone does not make the default accelerated sparse path
-available. An external-runtime installation may expose a documented optional
-dependency for the wrapper, but it must state that the extra does not itself
-provision oneMKL.
+available. The Linux dependency set therefore includes both `mkl` and
+`sparse-dot-mkl`; macOS includes neither.
 
-Use `cibuildwheel` or an equivalently reviewed pipeline only after the delivery
-model and CPU baseline are approved:
+Do not embed an absolute build-environment path in the native library. First
+inspect where the `mkl` wheel installs its versioned runtime and its ELF
+`SONAME`. Then either use a stable `$ORIGIN`-relative `RUNPATH`, if the installed
+layout supports one, or locate and preload the installed runtime before loading
+`libcpp_mkl_minimizer`. Validate the selected mechanism from a clean virtual
+environment without `MKLROOT` or `LD_LIBRARY_PATH`.
+
+Use `cibuildwheel` or an equivalently reviewed pipeline only after the
+PyPI-oneMKL loading mechanism and CPU baseline are reviewed:
 [official cibuildwheel documentation](https://github.com/pypa/cibuildwheel).
 
 ## 7. Stage 3: Replace Pixi Responsibilities and Remove `pixi.toml`
@@ -326,12 +342,12 @@ last action, not the mechanism used to discover missing responsibilities.
 | Development, test, lint, and build dependencies | Standard `[dependency-groups]` entries in `pyproject.toml` |
 | Cross-platform environment resolution and locking | Versioned lock artifacts for every supported portable environment, plus documented regeneration and frozen-install checks |
 | CPU and CUDA JAX variants | Separate documented installation and CI procedures with mutually exclusive validation |
-| CMake, compiler, OpenMP, and oneMKL | The Stage 2 source-build contract and a pinned native CI environment |
-| `sparse_dot_mkl` | An explicit optional/native dependency policy plus portable `auto` fallback |
+| CMake, compiler, OpenMP, and oneMKL | The Stage 2 Linux build contract using PyPI `mkl-devel`, plus a pinned native CI environment |
+| `mkl` and `sparse_dot_mkl` | Linux-only project dependencies plus the portable macOS fallback |
 | Neper, Gmsh, and other external tools | Documented system prerequisites and preflight diagnostics |
 | Pixi tasks | Direct `python -m`, CMake, and shell commands; do not add a task runner unless repetition justifies one |
-| Linux, macOS, and Windows environments | Portable virtual-environment CI on all three platforms, plus a separate pinned Linux native-build job |
-| Slurm and HPC behavior | Maintained build/run documentation and scripts that do not infer Pixi paths |
+| Linux and macOS environments | Virtual-environment CI on both platforms, with native MKL tests restricted to Linux |
+| Slurm behavior | Maintained Linux build/run documentation and scripts using the same PyPI-managed oneMKL contract |
 | Sample execution and cleanup | Isolated temporary output directories and a clean-worktree assertion |
 
 Dependency Groups are intended for internal activities such as testing and
@@ -345,12 +361,13 @@ linting without becoming wheel metadata:
 2. Approve a lock format/tool and produce versioned, reproducible locks for the
    supported portable environments.
 3. Document direct commands for creating portable CPU and CUDA environments.
-4. Add Linux, macOS, and Windows portable CI jobs that install the package,
+4. Add Linux native and macOS portable CI jobs that install the package,
    extras, and dependency groups without Pixi.
-5. Add the pinned Stage 2 Linux native source-build job without Pixi.
+5. Add the pinned Stage 2 Linux native-wheel build job without Pixi.
 6. Make sample and benchmark smoke tests write only to temporary directories,
-   including a maintained Windows invocation.
-7. Replace Pixi-dependent Slurm/HPC activation and compilation behavior.
+   covering the maintained Linux and macOS invocations.
+7. Replace Pixi-dependent Slurm activation and compilation behavior with the
+   same PyPI-managed oneMKL build used outside Slurm.
 8. Run the Pixi and replacement workflows in parallel until their required
    outputs and tests agree.
 9. Remove `pixi.toml` and obsolete activation code in a final isolated change.
@@ -363,8 +380,8 @@ capability and separate approval.
 
 `pixi.toml` may be removed only when:
 
-- clean locked Linux, macOS, and Windows environments can build, install, test,
-  lint, and run their maintained portable sample commands without Pixi;
+- clean locked Linux and macOS environments can build, install, test, lint, and
+  run their maintained sample commands without Pixi;
 - the selected lock tool can regenerate the versioned artifacts, and frozen
   installations reproduce the tested dependency sets;
 - a clean pinned native environment can exercise MKL sparse operations, the C++
@@ -374,8 +391,8 @@ capability and separate approval.
 - CI contains no Pixi setup or command;
 - repository documentation and maintained scripts contain no active Pixi
   instructions;
-- Slurm/HPC users have an explicit compiler, oneMKL, build-directory, and
-  library-override contract;
+- Slurm users have an explicit compiler, PyPI-oneMKL, and build-directory
+  contract;
 - sample and benchmark checks leave no new or modified files in the checkout;
 - a read-only repository search finds no remaining active dependency on
   `PIXI_PROJECT_ROOT` or `.pixi/`.
@@ -416,7 +433,7 @@ durable CI evidence.
 ### 8.3 Stage 2B
 
 1. Build from the repository and from the generated source distribution using
-   the documented external oneMKL contract.
+   `mkl-devel` in a clean isolated Linux x86-64 build environment.
 2. Install outside the checkout with repository and Slurm overrides unset.
 3. Assert that the installed library path is under the installed `tommos`
    package.
@@ -425,6 +442,8 @@ durable CI evidence.
 5. Build with default flags on a conservative CI CPU and inspect the compiler
    command to reject `-march=native` and undocumented fast-math flags.
 6. Run the portable test suite with all native libraries deliberately absent.
+7. Confirm that the build does not search for or link an externally installed
+   oneMKL.
 
 ### 8.4 Stage 2C
 
@@ -437,8 +456,10 @@ For every native wheel:
 5. assert the exact packaged native path and ABI loaded;
 6. run deterministic native computations with fallback prohibited;
 7. exercise `sparse_dot_mkl` separately from `libcpp_mkl_minimizer`;
-8. repeat on the oldest supported CPU baseline;
-9. build a wheel from the published source distribution and repeat the checks.
+8. inspect ELF `NEEDED`, `RUNPATH`, and resolved library paths, with `MKLROOT`
+   and `LD_LIBRARY_PATH` unset;
+9. repeat on the oldest supported CPU baseline;
+10. build a wheel from the published source distribution and repeat the checks.
 
 Linux repair requires an explicit check because `auditwheel` documents that
 dependencies reached through runtime `ctypes`/`dlopen` loading can escape
@@ -450,9 +471,8 @@ static detection:
 1. Validate project extras and each dependency group in clean environments.
 2. Regenerate every lock and reproduce each environment through a frozen
    installation.
-3. Run portable Linux, macOS, and Windows CI plus the supported CUDA job without
-   Pixi.
-4. Run the external-oneMKL source build and native tests without Pixi.
+3. Run Linux native, macOS portable, and supported CUDA CI without Pixi.
+4. Build against PyPI `mkl-devel` and run the native Linux tests without Pixi.
 5. Run samples from temporary directories and assert a clean source tree.
 6. Build both distribution formats and repeat installed-artifact tests.
 7. Search maintained files for active Pixi paths and commands.
@@ -467,13 +487,13 @@ The remaining work must be split into these independently reviewable units:
 2. ABI-version export and validation;
 3. capability-based `auto` sparse-backend selection;
 4. scikit-build-core and portable-default CMake integration;
-5. external-oneMKL source/HPC build documentation and CI;
+5. PyPI-oneMKL Linux build documentation and CI;
 6. native-wheel policy and the first approved wheel pipeline;
 7. project extras and development dependency groups;
 8. cross-platform lock selection, generation, and frozen-install validation;
-9. direct non-Pixi commands and portable Linux, macOS, and Windows CI;
+9. direct non-Pixi commands and Linux/macOS CI;
 10. CUDA, native, and hermetic sample CI replacements;
-11. Slurm/HPC migration away from Pixi-specific paths;
+11. Slurm migration to the same PyPI-oneMKL build contract;
 12. final removal of `pixi.toml` and obsolete activation code.
 
 Each unit must pass its focused syntax, tests, artifact inspection, and
@@ -484,7 +504,9 @@ Pixi removal must not be combined.
 
 The revised staging settles these decisions:
 
-- external-oneMKL Linux x86-64 source/HPC builds are the first Stage 2 target;
+- Linux x86-64 builds use PyPI `mkl-devel` at build time and the PyPI `mkl`
+  runtime; externally installed oneMKL is unsupported;
+- macOS uses portable SciPy/JAX paths without MKL, and Windows is out of scope;
 - portable Python, MKL sparse operations, the C++ minimizer, and PARDISO are
   separately probed runtime capabilities even though the latter two share a
   library file;
@@ -500,7 +522,6 @@ The following still require explicit approval before implementation:
 - stable console-script names, if any;
 - final runtime dependencies and project optional extras;
 - final internal development dependency-group contents;
-- oneMKL acquisition and redistribution for publishable wheels;
 - native-wheel CPU baseline and platform expansion;
 - the exact lock format and tool, which must be approved in Stage 3 step 2 and
   cannot remain unresolved at the Pixi-removal gate.
