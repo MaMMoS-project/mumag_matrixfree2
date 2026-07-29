@@ -8,6 +8,7 @@ mkdir -p "$OUT_DIR"
 mkdir -p "$LOG_DIR"
 
 rm -f "$LOG_DIR"/run*.log
+rm -f "$LOG_DIR"/slurm_multigpu.out "$LOG_DIR"/slurm_multigpu.err
 
 cd "$DIR"
 
@@ -93,6 +94,27 @@ rm -f "$OUT_DIR"/cube_20nm.*
 JAX_PLATFORMS=cpu pixi run python ../src/loop.py cube_20nm --add-shell --method tr --out-dir "$OUT_DIR" --cpu-spmv-backend scipy --no-cpp-mkl --poisson-solver jax > "$LOG_DIR/run6_cpu_scipy_tr.log" 2>&1
 check_switching_field "$OUT_DIR/cube_20nm.mh"
 
+TARGET_NODE="Pm"
+TARGET_NODE_AVAILABLE=false
+if sinfo -h -n "$TARGET_NODE" -o "%T" | grep -qE "mixed|allocated|idle|reserved"; then
+    TARGET_NODE_AVAILABLE=true
+fi
+
+if [ "$TARGET_NODE_AVAILABLE" = true ]; then
+    echo "=== Submitting Tests 7 and 8 to Slurm on $TARGET_NODE (waiting for completion) ==="
+    sbatch --wait --nodelist="$TARGET_NODE" --reservation=pm_exclusive run_multi_gpu.slurm
+    
+    echo "=== Checking Test 7 ==="
+    check_switching_field "$OUT_DIR/cube_20nm.mh"
+
+    echo "=== Checking Test 8 ==="
+    check_switching_field "$OUT_DIR/cube_20nm.mh"
+else
+    echo "=== Test 7: Multi-GPU (2-device) skipped ($TARGET_NODE unavailable) ==="
+    echo "=== Test 8: Multi-GPU (2-device) skipped ($TARGET_NODE unavailable) ==="
+fi
+
+
 echo "=== Comparing Logs ==="
 pixi run python -c "
 import os
@@ -118,7 +140,9 @@ all_candidates = [
     '$LOG_DIR/run2_cpu_cpp.log',
     '$LOG_DIR/run4_gpu_tr.log',
     '$LOG_DIR/run5_cpu_cpp_tr.log',
-    '$LOG_DIR/run6_cpu_scipy_tr.log'
+    '$LOG_DIR/run6_cpu_scipy_tr.log',
+    '$LOG_DIR/run7_multigpu.log',
+    '$LOG_DIR/run8_multigpu_tr.log'
 ]
 logs_to_check = [log for log in all_candidates if os.path.exists(log)]
 

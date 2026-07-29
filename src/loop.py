@@ -667,6 +667,12 @@ def main() -> None:
         action="store_true",
         help="Run a dummy warmup step before the hysteresis loop to compile JIT functions.",
     )
+    ap.add_argument(
+        "--num-devices",
+        type=int,
+        default=0,
+        help="Number of GPUs/devices to distribute across (defaults to 0, meaning all available).",
+    )
 
     args = ap.parse_args()
 
@@ -689,6 +695,15 @@ def main() -> None:
 
     if args.poisson_solver == "auto":
         args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
+
+    num_devices = args.num_devices if args.num_devices > 0 else len(jax.devices())
+    if num_devices > 1:
+        devices = jax.devices()[:num_devices]
+        if len(devices) < num_devices:
+            raise RuntimeError(f"Requested {num_devices} devices, but only found {len(jax.devices())}")
+        mesh = jax.sharding.Mesh(np.array(devices), ("devices",))
+    else:
+        mesh = None
 
     # Automatic file discovery if modelname is provided
     modelname = args.modelname
@@ -1024,10 +1039,16 @@ def main() -> None:
     A_scipy = assemble_poisson_matrix_cpu(
         conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
     )
+
+    from amg_utils import pad_scipy_csr
+    if mesh is not None:
+        num_dev = mesh.shape["devices"]
+        A_scipy = pad_scipy_csr(A_scipy, num_dev)
+
     A_diag_cpu = A_scipy.diagonal()
     A_diag = jnp.asarray(A_diag_cpu)
 
-    dev_main = jax.devices()[0]
+    dev_main = mesh if mesh is not None else jax.devices()[0]
 
     A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
@@ -1035,36 +1056,38 @@ def main() -> None:
 
     import scipy.sparse as sp
 
-    if args.cpp_mkl:
-        Dx_coo = Dx_scipy.tocoo()
-        Dy_coo = Dy_scipy.tocoo()
-        Dz_coo = Dz_scipy.tocoo()
-        rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
-        cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
-        data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
-        D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
-        D_scipy.sort_indices()
-        D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
+    if mesh is not None:
+        p_rows = (num_dev - (Dx_scipy.shape[0] % num_dev)) % num_dev
+        if p_rows > 0:
+            D_scipy = sp.bmat([
+                [D_scipy, sp.csr_matrix((Dx_scipy.shape[0], 3 * p_rows))],
+                [sp.csr_matrix((p_rows, 3 * Dx_scipy.shape[0])), sp.csr_matrix((p_rows, 3 * p_rows))]
+            ]).tocsr()
+    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
-        Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
-        Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
-        Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
-        rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
-        cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
-        data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
-        G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
-        G_scipy.sort_indices()
-        G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
-    else:
-        D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-        D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
-        N = knt.shape[0]
-        Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-        Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-        Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-        G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-        G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
-        del Gx_scipy, Gy_scipy, Gz_scipy
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
+    if mesh is not None:
+        if p_rows > 0:
+            G_scipy = sp.bmat([
+                [G_scipy, sp.csr_matrix((3 * Dx_scipy.shape[0], p_rows))],
+                [sp.csr_matrix((3 * p_rows, Dx_scipy.shape[0])), sp.csr_matrix((3 * p_rows, p_rows))]
+            ]).tocsr()
+    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     del Dx_scipy, Dy_scipy, Dz_scipy
     if not args.cpp_mkl:
@@ -1075,16 +1098,27 @@ def main() -> None:
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
+
+    if mesh is not None:
+        N = knt.shape[0]
+        p_rows = (num_dev - (N % num_dev)) % num_dev
+        if p_rows > 0:
+            K_eff_scipy = sp.bmat([
+                [K_eff_scipy, sp.csr_matrix((3 * N, 3 * p_rows))],
+                [sp.csr_matrix((3 * p_rows, 3 * N)), sp.csr_matrix((3 * p_rows, 3 * p_rows))]
+            ]).tocsr()
     K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     if not args.cpp_mkl:
         del K_eff_scipy
 
+    from jax_utils import distribute_array
+
     assembled_kwargs = {
         "A_sparse": A_sparse,
-        "A_diag": A_diag,
+        "A_diag": distribute_array(A_diag, mesh),
         "K_eff_sparse": K_eff_sparse,
-        "Kex_diag": jnp.asarray(Kex_diag_cpu, dtype=jnp.float64),
+        "Kex_diag": distribute_array(jnp.asarray(Kex_diag_cpu, dtype=jnp.float64), mesh),
         "D_sparse": D_sparse,
         "G_sparse": G_sparse,
         "K_eff_scipy": locals().get("K_eff_scipy"),
@@ -1101,17 +1135,18 @@ def main() -> None:
         K1_lookup=jnp.asarray(K1_red, dtype=jnp.float64),
         Js_lookup=jnp.asarray(Js_red, dtype=jnp.float64),
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
-        m0=jnp.asarray(m0, dtype=jnp.float64),
+        m0=distribute_array(jnp.asarray(m0, dtype=jnp.float64), mesh),
         params=params,
         V_mag=float(V_mag),
-        node_volumes=jnp.asarray(node_vols, dtype=jnp.float64),
-        M_nodal=jnp.asarray(M_nodal, dtype=jnp.float64),
-        B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
+        node_volumes=distribute_array(jnp.asarray(node_vols, dtype=jnp.float64), mesh),
+        M_nodal=distribute_array(jnp.asarray(M_nodal, dtype=jnp.float64), mesh),
+        B_bias=distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None,
         precond_type=args.precond_type,
         grad_backend=grad_backend,
         chunk_elems=int(args.chunk_elems),
-        boundary_mask=jnp.asarray(boundary_mask, dtype=jnp.float64) if boundary_mask is not None else None,
+        boundary_mask=distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None,
         cpu_spmv_backend=cpu_spmv_backend,
+        mesh=mesh,
         **assembled_kwargs,
     )
 
