@@ -109,9 +109,6 @@ def make_poisson_ops(  # noqa: D417
     assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
     A_sparse: Any | None = None,  # noqa: F821
-    Dx_sparse: Any | None = None,  # noqa: F821
-    Dy_sparse: Any | None = None,  # noqa: F821
-    Dz_sparse: Any | None = None,  # noqa: F821
     A_diag: Array | None = None,
 ) -> tuple[Callable[[Array], Array], Callable[[Array], Array], Callable[[int], Array]]:
     """Create JIT-compiled matrix-free or matrix-assembled Poisson operators.
@@ -127,9 +124,7 @@ def make_poisson_ops(  # noqa: D417
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
         boundary_mask (Array | None, optional): Dirichlet boundary mask
             (0.0 at boundary). Defaults to None.
-        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
         A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
-        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
         A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
@@ -147,15 +142,8 @@ def make_poisson_ops(  # noqa: D417
         return y
 
     def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
-        if "D_sparse" in sparse_ops and sparse_ops["D_sparse"] is not None:
-            m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
-            y = sparse_ops["D_sparse"] @ m_flat
-        else:
-            y = (
-                sparse_ops["Dx_sparse"] @ m[:, 0]
-                + sparse_ops["Dy_sparse"] @ m[:, 1]
-                + sparse_ops["Dz_sparse"] @ m[:, 2]
-            )
+        m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+        y = sparse_ops["D_sparse"] @ m_flat
         boundary_mask_dyn = sparse_ops.get("boundary_mask")
         if boundary_mask_dyn is not None:
             y = y * boundary_mask_dyn
@@ -322,9 +310,6 @@ def make_solve_U(  # noqa: D417
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
     A_sparse: Any = None,  # noqa: F821
-    Dx_sparse: Any = None,  # noqa: F821
-    Dy_sparse: Any = None,  # noqa: F821
-    Dz_sparse: Any = None,  # noqa: F821
     A_diag: Any = None,  # noqa: F821
     A_scipy: Any = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
@@ -351,9 +336,7 @@ def make_solve_U(  # noqa: D417
         boundary_mask (Array | None, optional): Dirichlet boundary mask.
             Defaults to None.
         assembly (Assembly, optional): Nodal assembly method. Defaults to 'scatter'.
-        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
         A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
-        Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
         A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
 
     Returns:
@@ -371,9 +354,6 @@ def make_solve_U(  # noqa: D417
         assembly=assembly,
         boundary_mask=boundary_mask,
         A_sparse=A_sparse,
-        Dx_sparse=Dx_sparse,
-        Dy_sparse=Dy_sparse,
-        Dz_sparse=Dz_sparse,
         A_diag=A_diag,
     )
 
