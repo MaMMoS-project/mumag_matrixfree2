@@ -1070,12 +1070,7 @@ def main() -> None:
     if not args.cpp_mkl:
         del D_scipy, G_scipy
         
-    Dx_sparse = Dy_sparse = Dz_sparse = None
-    Gx_sparse = Gy_sparse = Gz_sparse = None
-
     from amg_utils import assemble_exchange_anisotropy_matrix_cpu
-
-    Kx_sparse = Ky_sparse = Kz_sparse = None
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
@@ -1087,18 +1082,9 @@ def main() -> None:
 
     assembled_kwargs = {
         "A_sparse": A_sparse,
-        "Dx_sparse": None,
-        "Dy_sparse": None,
-        "Dz_sparse": None,
         "A_diag": A_diag,
         "K_eff_sparse": K_eff_sparse,
-        "Kx_sparse": Kx_sparse,
-        "Ky_sparse": Ky_sparse,
-        "Kz_sparse": Kz_sparse,
         "Kex_diag": jnp.asarray(Kex_diag_cpu, dtype=jnp.float64),
-        "Gx_sparse": None,
-        "Gy_sparse": None,
-        "Gz_sparse": None,
         "D_sparse": D_sparse,
         "G_sparse": G_sparse,
         "K_eff_scipy": locals().get("K_eff_scipy"),
