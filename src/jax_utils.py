@@ -6,6 +6,7 @@ Utility functions for JAX operations.
 from __future__ import annotations
 
 import os
+
 import jax
 import jax.numpy as jnp
 
