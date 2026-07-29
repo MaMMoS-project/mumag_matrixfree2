@@ -591,20 +591,6 @@ def make_pcohen_minimizer(
 
         conv = check_convergence(state.it, E_new, E_prev, m, m_new, gnorm_inf_smooth, params["tau_f"], params["eps_a"])
 
-        jax.lax.cond(
-            params.get("debug", False),
-            lambda _: jax.debug.print(
-                "it={it:03d} E={E:.8e} g={g:.3e} tau={tau:.3e} conv={c}",
-                it=state.it,
-                E=E_new,
-                g=gnorm_inf_smooth,
-                tau=tau,
-                c=conv,
-            ),
-            lambda _: None,
-            operand=None,
-        )
-
         return PCGState(
             m_new,
             U_new,

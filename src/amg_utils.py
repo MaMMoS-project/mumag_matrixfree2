@@ -987,11 +987,9 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     ia_ptr = ia_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
     ja_ptr = ja_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
 
-    print(f"Initializing MKL PARDISO for {n}x{n} matrix with {a_data.size} nonzeros...")
     handle_id = ffi_lib.init_pardiso(n, a_ptr, ia_ptr, ja_ptr)
     if handle_id < 0:
         raise RuntimeError(f"PARDISO initialization failed with error code {-handle_id}")
-    print("PARDISO initialization successful.")
 
     ffi_lib.pardiso_solve_direct.argtypes = [
         ctypes.c_int64,
