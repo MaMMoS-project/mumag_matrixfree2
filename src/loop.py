@@ -697,8 +697,11 @@ def main() -> None:
         args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
 
     num_devices = args.num_devices if args.num_devices > 0 else len(jax.devices())
+    print(f"[config] JAX initialized with {len(jax.devices())} total devices.")
+    
     if num_devices > 1:
         devices = jax.devices()[:num_devices]
+        print(f"[config] Distributing arrays across {num_devices} active devices: {devices}")
         if len(devices) < num_devices:
             raise RuntimeError(f"Requested {num_devices} devices, but only found {len(jax.devices())}")
         mesh = jax.sharding.Mesh(np.array(devices), ("devices",))
