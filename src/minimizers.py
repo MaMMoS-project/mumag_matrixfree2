@@ -57,18 +57,6 @@ def cayley_update(m: Array, H: Array, tau: Array) -> Array:
     return m_new / jnp.linalg.norm(m_new, axis=1, keepdims=True)
 
 
-def cayley_transport(v: Array, H: Array, tau: Array) -> Array:
-    """Transport a tangent vector v from T_m to T_m_new using the Cayley rotation matrix."""
-    k = 0.5 * tau * H
-    k2 = jnp.sum(k * k, axis=1, keepdims=True)
-    denom = 1.0 + k2
-    kv = jnp.cross(k, v)
-    kdotv = jnp.sum(k * v, axis=1, keepdims=True)
-    # R * v using the same Rodrigues-type rotation formula as cayley_update
-    v_new = ((1.0 - k2) * v + 2.0 * kv + 2.0 * kdotv * k) / denom
-    return v_new
-
-
 def tangent_grad(m: Array, g_raw: Array) -> Array:
     """Project a raw gradient onto the tangent space of the unit sphere."""
     return g_raw - jnp.sum(m * g_raw, axis=1, keepdims=True) * m
@@ -77,19 +65,6 @@ def tangent_grad(m: Array, g_raw: Array) -> Array:
 # -----------------------------------------------------------------------------
 # JIT-compiled Helper Functions (Extracted to global scope to prevent recompilation)
 # -----------------------------------------------------------------------------
-
-
-@jax.jit
-def mvp_Keff(K_op, m_vec):
-    """Matrix-vector product for effective anisotropy."""
-    return K_op @ m_vec
-
-
-
-@jax.jit
-def mvp_G(G_op, U_vec):
-    """Matrix-vector product for preconditioner G."""
-    return G_op @ U_vec
 
 
 @jax.jit
@@ -116,20 +91,6 @@ def update_m_jit(m_vec, H_vec, s_step):
     return cayley_update(m_vec, H_vec, s_step)
 
 
-@jax.jit
-def d_update_jit(y_vec, beta_val, d_prev_proj):
-    """Update search direction."""
-    return -y_vec + beta_val * d_prev_proj
-
-
-@jax.jit
-def H_pg_jit(m_vec, d_vec, g_raw_vec):
-    """Compute effective field H and projected gradient."""
-    H_vec = -jnp.cross(m_vec, -d_vec)
-    pg_val = jnp.vdot(g_raw_vec, d_vec)
-    return H_vec, pg_val
-
-
 def check_convergence(
     it: int, E: Array, E_prev: Array, m: Array, m_new: Array, gnorm_inf: Array, tau_f: float, eps_a: float
 ) -> Array:
@@ -150,89 +111,6 @@ def check_convergence(
 # -----------------------------------------------------------------------------
 
 
-def make_armijo_ls(energy_only: Callable, solve_U: Callable):
-    """Create a JAX-native Armijo line search on the curvilinear path."""
-
-    def armijo_ls(
-        m: Array,
-        pg: Array,
-        H: Array,
-        E0: Array,
-        U_base: Array,
-        B_ext: Array,
-        phi_tol: Array,
-        eta1: float,
-        eta2: float,
-        C: float,
-        c: float,
-        s0: Array,
-        max_evals: int,
-    ) -> Array:
-        def D(s: Array) -> Array:
-            m_trial = cayley_update(m, H, s)
-            U_trial = solve_U(m_trial, U_base, phi_tol)
-            E_trial = energy_only(m_trial, U_trial, B_ext)
-            # Handle NaN/Inf in energy: treat as very high energy to force backtracking
-            E_trial = jnp.where(jnp.isfinite(E_trial), E_trial, 1e20)
-            return (E_trial - E0) / (s * pg + 1e-30)
-
-        def exp_cond(state):
-            s, s_min, it, done = state
-            return (it < max_evals) & (~done)
-
-        def exp_body(state):
-            s, s_min, it, done = state
-            d = D(s)
-            stop = (jnp.abs(1.0 - d) >= eta2) | (d < 0)  # Stop if energy increases or sufficiently far
-            s_next = jnp.where(stop, s, C * s)
-            s_min_next = jnp.where(stop, s_min, s)
-            return (s_next, s_min_next, it + 1, stop)
-
-        s_start = jnp.asarray(s0, dtype=m.dtype)
-        init_exp = (s_start, jnp.zeros_like(s_start), jnp.int32(0), jnp.array(False))
-        s_exp, s_min_exp, it_exp, _ = lax.while_loop(exp_cond, exp_body, init_exp)
-
-        def con_cond(state):
-            s, it, done = state
-            return (it < max_evals) & (~done)
-
-        def con_body(state):
-            s, it, done = state
-            d = D(s)
-            stop = (d >= eta1) & (d < 1e10)  # Sufficient decrease and finite
-            s_next = jnp.where(stop, s, s_min_exp + c * (s - s_min_exp))
-            return (s_next, it + 1, stop)
-
-        init_con = (s_exp, jnp.int32(0), jnp.array(False))
-        s_final, it_con, _ = lax.while_loop(con_cond, con_body, init_con)
-
-        # Final safety: if it still doesn't decrease, return a tiny step or 0
-        final_d = D(s_final)
-        s_safe = jnp.where(final_d >= 0, s_final, 0.0)
-
-        # Calculate metrics for logging
-        ls_iters = it_exp + it_con
-        ls_evals = ls_iters + 1
-
-        final_iters = jnp.where(pg >= 0, jnp.int32(0), ls_iters)
-        final_evals = jnp.where(pg >= 0, jnp.int32(0), ls_evals)
-        final_it_exp = jnp.where(pg >= 0, jnp.int32(0), it_exp)
-        final_it_con = jnp.where(pg >= 0, jnp.int32(0), it_con)
-        final_tau = jnp.where(pg >= 0, 0.0, s_safe)
-
-        # Report to standard output during JIT execution
-        jax.debug.print(
-            "Line search: iters={iters} (exp={it_exp}, con={it_con}) evals={evals} tau={tau}",
-            iters=final_iters,
-            it_exp=final_it_exp,
-            it_con=final_it_con,
-            evals=final_evals,
-            tau=final_tau,
-        )
-
-        return final_tau
-
-    return jax.jit(armijo_ls)
 
 
 def make_armijo_ls_v2(energy_and_grad: Callable, solve_U: Callable):
