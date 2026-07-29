@@ -103,8 +103,41 @@ def test_micromagnetic_energies():
     m_45[:, 2] = 1.0 / np.sqrt(2.0)
     E_an_analytic_si = -K1 * V_mag_si * 0.5  # -K1 * cos^2(45) = -0.5*K1
 
-    # 4. Kernel Creation
-    solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl")
+    # 4. Assembled sparse operators setup
+    import scipy.sparse as sp
+    from amg_utils import (
+        assemble_divergence_matrices_cpu,
+        assemble_exchange_anisotropy_matrix_cpu,
+        assemble_poisson_matrix_cpu,
+        make_sparse_operator,
+    )
+
+    A_scipy = assemble_poisson_matrix_cpu(conn32, volume, grad_phi, boundary_mask=np.array(boundary_mask), reg=1e-12)
+    A_sparse = make_sparse_operator(A_scipy)
+    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, grad_phi, np.array(Js_lookup), mat_id)
+    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+    D_sparse = make_sparse_operator(D_scipy)
+
+    N_nodes = knt.shape[0]
+    Gx_scipy = 2.0 * D_scipy[:, :N_nodes].transpose()
+    Gy_scipy = 2.0 * D_scipy[:, N_nodes : 2 * N_nodes].transpose()
+    Gz_scipy = 2.0 * D_scipy[:, 2 * N_nodes :].transpose()
+    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+    G_sparse = make_sparse_operator(G_scipy)
+
+    K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+        conn32, volume, grad_phi, np.array(A_lookup), np.array(K1_lookup), np.array(k_easy_lookup), mat_id
+    )
+    K_eff_sparse = make_sparse_operator(K_eff_scipy)
+
+    solve_U, hierarchy_jax = make_solve_U(
+        geom,
+        Js_lookup,
+        cg_tol=1e-12,
+        boundary_mask=boundary_mask,
+        precond_type="amgcl",
+        A_sparse=A_sparse,
+    )
     energy_and_grad, _, _, _ = make_energy_kernels(
         geom,
         A_lookup,
@@ -117,7 +150,15 @@ def test_micromagnetic_energies():
     )
 
     # 5. Verification
-    sparse_ops = {"M_nodal": M_nodal}
+    sparse_ops = {
+        "A_sparse": A_sparse,
+        "D_sparse": D_sparse,
+        "G_sparse": G_sparse,
+        "K_eff_sparse": K_eff_sparse,
+        "M_nodal": M_nodal,
+        "hierarchy_jax": hierarchy_jax,
+        "boundary_mask": boundary_mask,
+    }
 
     # --- Exchange ---
     e_ex, _ = energy_and_grad(m_hel, jnp.zeros(knt.shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
@@ -140,6 +181,6 @@ def test_micromagnetic_energies():
     # For a cube, N_x \approx 1/3
     # E_dem \approx 0.5 * (1/3) * (Js^2/mu0) * V
     # Dimensionless: E_dem \approx (1/3)
-    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]), sparse_ops={})
+    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]), sparse_ops=sparse_ops)
     e_dem, _ = energy_and_grad(m_unif_x, u, jnp.zeros(3), sparse_ops=sparse_ops)
     assert abs(float(e_dem) - 1.0 / 3.0) < 0.05

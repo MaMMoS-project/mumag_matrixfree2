@@ -112,7 +112,7 @@ def test():
     # Setup Solve_U
     from poisson_solve import make_solve_U
 
-    solve_U = make_solve_U(
+    solve_U, hierarchy_jax = make_solve_U(
         geom,
         jnp.asarray(Js_red, dtype=jnp.float64),
         precond_type="amgcl",
@@ -123,7 +123,6 @@ def test():
         poisson_reg=1e-12,
         grad_backend="stored_JinvT",
         boundary_mask=None,
-        mode="assembled",
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
         poisson_solver="pardiso" if sys.platform.startswith("linux") else "jax",
@@ -143,7 +142,6 @@ def test():
         cg_tol=1e-8,
         method="pcohen_hs",
         grad_backend="stored_JinvT",
-        mode="assembled",
     )
 
     U = jnp.zeros(N, dtype=jnp.float64)
@@ -163,11 +161,10 @@ def test():
 
     print("Running JAX minimize...")
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
-    from energy_kernels import compute_exchange_diagonal
 
-    d_diag = compute_exchange_diagonal(
-        geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
-    )
+    Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+    Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=N)
+    d_diag = jnp.asarray(Kex_diag_cpu * (1.0 / V_mag))
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     m_new, U_new, info = minimize(
         m,
@@ -200,6 +197,7 @@ def test():
         phi_extrapolate=params.phi_extrapolate,
         L=params.L,
         sparse_ops={
+            "hierarchy_jax": hierarchy_jax,
             "A_sparse": A_sparse,
             "A_diag": A_diag,
             "K_eff_sparse": K_eff_sparse,

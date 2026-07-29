@@ -72,6 +72,46 @@ def setup_geom():
     M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=200_000)
     V_mag_nm = np.sum(volume[mat_id == 1])
 
+    import scipy.sparse as sp
+    from amg_utils import (
+        assemble_divergence_matrices_cpu,
+        assemble_exchange_anisotropy_matrix_cpu,
+        assemble_poisson_matrix_cpu,
+        make_sparse_operator,
+    )
+
+    A_scipy = assemble_poisson_matrix_cpu(conn32, volume, grad_phi, boundary_mask=np.array(boundary_mask), reg=1e-12)
+    A_sparse = make_sparse_operator(A_scipy)
+    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, grad_phi, np.array(Js_lookup), mat_id)
+    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+    D_sparse = make_sparse_operator(D_scipy)
+
+    N_nodes = knt.shape[0]
+    Gx_scipy = 2.0 * D_scipy[:, :N_nodes].transpose()
+    Gy_scipy = 2.0 * D_scipy[:, N_nodes : 2 * N_nodes].transpose()
+    Gz_scipy = 2.0 * D_scipy[:, 2 * N_nodes :].transpose()
+    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+    G_sparse = make_sparse_operator(G_scipy)
+
+    K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+        conn32, volume, grad_phi, np.array(A_lookup), np.array(K1_lookup), np.array(k_easy_lookup), mat_id
+    )
+    K_eff_sparse = make_sparse_operator(K_eff_scipy)
+
+    solve_U, hierarchy_jax = make_solve_U(
+        geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl", A_sparse=A_sparse
+    )
+
+    sparse_ops = {
+        "A_sparse": A_sparse,
+        "D_sparse": D_sparse,
+        "G_sparse": G_sparse,
+        "K_eff_sparse": K_eff_sparse,
+        "M_nodal": M_nodal,
+        "hierarchy_jax": hierarchy_jax,
+        "boundary_mask": boundary_mask,
+    }
+
     return {
         "knt": knt,
         "geom": geom,
@@ -83,6 +123,8 @@ def setup_geom():
         "M_nodal": M_nodal,
         "boundary_mask": boundary_mask,
         "Js_si": Js,
+        "solve_U": solve_U,
+        "sparse_ops": sparse_ops,
     }
 
 
@@ -123,7 +165,7 @@ def test_exchange_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    sparse_ops = {"M_nodal": d["M_nodal"]}
+    sparse_ops = d["sparse_ops"]
     _, g_sim = energy_and_grad(m_hel, jnp.zeros(d["knt"].shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
 
     # Test only first 5 nodes for speed
@@ -151,9 +193,7 @@ def test_exchange_gradient(setup_geom):
 def test_anisotropy_gradient(setup_geom):
     d = setup_geom
     m_45 = np.tile(np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
-    )
+    solve_U = d["solve_U"]
     energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
@@ -164,8 +204,8 @@ def test_anisotropy_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    sparse_ops = {"M_nodal": d["M_nodal"]}
-    u = solve_U(m_45, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    sparse_ops = d["sparse_ops"]
+    u = solve_U(m_45, jnp.zeros(d["knt"].shape[0]), sparse_ops=sparse_ops)
     _, g_sim = energy_and_grad(m_45, u, jnp.zeros(3), sparse_ops=sparse_ops)
 
     n_test = 5
@@ -193,9 +233,7 @@ def test_zeeman_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
     b_ext = jnp.array([0.1 / d["Js_si"], 0.0, 0.0])
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
-    )
+    solve_U = d["solve_U"]
     energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
@@ -206,8 +244,8 @@ def test_zeeman_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    sparse_ops = {"M_nodal": d["M_nodal"]}
-    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    sparse_ops = d["sparse_ops"]
+    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops=sparse_ops)
     _, g_sim = energy_and_grad(m_x, u, b_ext, sparse_ops=sparse_ops)
 
     n_test = 5
@@ -234,9 +272,7 @@ def test_zeeman_gradient(setup_geom):
 def test_demag_gradient(setup_geom):
     d = setup_geom
     m_x = np.tile(np.array([1.0, 0.0, 0.0]), (d["knt"].shape[0], 1))
-    solve_U = make_solve_U(
-        d["geom"], d["Js_lookup"], cg_tol=1e-12, boundary_mask=d["boundary_mask"], precond_type="amgcl"
-    )
+    solve_U = d["solve_U"]
     energy_and_grad, _, _, _ = make_energy_kernels(
         d["geom"],
         jnp.zeros_like(d["A_lookup"]),
@@ -247,8 +283,8 @@ def test_demag_gradient(setup_geom):
         d["M_nodal"],
     )
 
-    sparse_ops = {"M_nodal": d["M_nodal"]}
-    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops={})
+    sparse_ops = d["sparse_ops"]
+    u = solve_U(m_x, jnp.zeros(d["knt"].shape[0]), sparse_ops=sparse_ops)
     _, g_sim = energy_and_grad(m_x, u, jnp.zeros(3), sparse_ops=sparse_ops)
 
     # Demag gradient g_i = sum_e Js * (Ve/4) * grad_u

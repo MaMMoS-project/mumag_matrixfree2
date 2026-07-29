@@ -112,11 +112,9 @@ def test():
     )
 
     # Preconditioning setup
-    from energy_kernels import compute_exchange_diagonal
-
-    d_diag = compute_exchange_diagonal(
-        geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
-    )
+    Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+    Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=knt.shape[0])
+    d_diag = jnp.asarray(Kex_diag_cpu * (1.0 / V_mag))
     inv_M_prec = 1.0 / (d_diag + 1e-30)
 
     params = LoopParams(
@@ -138,7 +136,7 @@ def test():
     # Setup Solve_U
     from poisson_solve import make_solve_U
 
-    solve_U = make_solve_U(
+    solve_U, _ = make_solve_U(
         geom,
         jnp.asarray(Js_red, dtype=jnp.float64),
         precond_type="amgcl",
@@ -149,7 +147,6 @@ def test():
         poisson_reg=1e-12,
         grad_backend="stored_JinvT",
         boundary_mask=None,
-        mode="assembled",
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
         poisson_solver="pardiso",
