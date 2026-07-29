@@ -754,45 +754,6 @@ def assemble_exchange_anisotropy_matrix_cpu(
     return K_eff
 
 
-def assemble_exchange_anisotropy_blocked_cpu(
-    conn: np.ndarray,
-    volume: np.ndarray,
-    grad_phi: np.ndarray,
-    A_lookup: np.ndarray,
-    K1_lookup: np.ndarray,
-    k_easy_lookup: np.ndarray,
-    mat_id: np.ndarray,
-) -> tuple[sp.csr_matrix, sp.csr_matrix, sp.csr_matrix]:
-    """Assemble the Exchange and Anisotropy matrices directly as blocked components.
-    Returns (Kx, Ky, Kz) each of shape (N, 3N) to save massive amounts of host memory.
-    """
-    N = np.max(conn) + 1
-    A_elem = A_lookup[mat_id - 1]
-    K1_elem = K1_lookup[mat_id - 1]
-    k_elem = k_easy_lookup[mat_id - 1]
-
-    Kex_e = 2.0 * A_elem[:, None, None] * volume[:, None, None] * np.einsum("eai,ebi->eab", grad_phi, grad_phi)
-    val_elem = -2.0 * K1_elem * volume / 20.0
-    Kan_e = val_elem[:, None, None] * (np.ones((4, 4), dtype=np.float64) + np.eye(4, dtype=np.float64))
-
-    rows = np.repeat(conn, 4, axis=1).flatten()
-    cols = np.tile(conn, (1, 4)).flatten()
-
-    def build_K_comp(comp_i):
-        blocks = []
-        for j in range(3):
-            data_ij = Kan_e * (k_elem[:, comp_i] * k_elem[:, j])[:, None, None]
-            if comp_i == j:
-                data_ij += Kex_e
-            mat_ij = sp.coo_matrix((data_ij.flatten(), (rows, cols)), shape=(N, N)).tocsr()
-            blocks.append(mat_ij)
-        return sp.hstack(blocks).tocsr()
-
-    Kx = build_K_comp(0)
-    Ky = build_K_comp(1)
-    Kz = build_K_comp(2)
-    return Kx, Ky, Kz
-
 
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
