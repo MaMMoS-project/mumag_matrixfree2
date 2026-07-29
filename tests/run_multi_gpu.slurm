@@ -17,8 +17,8 @@ export NCCL_P2P_DISABLE=1
 
 echo "Running Test 7 on Pm..."
 rm -f "$OUT_DIR"/cube_20nm.*
-pixi run -e cuda python ../src/loop.py cube_20nm --add-shell --benchmark --num-devices 2 --out-dir "$OUT_DIR" > "$LOG_DIR/run7_multigpu.log" 2>&1
+pixi run -e cuda python ../src/loop.py cube_20nm --add-shell --benchmark --out-dir "$OUT_DIR" > "$LOG_DIR/run7_multigpu.log" 2>&1
 
 echo "Running Test 8 on Pm..."
 rm -f "$OUT_DIR"/cube_20nm.*
-pixi run -e cuda python ../src/loop.py cube_20nm --add-shell --method tr --benchmark --num-devices 2 --out-dir "$OUT_DIR" > "$LOG_DIR/run8_multigpu_tr.log" 2>&1
+pixi run -e cuda python ../src/loop.py cube_20nm --add-shell --method tr --benchmark --out-dir "$OUT_DIR" > "$LOG_DIR/run8_multigpu_tr.log" 2>&1
