@@ -33,9 +33,6 @@ from jax import lax
 
 Array = jnp.ndarray
 
-from jax_utils import safe_device_put
-
-
 # -----------------------------------------------------------------------------
 # Global variables and preconditioning mapping
 # -----------------------------------------------------------------------------
@@ -880,8 +877,6 @@ def make_minimizer(
 
     if "energy_assembly" in kwargs:
         kwargs["assembly"] = kwargs.pop("energy_assembly")
-
-    Kex_diag = kwargs.pop("Kex_diag", None)
 
     _energy_and_grad_raw, _energy_only_raw, grad_only, local_grad_only = make_energy_kernels(
         geom, A_lookup, K1_lookup, Js_lookup, k_easy_lookup, V_mag, M_nodal, **kwargs

@@ -50,7 +50,6 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
 
 from fem_utils import TetGeom
 
@@ -131,7 +130,7 @@ def make_energy_kernels(  # noqa: D417
 
         # 3. Demag gradient: G @ U (shape (N, 3))
         g_dem_flat = sparse_ops["G_sparse"] @ U
-        g_dem = g_dem_flat.reshape(3, -1).T
+        g_dem = g_dem_flat.reshape(-1, 3)
 
         # 4. Zeeman gradient
         B_eff = B_ext[None, :]

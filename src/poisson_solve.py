@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 
@@ -70,7 +70,7 @@ def make_poisson_ops(  # noqa: D417
         return y
 
     def rhs_from_m(sparse_ops: dict, m: Array) -> Array:
-        m_flat = jnp.concatenate([m[:, 0], m[:, 1], m[:, 2]])
+        m_flat = m.reshape(-1)
         y = sparse_ops["D_sparse"] @ m_flat
         boundary_mask_dyn = sparse_ops.get("boundary_mask")
         if boundary_mask_dyn is not None:
@@ -242,6 +242,7 @@ def make_solve_U(  # noqa: D417
     A_scipy: Any = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
     poisson_solver: str = "jax",
+    mesh: jax.sharding.Mesh | None = None,
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
@@ -285,23 +286,14 @@ def make_solve_U(  # noqa: D417
         A_diag=A_diag,
     )
 
-    if geom.x_nodes is not None:
-        N = int(geom.x_nodes.shape[0])
-    else:
-        import numpy as np
 
-        N = int(np.max(geom.conn)) + 1
 
     Mdiag = None
     l_max = 2.0
     apply_Minv_amg = None
     hierarchy_jax = None
 
-    if precond_type == "chebyshev":
-        Mdiag = assemble_diag(None, N)
-        l_max = 1.1 * estimate_spectral_radius(apply_A, Mdiag, boundary_mask, N)
-
-    elif precond_type in ["amg", "amgcl"] and poisson_solver not in ["pardiso"]:
+    if precond_type in ["amg", "amgcl"] and poisson_solver not in ["pardiso"]:
         print(f"Setting up AMG hierarchy on CPU (PyAMG, mode={precond_type})...")
         import numpy as np
         import pyamg
@@ -342,20 +334,26 @@ def make_solve_U(  # noqa: D417
             )
         else:
             levels_jax = []
+            num_dev = mesh.shape["devices"] if mesh is not None else 1
             for i in range(len(ml.levels)):
                 level = ml.levels[i]
-                from amg_utils import compute_spai0_diagonal, make_sparse_operator
+                from amg_utils import compute_spai0_diagonal, make_sparse_operator, pad_scipy_csr
 
                 csr_A = level.A.tocsr()
+                csr_A = pad_scipy_csr(csr_A, num_dev, pad_rows=True, pad_cols=True)
+                
                 level_dict = {
-                    "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
+                    "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend, device=mesh),
                     "Mdiag": jnp.asarray(csr_A.diagonal()),
                     "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
                 }
                 if i < len(ml.levels) - 1:
-                    level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-                    if jax.devices()[0].platform == "cpu":
-                        level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                    csr_P = pad_scipy_csr(level.P.tocsr(), num_dev, pad_rows=True, pad_cols=True)
+                    level_dict["P"] = make_sparse_operator(csr_P, cpu_spmv_backend=cpu_spmv_backend, device=mesh)
+                    
+                    if jax.devices()[0].platform == "cpu" or mesh is not None:
+                        csr_R = pad_scipy_csr(level.R.tocsr(), num_dev, pad_rows=True, pad_cols=True)
+                        level_dict["R"] = make_sparse_operator(csr_R, cpu_spmv_backend=cpu_spmv_backend, device=mesh)
                 else:
                     if csr_A.shape[0] < 5000:
                         level_dict["A_dense"] = jnp.asarray(csr_A.todense())
