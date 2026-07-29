@@ -551,18 +551,6 @@ def main() -> None:
         help="Initial step size guess for minimizers.",
     )
     ap.add_argument(
-        "--tau-min",
-        type=float,
-        default=1e-6,
-        help="Minimum step size allowed for the BB minimizer.",
-    )
-    ap.add_argument(
-        "--tau-max",
-        type=float,
-        default=1.0,
-        help="Maximum step size allowed for the BB minimizer.",
-    )
-    ap.add_argument(
         "--bias-type",
         type=str,
         default=None,
@@ -621,28 +609,10 @@ def main() -> None:
         help="Relative threshold for quadratic model stagnation detection (default: 0.01).",
     )
     ap.add_argument(
-        "--memory",
-        type=int,
-        default=5,
-        help="Memory/History size for L-BFGS and Anderson acceleration (default: 5).",
-    )
-    ap.add_argument(
         "--tn-iters",
         type=int,
         default=5,
         help="Inner iterations for Newton-CG solvers (default: 5).",
-    )
-    ap.add_argument(
-        "--lr",
-        type=float,
-        default=0.1,
-        help="Learning rate for Nesterov acceleration (default: 0.1).",
-    )
-    ap.add_argument(
-        "--mu",
-        type=float,
-        default=0.9,
-        help="Momentum factor for Nesterov acceleration (default: 0.9).",
     )
 
     ap.add_argument(
@@ -650,18 +620,6 @@ def main() -> None:
         type=float,
         default=0.0,
         help="Diagonal regularization shift for the preconditioner (default: 0.0).",
-    )
-    ap.add_argument(
-        "--wg-gamma",
-        type=int,
-        default=5,
-        help="Number of steps in convex region before switching to BB (default: 5).",
-    )
-    ap.add_argument(
-        "--wg-threshold",
-        type=float,
-        default=1e-6,
-        help="Convexity threshold (sty) for WG algorithm (default: 1e-6).",
     )
     ap.add_argument(
         "--phi-extrapolate",
@@ -680,12 +638,6 @@ def main() -> None:
         action="store_false",
         dest="phi_extrapolate",
         help="Disable linear extrapolation of scalar potential.",
-    )
-    ap.add_argument(
-        "--data-parallel",
-        action="store_true",
-        default=False,
-        help="Use SPMD Data Parallelism for multi-GPU instead of Operator Parallelism (default: False).",
     )
     ap.add_argument(
         "--out-dir",
@@ -925,8 +877,6 @@ def main() -> None:
         "tau_f": float(args.tau_f),
         "eps_a": float(args.eps_a),
         "tau0": float(args.tau0),
-        "tau_min": float(args.tau_min),
-        "tau_max": float(args.tau_max),
         "cg_maxiter": int(args.cg_maxiter),
         "cg_tol": float(args.cg_tol),
         "poisson_reg": float(args.poisson_reg),
@@ -943,17 +893,12 @@ def main() -> None:
         "pc_force_eta": float(args.pc_force_eta),
         "pc_force_alpha": float(args.pc_force_alpha),
         "pc_stagnation_nu": float(args.pc_stagnation_nu),
-        "memory": int(args.memory),
         "tn_iters": int(args.tn_iters),
-        "lr": float(args.lr),
-        "mu": float(args.mu),
         "pc_reg": float(args.pc_reg),
-        "wg_threshold": float(args.wg_threshold),
         "phi_extrapolate": bool(args.phi_extrapolate),
         "cpp_mkl": bool(args.cpp_mkl),
         "benchmark": bool(args.benchmark),
         "poisson_solver": str(args.poisson_solver),
-        "data_parallel": bool(args.data_parallel),
     }
     for k in params_dict:
         param_sources[k] = "default"
