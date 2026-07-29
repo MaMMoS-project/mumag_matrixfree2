@@ -249,12 +249,6 @@ def run_hysteresis_loop(  # noqa: D417
     A_diag: Any = None,
     Kex_diag: Any = None,
     K_eff_sparse: Any = None,
-    Kx_sparse: Any = None,
-    Ky_sparse: Any = None,
-    Kz_sparse: Any = None,
-    Gx_sparse: Any = None,
-    Gy_sparse: Any = None,
-    Gz_sparse: Any = None,
     D_sparse: Any = None,
     G_sparse: Any = None,
     K_eff_scipy: Any = None,
@@ -385,22 +379,8 @@ def run_hysteresis_loop(  # noqa: D417
 
     if D_sparse is not None:
         warmup_sparse_ops["D_sparse"] = D_sparse
-    else:
-        warmup_sparse_ops["Dx_sparse"] = Dx_sparse
-        warmup_sparse_ops["Dy_sparse"] = Dy_sparse
-        warmup_sparse_ops["Dz_sparse"] = Dz_sparse
-        
     if G_sparse is not None:
         warmup_sparse_ops["G_sparse"] = G_sparse
-    else:
-        warmup_sparse_ops["Gx_sparse"] = Gx_sparse
-        warmup_sparse_ops["Gy_sparse"] = Gy_sparse
-        warmup_sparse_ops["Gz_sparse"] = Gz_sparse
-        
-    if Kx_sparse is not None:
-        warmup_sparse_ops["Kx_sparse"] = Kx_sparse
-        warmup_sparse_ops["Ky_sparse"] = Ky_sparse
-        warmup_sparse_ops["Kz_sparse"] = Kz_sparse
 
     if params.benchmark and not getattr(params, "cpp_mkl", False):
         print("Warming up JIT compiler...")
@@ -474,17 +454,8 @@ def run_hysteresis_loop(  # noqa: D417
                 sparse_ops={
                     "hierarchy_jax": hierarchy_jax,
                     "A_sparse": A_sparse,
-                    "Dx_sparse": Dx_sparse,
-                    "Dy_sparse": Dy_sparse,
-                    "Dz_sparse": Dz_sparse,
                     "A_diag": A_diag,
                     "K_eff_sparse": K_eff_scipy if K_eff_scipy is not None else K_eff_sparse,
-                    "Kx_sparse": Kx_sparse,
-                    "Ky_sparse": Ky_sparse,
-                    "Kz_sparse": Kz_sparse,
-                    "Gx_sparse": Gx_sparse,
-                    "Gy_sparse": Gy_sparse,
-                    "Gz_sparse": Gz_sparse,
                     "D_sparse": D_scipy if D_scipy is not None else D_sparse,
                     "G_sparse": G_scipy if G_scipy is not None else G_sparse,
                     "inv_M_rel": inv_M_rel,

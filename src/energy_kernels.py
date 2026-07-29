@@ -95,9 +95,6 @@ def make_energy_kernels(  # noqa: D417
     assembly: Assembly = "segment_sum",
     grad_backend: GradBackend = "stored_grad_phi",
     Kex_sparse: Any | None = None,
-    Gx_sparse: Any | None = None,
-    Gy_sparse: Any | None = None,
-    Gz_sparse: Any | None = None,
     Kan_sparse: Any | None = None,
     k_nodes: Array | None = None,
 ) -> tuple[
@@ -129,9 +126,7 @@ def make_energy_kernels(  # noqa: D417
         grad_backend (GradBackend, optional): Strategy for shape function gradients.
             'stored_grad_phi', 'stored_JinvT', or 'on_the_fly'.
             Defaults to 'stored_grad_phi'.
-        mode (str, optional): Operator mode ('matrix_free' or 'assembled').
         Kex_sparse (Any | None): Assembled exchange matrix in JAX BCOO format.
-        Gx_sparse, Gy_sparse, Gz_sparse (Any | None): Assembled demag gradient component matrices.
         Kan_sparse (Any | None): Assembled anisotropy matrix in JAX BCOO format.
         k_nodes (Array | None): Precomputed easy axis per node (N, 3).
 
@@ -153,14 +148,8 @@ def make_energy_kernels(  # noqa: D417
         g_ex_an = g_ex_an_flat.reshape(N, 3)
 
         # 3. Demag gradient: G @ U (shape (N, 3))
-        if "G_sparse" in sparse_ops and sparse_ops["G_sparse"] is not None:
-            g_dem_flat = sparse_ops["G_sparse"] @ U
-            g_dem = g_dem_flat.reshape(3, -1).T
-        else:
-            g_dem_x = sparse_ops["Gx_sparse"] @ U
-            g_dem_y = sparse_ops["Gy_sparse"] @ U
-            g_dem_z = sparse_ops["Gz_sparse"] @ U
-            g_dem = jnp.stack([g_dem_x, g_dem_y, g_dem_z], axis=1)
+        g_dem_flat = sparse_ops["G_sparse"] @ U
+        g_dem = g_dem_flat.reshape(3, -1).T
 
         # 4. Zeeman gradient
         B_eff = B_ext[None, :]
