@@ -149,6 +149,32 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
     return hierarchy
 
 
+def pad_scipy_csr(mat: sp.csr_matrix, num_devices: int, pad_rows: bool = True, pad_cols: bool = True) -> sp.csr_matrix:
+    """Pad a SciPy CSR matrix so its dimensions are divisible by num_devices.
+    
+    Args:
+        mat: The SciPy CSR matrix.
+        num_devices: Target divisibility.
+        pad_rows: Whether to pad rows.
+        pad_cols: Whether to pad columns.
+        
+    Returns:
+        The padded SciPy CSR matrix.
+    """
+    n_rows, n_cols = mat.shape
+    p_rows = (num_devices - (n_rows % num_devices)) % num_devices if pad_rows else 0
+    p_cols = (num_devices - (n_cols % num_devices)) % num_devices if pad_cols else 0
+    
+    if p_rows == 0 and p_cols == 0:
+        return mat
+        
+    bottom_right = sp.eye(p_rows, format='csr') if (p_rows == p_cols and p_rows > 0) else sp.csr_matrix((p_rows, p_cols))
+    return sp.bmat([
+        [mat, sp.csr_matrix((n_rows, p_cols))],
+        [sp.csr_matrix((p_rows, n_cols)), bottom_right]
+    ]).tocsr()
+
+
 @jax.tree_util.register_pytree_node_class
 class DistributedCSR:
     """A distributed CSR sparse matrix for multi-GPU support using JAX.
@@ -465,7 +491,10 @@ def make_sparse_operator(
     device=None,
 ) -> SparseOperator:
     """Dynamically creates the optimal sparse operator depending on the active platform."""
-    device_local = device if device is not None else jax.devices()[0]
+    device_local = device if device is not None and not isinstance(device, jax.sharding.Mesh) else jax.devices()[0]
+    if isinstance(device, jax.sharding.Mesh):
+        # We can extract a representative device from the mesh to check platform
+        device_local = next(iter(device.devices.flat))
 
     if device_local.platform == "cpu":
         if cpu_spmv_backend == "jax_default":

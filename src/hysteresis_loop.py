@@ -100,6 +100,7 @@ class LoopParams:
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
     poisson_solver: str = "jax"
+    mesh: jax.sharding.Mesh | None = None
     mfinal: float | None = None
     mstep: float | None = None
     bias_type: str | None = None
@@ -251,6 +252,7 @@ def run_hysteresis_loop(  # noqa: D417
     D_scipy: Any = None,
     G_scipy: Any = None,
     A_scipy: Any = None,
+    mesh: jax.sharding.Mesh | None = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
@@ -284,6 +286,8 @@ def run_hysteresis_loop(  # noqa: D417
         Kan_sparse: Assembled anisotropy matrix.
         k_nodes: Precomputed easy axis per node.
         Kex_diag: Precomputed diagonal of Kex.
+        poisson_solver: Solver backend ('jax', 'petsc').
+        mesh: Parallel sharding mesh.
     """
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
@@ -322,6 +326,7 @@ def run_hysteresis_loop(  # noqa: D417
         A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
         poisson_solver=params.poisson_solver,
+        mesh=mesh,
         A_scipy=A_scipy,
     )
 
@@ -351,7 +356,8 @@ def run_hysteresis_loop(  # noqa: D417
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
-    m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
+    norm = jnp.linalg.norm(m, axis=1, keepdims=True)
+    m = m / jnp.where(norm > 0, norm, 1.0)
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
@@ -559,8 +565,8 @@ def run_hysteresis_loop(  # noqa: D417
                     points,
                     np.array(geom.conn),
                     point_data={
-                        "m": np.array(m).astype(np.float32),
-                        "U": np.array(U).astype(np.float32),
+                        "m": np.array(m[:len(points)]).astype(np.float32),
+                        "U": np.array(U[:len(points)]).astype(np.float32),
                     },
                     cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
                 )

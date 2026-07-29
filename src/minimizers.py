@@ -54,7 +54,8 @@ def cayley_update(m: Array, H: Array, tau: Array) -> Array:
     km = jnp.cross(k, m)
     kdotm = jnp.sum(k * m, axis=1, keepdims=True)
     m_new = ((1.0 - k2) * m + 2.0 * km + 2.0 * kdotm * k) / denom
-    return m_new / jnp.linalg.norm(m_new, axis=1, keepdims=True)
+    norm = jnp.linalg.norm(m_new, axis=1, keepdims=True)
+    return m_new / jnp.where(norm > 0, norm, 1.0)
 
 
 def tangent_grad(m: Array, g_raw: Array) -> Array:
@@ -953,14 +954,14 @@ def make_minimizer(
 
         # Injected in minimize wrapper
 
-        m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
+        norm = jnp.linalg.norm(m0, axis=1, keepdims=True)
+        m = m0 / jnp.where(norm > 0, norm, 1.0)
         U, init_demag, _ = solve_U(m, U_init, cg_tol, return_info=True, sparse_ops=sparse_ops)
         E, g_raw = energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops)
         g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_init = jnp.max(jnp.abs(g_tan))
-
-        g_tan_ext = tangent_grad(m, g_raw)
+        
         state = init_state_fn(
             m,
             U,
@@ -992,7 +993,8 @@ def make_minimizer(
             tau_f = params.get("tau_f", 1e-6)
             params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
 
-        m = m0 / jnp.linalg.norm(m0, axis=1, keepdims=True)
+        norm = jnp.linalg.norm(m0, axis=1, keepdims=True)
+        m = m0 / jnp.where(norm > 0, norm, 1.0)
         U_init = params.get("U0")
         if U_init is None:
             U_init = jnp.zeros(m0.shape[0], dtype=m0.dtype)

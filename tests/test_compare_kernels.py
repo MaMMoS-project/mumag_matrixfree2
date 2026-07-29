@@ -94,16 +94,26 @@ def test_compare():
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
-    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    D_sparse = make_sparse_operator(
-        D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
+    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
 
     N = knt.shape[0]
-    Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-    Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-    Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+    N_nodes = knt.shape[0]
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
     G_sparse = make_sparse_operator(
         G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
@@ -244,14 +254,8 @@ def test_compare():
         K_val.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
     )
 
-    # Convert G_scipy to interleaved for C++ since C++ expects interleaved output
-    row_indices = np.arange(3 * N, dtype=np.int32)
-    col_indices = np.empty(3 * N, dtype=np.int32)
-    col_indices[0::3] = np.arange(N)
-    col_indices[1::3] = np.arange(N) + N
-    col_indices[2::3] = np.arange(N) + 2 * N
-    P_mat = sp.coo_matrix((np.ones(3 * N, dtype=np.float64), (row_indices, col_indices)), shape=(3 * N, 3 * N)).tocsr()
-    G_scipy_cpp = P_mat @ G_scipy
+    # G_scipy is already natively interleaved
+    G_scipy_cpp = G_scipy
 
     G_csr = G_scipy_cpp
     G_val = np.ascontiguousarray(G_csr.data, dtype=np.float64)
