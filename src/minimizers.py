@@ -85,11 +85,6 @@ def mvp_Keff(K_op, m_vec):
     return K_op @ m_vec
 
 
-@jax.jit
-def mvp_K_component(K_comp, m_vec):
-    """Matrix-vector product for anisotropy component."""
-    return K_comp @ m_vec
-
 
 @jax.jit
 def mvp_G(G_op, U_vec):
