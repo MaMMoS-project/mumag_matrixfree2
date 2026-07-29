@@ -14,12 +14,12 @@ from functools import partial
 from typing import Any, Literal
 
 import jax
-
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
-from jax import lax  # noqa: E402
+import jax.numpy as jnp
+from jax import lax
 
 from fem_utils import TetGeom
+
+jax.config.update("jax_enable_x64", True)
 
 Array = jnp.ndarray
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]

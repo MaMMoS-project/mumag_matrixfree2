@@ -47,11 +47,11 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import jax
-
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp  # noqa: E402
+import jax.numpy as jnp
 
 from fem_utils import TetGeom
+
+jax.config.update("jax_enable_x64", True)
 
 MU0 = 4e-7 * jnp.pi
 Array = jnp.ndarray
