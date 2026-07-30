@@ -228,7 +228,19 @@ class DistributedCSR:
         Returns:
             DistributedCSR: The JAX distributed sparse matrix.
         """
+        import logging
+        CUSPARSE_NNZ_LIMIT = 2147483647
+
         if mesh is None:
+            if scipy_mat.nnz > CUSPARSE_NNZ_LIMIT:
+                logging.warning(
+                    f"\n================================================================================\n"
+                    f"WARNING: Sparse matrix contains {scipy_mat.nnz} non-zeros, which exceeds\n"
+                    f"the JAX cuSPARSE 32-bit limit of {CUSPARSE_NNZ_LIMIT}.\n"
+                    f"The simulation will likely crash during JIT execution with a PyBind11 TypeError.\n"
+                    f"Please increase the number of active GPUs to partition the matrix into smaller blocks.\n"
+                    f"================================================================================\n"
+                )
             # Single GPU Path: Standard JAX CSR without padding
             return cls(
                 jnp.asarray(scipy_mat.data, device=device),
@@ -248,6 +260,17 @@ class DistributedCSR:
         # Split matrix row-wise and find max_nnz
         blocks = [scipy_mat[i * rows_per_block : (i + 1) * rows_per_block, :] for i in range(num_devices)]
         max_nnz = max(block.nnz for block in blocks)
+        
+        if max_nnz > CUSPARSE_NNZ_LIMIT:
+            logging.warning(
+                f"\n================================================================================\n"
+                f"WARNING: A partitioned sparse matrix block contains {max_nnz} non-zeros, which exceeds\n"
+                f"the JAX cuSPARSE 32-bit limit of {CUSPARSE_NNZ_LIMIT}.\n"
+                f"The simulation will likely crash during JIT execution with a PyBind11 TypeError.\n"
+                f"Please scale out and increase the number of active GPUs to partition the matrix\n"
+                f"into smaller blocks.\n"
+                f"================================================================================\n"
+            )
 
         # Pad blocks to max_nnz
         data_list, indices_list, indptr_list = [], [], []
@@ -299,7 +322,7 @@ class DistributedCSR:
             return csr @ x
 
         # Multi GPU Path
-        from jax.experimental.shard_map import shard_map
+        from jax import shard_map
 
         P = jax.sharding.PartitionSpec("devices")
 
