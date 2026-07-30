@@ -10,6 +10,7 @@ pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="C++ MKL minimizer is only supported on Linux"
 )
 
+from tommos._native_loader import probe_cpp_minimizer, probe_pardiso, probe_sparse_dot_mkl
 from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
@@ -22,7 +23,11 @@ from tommos.hysteresis_loop import LoopParams
 from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
 
 
-def test():
+def test() -> None:
+    """Run the native minimizer only when all capabilities it consumes exist."""
+    for probe in (probe_cpp_minimizer(), probe_pardiso(), probe_sparse_dot_mkl()):
+        if not probe.available:
+            pytest.skip(f"{probe.name} unavailable: {probe.error!r}")
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from . import add_shell
+from ._native_loader import resolve_native_selections
 from .fem_utils import TetGeom
 from .hysteresis_loop import LoopParams, run_hysteresis_loop
 from .io_utils import write_mh
@@ -275,6 +277,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["wg_threshold"] = float(m_min["wg_threshold"])
         if "phi_extrapolate" in m_min:
             overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
+        if "cpp_mkl" in m_min:
+            overrides["cpp_mkl"] = m_min.getboolean("cpp_mkl")
 
     if "poisson" in config:
         p = config["poisson"]
@@ -284,6 +288,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["cg_tol"] = float(p["cg_tol"])
         if "reg" in p:
             overrides["poisson_reg"] = float(p["reg"])
+        if "poisson_solver" in p:
+            overrides["poisson_solver"] = str(p["poisson_solver"])
+        if "cpu_spmv_backend" in p:
+            overrides["cpu_spmv_backend"] = str(p["cpu_spmv_backend"])
 
     return overrides
 
@@ -333,6 +341,27 @@ def load_materials(
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0
     return A, K1, Js, k_easy
+
+
+def _explicit_cli_destinations(parser: argparse.ArgumentParser, arguments: list[str]) -> set[str]:
+    """Return parser destinations explicitly present in CLI arguments.
+
+    Args:
+        parser: Configured CLI parser.
+        arguments: Command-line arguments excluding the executable name.
+
+    Returns:
+        Destination names set by an exact option or ``--option=value`` form.
+    """
+    explicit: set[str] = set()
+    for action in parser._actions:
+        if any(
+            argument == flag or argument.startswith(f"{flag}=")
+            for flag in action.option_strings
+            for argument in arguments
+        ):
+            explicit.add(action.dest)
+    return explicit
 
 
 def main() -> None:
@@ -494,15 +523,15 @@ def main() -> None:
     ap.add_argument(
         "--cpu-spmv-backend",
         type=str,
-        default="persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
-        choices=["persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax", "mkl_ffi"],
+        default="auto",
+        choices=["auto", "persistent_mkl", "dot_product_mkl", "scipy", "jax_default", "custom_jax"],
         help="Backend for SpMV operations when running on CPU in assembled mode.",
     )
     ap.add_argument(
         "--poisson-solver",
         type=str,
         default="auto",
-        choices=["auto", "jax", "pardiso", "jax_mkl"],
+        choices=["auto", "jax", "pardiso"],
         help="Solver to use for the magnetostatic Poisson problem (default: auto).",
     )
 
@@ -741,6 +770,7 @@ def main() -> None:
     )
 
     args = ap.parse_args()
+    explicit_cli_args = _explicit_cli_destinations(ap, sys.argv[1:])
 
     # Dynamic defaults based on platform
     try:
@@ -748,22 +778,48 @@ def main() -> None:
     except Exception:
         has_gpu = False
 
-    try:
-        import ctypes
-
-        ctypes.CDLL("libmkl_rt.so")
-        has_mkl = True
-    except OSError:
-        has_mkl = False
-
-    if args.cpp_mkl is None:
-        args.cpp_mkl = not has_gpu and has_mkl
-
-    if args.poisson_solver == "auto":
-        args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
+    native_parameter_names = {"cpp_mkl", "poisson_solver", "cpu_spmv_backend"}
+    if explicit_cli_args & native_parameter_names:
+        resolve_native_selections(
+            args.cpp_mkl,
+            args.poisson_solver,
+            args.cpu_spmv_backend,
+            has_gpu=has_gpu,
+        )
 
     # Automatic file discovery if modelname is provided
     modelname = args.modelname
+    p2_overrides: dict[str, Any] = {}
+    if modelname:
+        p2_path = Path(modelname).with_suffix(".p2")
+        if p2_path.exists():
+            print(f"[config] Loading base settings from {p2_path}")
+            p2_overrides = load_params_p2(p2_path)
+
+    requested_cpp_mkl = args.cpp_mkl
+    requested_poisson_solver = args.poisson_solver
+    requested_cpu_spmv_backend = args.cpu_spmv_backend
+    if "cpp_mkl" not in explicit_cli_args:
+        requested_cpp_mkl = p2_overrides.get("cpp_mkl", requested_cpp_mkl)
+    if "poisson_solver" not in explicit_cli_args:
+        requested_poisson_solver = p2_overrides.get("poisson_solver", requested_poisson_solver)
+    if "cpu_spmv_backend" not in explicit_cli_args:
+        requested_cpu_spmv_backend = p2_overrides.get("cpu_spmv_backend", requested_cpu_spmv_backend)
+
+    selections = resolve_native_selections(
+        requested_cpp_mkl,
+        requested_poisson_solver,
+        requested_cpu_spmv_backend,
+        has_gpu=has_gpu,
+    )
+    args.cpp_mkl = selections.cpp_minimizer == "cpp_mkl"
+    args.poisson_solver = selections.poisson_solver
+    args.cpu_spmv_backend = selections.cpu_spmv_backend
+    native_parameter_sources = {
+        name: "cli" if name in explicit_cli_args else ".p2" if name in p2_overrides else "default"
+        for name in native_parameter_names
+    }
+
     if modelname:
         if args.mesh is None:
             args.mesh = str(Path(modelname).with_suffix(".npz"))
@@ -835,14 +891,6 @@ def main() -> None:
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
-
-    # Load .p2 overrides early to get mesh_unit
-    p2_overrides = {}
-    if modelname:
-        p2_path = Path(modelname).with_suffix(".p2")
-        if p2_path.exists():
-            print(f"[config] Loading base settings from {p2_path}")
-            p2_overrides = load_params_p2(p2_path)
 
     mesh_unit = p2_overrides.get("mesh_unit", 1e-9)
     A_lookup, K1_lookup, Js_lookup, k_easy_lookup = load_materials(
@@ -981,6 +1029,7 @@ def main() -> None:
     }
     for k in params_dict:
         param_sources[k] = "default"
+    param_sources.update(native_parameter_sources)
 
     # 2. Merge .p2 overrides
     if p2_overrides:
@@ -1002,29 +1051,14 @@ def main() -> None:
 
         # Merge p2 into defaults
         for k, v in p2_overrides.items():
+            if k in native_parameter_names:
+                continue
             params_dict[k] = v
             param_sources[k] = ".p2"
 
     # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
     # it should win over BOTH defaults and p2.
     # We check if the arg flag is actually present in sys.argv.
-    import sys
-
-    # Map destination variable names to the flags that can set them
-    dest_to_flags = {}
-    for action in ap._actions:
-        dest_to_flags[action.dest] = action.option_strings
-
-    # Identify which variables were explicitly set on the CLI
-    explicit_cli_args = set()
-    for dest, flags in dest_to_flags.items():
-        for flag in flags:
-            # Check if any flag matching this dest is in sys.argv
-            # (handles both --flag value and --flag=value)
-            if any(arg.startswith(flag) for arg in sys.argv):
-                explicit_cli_args.add(dest)
-                break
-
     for dest in explicit_cli_args:
         if dest in params_dict:
             params_dict[dest] = getattr(args, dest)
@@ -1242,6 +1276,7 @@ def main() -> None:
         boundary_mask=jnp.asarray(boundary_mask, dtype=jnp.float64) if boundary_mask is not None else None,
         mode=mode,
         cpu_spmv_backend=cpu_spmv_backend,
+        native_selections=selections,
         **assembled_kwargs,
     )
 

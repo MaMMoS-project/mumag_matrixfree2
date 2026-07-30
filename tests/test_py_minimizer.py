@@ -1,5 +1,4 @@
 import os
-import sys
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +15,8 @@ from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_
 from tommos.minimizers import make_minimizer
 
 
-def test():
+def test() -> None:
+    """Run the Python minimizer with explicit SciPy and JAX backends."""
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -79,33 +79,25 @@ def test():
         conn32, volume, l_grad_phi, boundary_mask=np.zeros(knt.shape[0], dtype=np.int32), reg=1e-12
     )
     A_diag = jnp.asarray(A_scipy.diagonal())
-    A_sparse = make_sparse_operator(
-        A_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
+    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend="scipy")
 
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
     D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    D_sparse = make_sparse_operator(
-        D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
+    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend="scipy")
 
     N = knt.shape[0]
     Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
     Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
     Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
     G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    G_sparse = make_sparse_operator(
-        G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
+    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend="scipy")
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    K_eff_sparse = make_sparse_operator(
-        K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
+    K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend="scipy")
 
     # Setup Solve_U
     from tommos.poisson_solve import make_solve_U
@@ -123,8 +115,8 @@ def test():
         boundary_mask=None,
         mode="assembled",
         A_sparse=A_sparse,
-        cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
-        poisson_solver="pardiso" if sys.platform.startswith("linux") else "jax",
+        cpu_spmv_backend="scipy",
+        poisson_solver="jax",
     )
 
     # Setup JAX minimizer

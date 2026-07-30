@@ -1,6 +1,9 @@
 [build-system]
-requires = ["setuptools >= 77.0.3"]
-build-backend = "setuptools.build_meta"
+requires = [
+  "scikit-build-core>=0.12",
+  "mkl-devel>=2026.0,<2027; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "tommos"
@@ -15,9 +18,11 @@ dependencies = [
   "jax",
   "matplotlib",
   "meshpy",
+  "mkl>=2026.0,<2027; sys_platform == \"linux\" and platform_machine == \"x86_64\"",
   "numpy",
   "pyamg",
   "scipy",
+  "sparse-dot-mkl>=0.9.10; sys_platform == \"linux\" and platform_machine == \"x86_64\"",
 ]
 
 [project.optional-dependencies]
@@ -26,10 +31,17 @@ io = [
   "meshio",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["tommos*"]
-namespaces = false
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.source-dir = "src/cpp"
+wheel.packages = ["src/tommos"]
+wheel.py-api = "py3"
+sdist.include = ["src/cpp/CMakeLists.txt", "src/cpp/cpp_mkl_minimizer.cpp", "src/cpp/find_mkl.py"]
+
+[[tool.scikit-build.overrides]]
+if.platform-system = "^darwin"
+wheel.cmake = false
+wheel.platlib = false
 
 [tool.ruff]
 target-version = "py311"

@@ -4,8 +4,9 @@ Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
 """
 
-import os
+import threading
 from collections.abc import Callable
+from contextlib import suppress
 from functools import partial
 from typing import Any
 
@@ -171,27 +172,69 @@ class SparseOperator:
     This allows JAX to trace both CPU and GPU execution paths cleanly.
     """  # noqa: D205
 
-    def __init__(self, apply_fn, pytree_parts=()):
-        """Initialize the sparse operator."""
+    def __init__(
+        self,
+        apply_fn: Callable[..., Any],
+        pytree_parts: tuple[Any, ...] = (),
+        close_fn: Callable[[], None] | None = None,
+    ) -> None:
+        """Initialize the sparse operator.
+
+        Args:
+            apply_fn: Matrix-vector implementation.
+            pytree_parts: Dynamic JAX values owned by the operator.
+            close_fn: Optional native-resource release callback.
+        """
         self.apply_fn = apply_fn
         self.pytree_parts = pytree_parts
+        self.close_fn = close_fn
 
-    def __matmul__(self, other):
-        """Multiply the operator by a vector."""
+    def __matmul__(self, other: Any) -> Any:
+        """Multiply the operator by a vector.
+
+        Args:
+            other: Dense right-hand side.
+
+        Returns:
+            Matrix-vector product.
+        """
         # If there are dynamic JAX arrays (like the GPU CSR object), pass them to apply_fn
         if len(self.pytree_parts) > 0:
             return self.apply_fn(self.pytree_parts[0], other)
         return self.apply_fn(None, other)
 
-    def tree_flatten(self):
-        """Flatten the operator for JAX."""
-        return (self.pytree_parts, (self.apply_fn,))
+    def close(self) -> None:
+        """Release an optional native resource exactly once."""
+        close_fn = self.close_fn
+        self.close_fn = None
+        if close_fn is not None:
+            close_fn()
+
+    def tree_flatten(self) -> tuple[tuple[Any, ...], tuple[Callable[..., Any], Callable[[], None] | None]]:
+        """Flatten the operator for JAX.
+
+        Returns:
+            Dynamic values and static callables.
+        """
+        return (self.pytree_parts, (self.apply_fn, self.close_fn))
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        """Unflatten the operator for JAX."""
-        (apply_fn,) = aux_data
-        return cls(apply_fn, pytree_parts=children)
+    def tree_unflatten(
+        cls,
+        aux_data: tuple[Callable[..., Any], Callable[[], None] | None],
+        children: tuple[Any, ...],
+    ) -> "SparseOperator":
+        """Unflatten the operator for JAX.
+
+        Args:
+            aux_data: Static application and release callbacks.
+            children: Dynamic JAX values.
+
+        Returns:
+            Reconstructed sparse operator.
+        """
+        apply_fn, close_fn = aux_data
+        return cls(apply_fn, pytree_parts=children, close_fn=close_fn)
 
 
 class PersistentMKLOperator:
@@ -200,103 +243,183 @@ class PersistentMKLOperator:
     This avoids creating, optimizing, and destroying the MKL handle on every SpMV iteration.
     """
 
-    def __init__(self, scipy_csr_mat: sp.csr_matrix):
-        """Initialize persistent MKL operator."""
-        import ctypes
-        import ctypes.util
+    def __init__(self, scipy_csr_mat: sp.csr_matrix) -> None:
+        """Initialize a persistent sparse-dot-mkl operator.
 
-        from sparse_dot_mkl._mkl_interface import MKL, _create_mkl_sparse, _output_dtypes, matrix_descr
+        Args:
+            scipy_csr_mat: Sparse matrix retained for the handle lifetime.
+        """
+        from ._native_loader import (
+            mkl_sparse_optimize,
+            mkl_sparse_set_mv_hint,
+            require_sparse_dot_mkl,
+        )
 
-        self.scipy_csr_mat = scipy_csr_mat  # IMPORTANT: Keep reference to prevent GC of underlying arrays!
+        interface = require_sparse_dot_mkl()
+        self.scipy_csr_mat = scipy_csr_mat
         self.shape = scipy_csr_mat.shape
         self.dtype = scipy_csr_mat.dtype
-
-        # 1. Load MKL directly to access the Inspector-Executor functions
-        mkl_lib_path = ctypes.util.find_library("mkl_rt")
-        if not mkl_lib_path:
-            mkl_lib_path = "libmkl_rt.so"
-        self.libmkl = ctypes.cdll.LoadLibrary(mkl_lib_path)
-        self.libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
-        self.libmkl.mkl_sparse_optimize.restype = ctypes.c_int
-
-        # 2. Create the MKL handle
-        self.mkl_a, self.dbl, self.cplx = _create_mkl_sparse(scipy_csr_mat)
-
-        # 3. Optimize the matrix (Inspector stage)
-        self.libmkl.mkl_sparse_optimize(self.mkl_a)
-
-        # 4. Cache necessary execution arguments
-        self.output_dtype = _output_dtypes[(self.dbl, self.cplx)]
-        from sparse_dot_mkl._mkl_interface import _mkl_scalar
-
-        self.scalar = _mkl_scalar(1.0, self.cplx, self.dbl)
-        self.out_scalar = _mkl_scalar(0.0, self.cplx, self.dbl)
-        self.matrix_desc = matrix_descr()
-
-        funcs = {
-            (False, False): MKL._mkl_sparse_s_mv,
-            (True, False): MKL._mkl_sparse_d_mv,
-            (False, True): MKL._mkl_sparse_c_mv,
-            (True, True): MKL._mkl_sparse_z_mv,
-        }
-        self.func = funcs[(self.dbl, self.cplx)]
-
-    def apply(self, x_val):
-        """Apply the MKL operator."""
-        from sparse_dot_mkl._mkl_interface import _out_matrix
-
-        x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
-
-        # Allocate output array (must be dense contiguous)
-        output_arr = _out_matrix((self.shape[0],), self.output_dtype)
-
-        # 10 is SPARSE_OPERATION_NON_TRANSPOSE
-        self.func(10, self.scalar, self.mkl_a, self.matrix_desc, x_np_val, self.out_scalar, output_arr)
-        return output_arr
-
-    def __del__(self):
-        """Clean up MKL handle."""
+        self._interface = interface
+        self._closed = False
+        self._lock = threading.Lock()
+        self.mkl_a, self.dbl, self.cplx = interface._create_mkl_sparse(scipy_csr_mat)
         try:
-            from sparse_dot_mkl._mkl_interface import _destroy_mkl_handle
+            hint_status = mkl_sparse_set_mv_hint(self.mkl_a, expected_calls=1000)
+            if hint_status != 0:
+                raise RuntimeError(f"mkl_sparse_set_mv_hint failed with sparse_status_t {hint_status}")
+            optimize_status = mkl_sparse_optimize(self.mkl_a)
+            if optimize_status != 0:
+                raise RuntimeError(f"mkl_sparse_optimize failed with sparse_status_t {optimize_status}")
+            self.output_dtype = interface._output_dtypes[(self.dbl, self.cplx)]
+            self.scalar = interface._mkl_scalar(1.0, self.cplx, self.dbl)
+            self.out_scalar = interface._mkl_scalar(0.0, self.cplx, self.dbl)
+            self.matrix_desc = interface.matrix_descr()
 
-            _destroy_mkl_handle(self.mkl_a)
+            function_names = {
+                (False, False): "_mkl_sparse_s_mv",
+                (True, False): "_mkl_sparse_d_mv",
+                (False, True): "_mkl_sparse_c_mv",
+                (True, True): "_mkl_sparse_z_mv",
+            }
+            self.func = getattr(interface.MKL, function_names[(self.dbl, self.cplx)])
         except Exception:
-            pass
+            self._closed = True
+            with suppress(Exception):
+                interface._destroy_mkl_handle(self.mkl_a)
+            raise
+
+    def apply(self, x_val: Any) -> np.ndarray:
+        """Apply the persistent sparse operator.
+
+        Args:
+            x_val: Dense input vector.
+
+        Returns:
+            Dense NumPy result vector.
+
+        Raises:
+            RuntimeError: If the wrapper handle has been closed.
+        """
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Persistent MKL operator is closed")
+            x_np_val = np.asarray(x_val, dtype=self.dtype).ravel()
+            output_arr = self._interface._out_matrix((self.shape[0],), self.output_dtype)
+            status = self.func(
+                10,
+                self.scalar,
+                self.mkl_a,
+                self.matrix_desc,
+                x_np_val,
+                self.out_scalar,
+                output_arr,
+            )
+            if status != 0:
+                raise RuntimeError(f"{self.func.__name__} failed with sparse_status_t {status}")
+            return output_arr
+
+    def close(self) -> None:
+        """Destroy the wrapper-owned sparse handle exactly once."""
+        with self._lock:
+            if not self._closed:
+                self._interface._destroy_mkl_handle(self.mkl_a)
+                self._closed = True
+
+    def __del__(self) -> None:
+        """Use object finalization as a backup for explicit close."""
+        with suppress(Exception):
+            self.close()
 
 
-def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persistent_mkl"):
-    """Creates a fast, multicore CPU SpMV operator via callbacks."""
+def make_cpu_csr_op(
+    scipy_csr_mat: sp.csr_matrix,
+    cpu_spmv_backend: str = "auto",
+) -> Callable[[Any], Any]:
+    """Create a CPU sparse matrix-vector operator via a JAX callback.
+
+    Args:
+        scipy_csr_mat: Source CSR matrix.
+        cpu_spmv_backend: Automatic or explicit CPU sparse backend.
+
+    Returns:
+        JIT-compiled sparse matrix-vector function.
+    """
+    if cpu_spmv_backend == "auto":
+        from ._native_loader import resolve_native_selections
+
+        cpu_spmv_backend = resolve_native_selections(
+            False,
+            "jax",
+            "auto",
+            has_gpu=False,
+        ).cpu_spmv_backend
     if cpu_spmv_backend == "persistent_mkl":
-        try:
-            import sparse_dot_mkl  # noqa: F401
-        except ImportError:
-            raise ImportError("sparse_dot_mkl is required for persistent_mkl.")  # noqa: B904
         persistent_op = PersistentMKLOperator(scipy_csr_mat)
 
-        def spmv_callback(x_val, **kwargs):
+        def spmv_callback(x_val: Any, **_kwargs: Any) -> np.ndarray:
+            """Apply the persistent wrapper inside a host callback.
+
+            Args:
+                x_val: Dense input vector.
+                **_kwargs: Unused callback metadata.
+
+            Returns:
+                Dense NumPy result.
+            """
             return persistent_op.apply(x_val)
     elif cpu_spmv_backend == "dot_product_mkl":
+        from ._native_loader import require_sparse_dot_mkl
+
+        require_sparse_dot_mkl()
         try:
             from sparse_dot_mkl import dot_product_mkl
         except ImportError:
             raise ImportError("sparse_dot_mkl is required for dot_product_mkl.")  # noqa: B904
 
-        def spmv_callback(x_val, **kwargs):
+        def spmv_callback(x_val: Any, **_kwargs: Any) -> np.ndarray:
+            """Apply sparse-dot-mkl's stateless product.
+
+            Args:
+                x_val: Dense input vector.
+                **_kwargs: Unused callback metadata.
+
+            Returns:
+                Dense NumPy result.
+            """
             x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
             return dot_product_mkl(scipy_csr_mat, x_np_val)
     elif cpu_spmv_backend == "scipy":
 
-        def spmv_callback(x_val, **kwargs):
+        def spmv_callback(x_val: Any, **_kwargs: Any) -> np.ndarray:
+            """Apply SciPy's CSR product.
+
+            Args:
+                x_val: Dense input vector.
+                **_kwargs: Unused callback metadata.
+
+            Returns:
+                Dense NumPy result.
+            """
             x_np_val = np.asarray(x_val, dtype=scipy_csr_mat.dtype)
             return scipy_csr_mat @ x_np_val
     else:
         raise ValueError(f"Unknown CPU SpMV backend for callback: {cpu_spmv_backend}")
 
     @jax.jit
-    def fast_cpu_spmv(x_val):
+    def fast_cpu_spmv(x_val: Any) -> Any:
+        """Dispatch one sparse product through a pure callback.
+
+        Args:
+            x_val: Dense JAX input vector.
+
+        Returns:
+            Dense JAX result vector.
+        """
         result_shape_dtype = jax.ShapeDtypeStruct((scipy_csr_mat.shape[0],), scipy_csr_mat.dtype)
         return jax.pure_callback(spmv_callback, result_shape_dtype, x_val, vectorized=False)
 
+    if cpu_spmv_backend == "persistent_mkl":
+        fast_cpu_spmv.close = persistent_op.close
     return fast_cpu_spmv
 
 
@@ -341,10 +464,27 @@ def get_gpu_assignments(num_gpus, devices):
 
 def make_sparse_operator(
     scipy_csr_mat: sp.csr_matrix,
-    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    cpu_spmv_backend: str = "auto",
 ) -> SparseOperator:
-    """Dynamically creates the optimal sparse operator depending on the active platform."""
+    """Create a sparse operator for the active CPU or GPU platform.
+
+    Args:
+        scipy_csr_mat: Source CSR matrix.
+        cpu_spmv_backend: Automatic or explicit CPU sparse backend.
+
+    Returns:
+        Sparse operator using the resolved backend.
+    """
     device = jax.devices()[0]
+    if cpu_spmv_backend == "auto":
+        from ._native_loader import resolve_native_selections
+
+        cpu_spmv_backend = resolve_native_selections(
+            False,
+            "jax",
+            "auto",
+            has_gpu=device.platform != "cpu",
+        ).cpu_spmv_backend
 
     if device.platform == "cpu":
         if cpu_spmv_backend == "jax_default":
@@ -363,11 +503,13 @@ def make_sparse_operator(
                 return jax.ops.segment_sum(vals, r_idx, num_segments=num_rows)
 
             return SparseOperator(custom_spmv, ((data, indices, row_indices),))
-        elif cpu_spmv_backend == "mkl_ffi":
-            raise ValueError("mkl_ffi backend was removed. Use persistent_mkl instead.")
         else:
             cpu_op = make_cpu_csr_op(scipy_csr_mat, cpu_spmv_backend=cpu_spmv_backend)
-            return SparseOperator(lambda _, x: cpu_op(x), ())
+            return SparseOperator(
+                lambda _, x: cpu_op(x),
+                (),
+                close_fn=getattr(cpu_op, "close", None),
+            )
     else:
         # On GPU: convert to JAX CSR and store it in pytree_parts
         jax_csr = csr_to_jax_CSR(scipy_csr_mat)
@@ -439,13 +581,23 @@ class AMGHierarchy:
     Allows the hierarchy to be passed through JAX-JITted functions.
     """
 
-    def __init__(self, levels):
+    def __init__(self, levels: list[dict[str, Any]]) -> None:
         """Initialize the hierarchy.
 
         Args:
             levels (list): List of dictionaries containing level data.
         """
         self.levels = levels
+
+    def close(self) -> None:
+        """Release native sparse operators held by hierarchy levels."""
+        closed: set[int] = set()
+        for level in self.levels:
+            for value in level.values():
+                close = getattr(value, "close", None)
+                if close is not None and id(value) not in closed:
+                    closed.add(id(value))
+                    close()
 
     def tree_flatten(self):
         """Flatten the hierarchy for JAX.
@@ -789,90 +941,55 @@ def assemble_exchange_anisotropy_matrix_cpu(
     return K_eff
 
 
-def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
-    """Create a JAX linear solver using MKL PARDISO FFI."""
-    import ctypes
+def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable[..., Any]:
+    """Create a JAX linear solver backed by a loader-owned PARDISO handle.
 
-    lib_path = None
-    slurm_job_id = os.environ.get("SLURM_JOB_ID")
-    if slurm_job_id:
-        local_lib = f"/tmp/mumag_build_{slurm_job_id}/libcpp_mkl_minimizer.so"
-        if os.path.exists(local_lib):
-            lib_path = local_lib
+    Args:
+        scipy_csr_mat: Symmetric system matrix in CSR format.
 
-    if not lib_path and "MUMAG_LIB_OUT" in os.environ:
-        env_lib = os.path.join(os.environ["MUMAG_LIB_OUT"], "libcpp_mkl_minimizer.so")
-        if os.path.exists(env_lib):
-            lib_path = env_lib
+    Returns:
+        JIT-compiled linear solve function with a ``pardiso_obj`` owner.
+    """
+    from ._native_loader import create_pardiso_handle
 
-    if not lib_path:
-        lib_path = os.path.join(os.path.dirname(__file__), "../../lib/libcpp_mkl_minimizer.so")
-
-    if not os.path.exists(lib_path):
-        raise ImportError(f"libcpp_mkl_minimizer.so was not found at {lib_path}. Please compile it.")
-    ffi_lib = ctypes.CDLL(lib_path)
-
-    ffi_lib.init_pardiso.argtypes = [
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.POINTER(ctypes.c_int),
-    ]
-    ffi_lib.init_pardiso.restype = ctypes.c_int64
-    ffi_lib.free_pardiso.argtypes = [ctypes.c_int64]
-    ffi_lib.free_pardiso.restype = None
-
-    # PARDISO mtype=2 requires Upper Triangular
-    import scipy.sparse as sp_sparse
-
-    A_upper = sp_sparse.triu(scipy_csr_mat, format="csr")
+    A_upper = sp.triu(scipy_csr_mat, format="csr")
 
     n = A_upper.shape[0]
-    a_data = A_upper.data.astype(np.float64)
-    ia_data = A_upper.indptr.astype(np.int32)
-    ja_data = A_upper.indices.astype(np.int32)
-
-    a_ptr = a_data.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-    ia_ptr = ia_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-    ja_ptr = ja_data.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
-
-    print(f"Initializing MKL PARDISO for {n}x{n} matrix with {a_data.size} nonzeros...")
-    handle_id = ffi_lib.init_pardiso(n, a_ptr, ia_ptr, ja_ptr)
-    if handle_id < 0:
-        raise RuntimeError(f"PARDISO initialization failed with error code {-handle_id}")
+    print(f"Initializing MKL PARDISO for {n}x{n} matrix with {A_upper.data.size} nonzeros...")
+    pardiso_obj = create_pardiso_handle(n, A_upper.data, A_upper.indptr, A_upper.indices)
     print("PARDISO initialization successful.")
 
-    ffi_lib.pardiso_solve_direct.argtypes = [
-        ctypes.c_int64,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double),
-    ]
-    ffi_lib.pardiso_solve_direct.restype = ctypes.c_int
-
-    class PardisoHandle:
-        def __init__(self, hid, a, ia, ja):
-            self.handle_id = hid
-            self.a = a
-            self.ia = ia
-            self.ja = ja
-
-        def __del__(self):
-            ffi_lib.free_pardiso(self.handle_id)
-
-    pardiso_obj = PardisoHandle(handle_id, a_data, ia_data, ja_data)
-    jnp.asarray(handle_id, dtype=jnp.int64)
-
     @jax.jit
-    def solve_linear(sparse_ops: dict, b: jnp.ndarray, x0: jnp.ndarray, tol: float = None, hierarchy: Any = None):
-        def cb(b_val):
-            b_np = np.ascontiguousarray(b_val, dtype=np.float64)
-            x_np = np.zeros_like(b_np)
-            b_ptr = b_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-            x_ptr = x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-            error = ffi_lib.pardiso_solve_direct(pardiso_obj.handle_id, b_ptr, x_ptr)
-            if error != 0:
-                raise RuntimeError(f"PARDISO solve failed with error {error}")
-            return x_np
+    def solve_linear(
+        sparse_ops: dict[str, Any],
+        b: jnp.ndarray,
+        x0: jnp.ndarray,
+        tol: float | None = None,
+        hierarchy: Any = None,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Solve one traced right-hand side through a host callback.
+
+        Args:
+            sparse_ops: Unused sparse operator mapping.
+            b: Dense right-hand side.
+            x0: Unused initial guess.
+            tol: Unused direct-solver tolerance.
+            hierarchy: Unused multigrid hierarchy.
+
+        Returns:
+            Solution, one-iteration count, and zero residual placeholder.
+        """
+
+        def cb(b_val: Any) -> np.ndarray:
+            """Execute PARDISO outside JAX tracing.
+
+            Args:
+                b_val: Dense callback right-hand side.
+
+            Returns:
+                Dense NumPy solution.
+            """
+            return pardiso_obj.solve(np.asarray(b_val))
 
         result_shape_dtype = jax.ShapeDtypeStruct(b.shape, b.dtype)
         x = jax.pure_callback(cb, result_shape_dtype, b)

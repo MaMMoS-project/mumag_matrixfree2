@@ -1,0 +1,79 @@
+name: Build Linux wheels
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-wheels:
+    name: manylinux_2_28 x86-64
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - name: Setup Python
+      uses: actions/setup-python@v6
+    - name: Install cibuildwheel
+      run: python -m pip install cibuildwheel==4.1.1
+    - name: Build and test repaired wheels
+      run: python -m cibuildwheel --platform linux --output-dir wheelhouse
+      env:
+        CIBW_ARCHS_LINUX: x86_64
+        CIBW_BUILD: "cp3{11,12,13,14}-manylinux_x86_64"
+        CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+        CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+          python -m pip install wheel==0.47.0 &&
+          bash {project}/.github/scripts/repair_linux_wheel.sh
+          {wheel} {dest_dir}
+        CIBW_TEST_REQUIRES: pytest
+        CIBW_TEST_SOURCES: tests
+        CIBW_TEST_COMMAND_LINUX: >-
+          unset MKLROOT LD_LIBRARY_PATH PYTHONPATH
+          TOMMOS_NATIVE_LIBRARY MUMAG_LIB_OUT SLURM_JOB_ID &&
+          TOMMOS_VERIFY_CLEAN_INSTALL=1
+          python -m pytest -q tests/test_wheel_install.py -k clean_install &&
+          python -m pytest -q tests/test_cpp_minimizer.py
+    - name: Inspect repaired wheel contents and ELF metadata
+      shell: bash
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        wheels=(wheelhouse/*.whl)
+        test "${#wheels[@]}" -gt 0
+        for wheel in "${wheels[@]}"; do
+          wheel_name="${wheel##*/}"
+          [[ "$wheel_name" == *-py3-none-*manylinux_2_28_x86_64.whl ]]
+          archive_entries="$(zipinfo -1 "$wheel")"
+          grep -qx 'tommos/_native/libcpp_mkl_minimizer.so' <<<"$archive_entries"
+          grep -Eq '^tommos\.libs/libgomp-[^/]+\.so(\.[0-9]+)*$' <<<"$archive_entries"
+          if grep -Eq '(^|/)libmkl[^/]*\.so(\.[0-9]+)*$' <<<"$archive_entries"; then
+            echo "The tommos wheel must not bundle oneMKL libraries: $wheel" >&2
+            exit 1
+          fi
+          extension="$RUNNER_TEMP/${wheel_name%.whl}-libcpp_mkl_minimizer.so"
+          unzip -p "$wheel" tommos/_native/libcpp_mkl_minimizer.so >"$extension"
+          dynamic="$(readelf -d "$extension")"
+          grep -Fq 'Shared library: [libmkl_rt.so.3]' <<<"$dynamic"
+          grep -Eq 'Shared library: \[libgomp-[^]]+\.so(\.[0-9]+)*\]' <<<"$dynamic"
+          grep -Fq 'Library rpath: [$ORIGIN/../../tommos.libs:$ORIGIN/../../../..]' <<<"$dynamic"
+          if grep -Fq 'Library runpath:' <<<"$dynamic"; then
+            echo "auditwheel unexpectedly retained a RUNPATH: $wheel" >&2
+            exit 1
+          fi
+        done
+    - name: Retain repaired wheels
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: tommos-manylinux_2_28-x86_64-wheels
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+        retention-days: 30

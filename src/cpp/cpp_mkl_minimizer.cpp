@@ -10,6 +10,7 @@
 struct PardisoState {
     void* pt[64];
     int iparm[64];
+    std::mutex operation_mutex;
     int mtype;
     int maxfct;
     int mnum;
@@ -23,7 +24,57 @@ static std::unordered_map<int64_t, PardisoState*> pardiso_states;
 static std::mutex pardiso_mutex;
 static int64_t next_pardiso_id = 1;
 
+static int preserve_first_error(int current_error, int operation_error) {
+    return current_error != 0 ? current_error : operation_error;
+}
+
+static int destroy_sparse_handles(
+    int current_error,
+    sparse_matrix_t& K_eff,
+    sparse_matrix_t& G_sparse,
+    sparse_matrix_t& D_sparse
+) {
+    if (K_eff != nullptr) {
+        current_error = preserve_first_error(
+            current_error,
+            static_cast<int>(mkl_sparse_destroy(K_eff))
+        );
+        K_eff = nullptr;
+    }
+    if (G_sparse != nullptr) {
+        current_error = preserve_first_error(
+            current_error,
+            static_cast<int>(mkl_sparse_destroy(G_sparse))
+        );
+        G_sparse = nullptr;
+    }
+    if (D_sparse != nullptr) {
+        current_error = preserve_first_error(
+            current_error,
+            static_cast<int>(mkl_sparse_destroy(D_sparse))
+        );
+        D_sparse = nullptr;
+    }
+    return current_error;
+}
+
+static void release_pardiso_state(PardisoState* state) {
+    int phase = -1;
+    int perm = 0;
+    int nrhs = 1;
+    int msglvl = 0;
+    int release_error = 0;
+    double ddum = 0.0;
+    pardiso(state->pt, &state->maxfct, &state->mnum, &state->mtype, &phase,
+            &state->n, state->a, state->ia, state->ja, &perm, &nrhs,
+            state->iparm, &msglvl, &ddum, &ddum, &release_error);
+}
+
 extern "C" {
+    int tommos_native_abi_version() {
+        return 1;
+    }
+
     int64_t init_pardiso(int n, double* a, int* ia, int* ja) {
         PardisoState* state = new PardisoState();
         state->n = n;
@@ -54,8 +105,10 @@ extern "C" {
                 state->iparm, &msglvl, &ddum, &ddum, &error);
                 
         if (error != 0) {
+            const int initialization_error = error;
+            release_pardiso_state(state);
             delete state;
-            return -error;
+            return initialization_error;
         }
         
         std::lock_guard<std::mutex> lock(pardiso_mutex);
@@ -65,26 +118,22 @@ extern "C" {
     }
 
     void free_pardiso(int64_t id) {
-        std::lock_guard<std::mutex> lock(pardiso_mutex);
+        std::unique_lock<std::mutex> registry_lock(pardiso_mutex);
         auto it = pardiso_states.find(id);
         if (it != pardiso_states.end()) {
             PardisoState* state = it->second;
-            int phase = -1;
-            int perm = 0;
-            int nrhs = 1;
-            int msglvl = 0;
-            int error = 0;
-            double ddum;
-            pardiso(state->pt, &state->maxfct, &state->mnum, &state->mtype, &phase,
-                    &state->n, state->a, state->ia, state->ja, &perm, &nrhs,
-                    state->iparm, &msglvl, &ddum, &ddum, &error);
-            delete state;
+            std::unique_lock<std::mutex> operation_lock(state->operation_mutex);
             pardiso_states.erase(it);
+            registry_lock.unlock();
+            release_pardiso_state(state);
+            operation_lock.unlock();
+            delete state;
         }
     }
 
     int pardiso_solve_direct(int64_t handle_id, const double* b, double* x) {
         PardisoState* state = nullptr;
+        std::unique_lock<std::mutex> operation_lock;
         {
             std::lock_guard<std::mutex> lock(pardiso_mutex);
             auto it = pardiso_states.find(handle_id);
@@ -92,6 +141,7 @@ extern "C" {
                 return -1;
             }
             state = it->second;
+            operation_lock = std::unique_lock<std::mutex>(state->operation_mutex);
         }
         
         int phase = 33; // Solve phase
@@ -175,15 +225,21 @@ extern "C" {
         }
     }
 
-    void evaluate_energy_and_grad(
+    int evaluate_energy_and_grad(
         int N, const double* m, const double* U, const double* B_ext, const double* M_nodal,
         sparse_matrix_t K_eff, sparse_matrix_t G_sparse, double* E, double* g_total, double inv_Vmag
     ) {
         struct matrix_descr descr;
         descr.type = SPARSE_MATRIX_TYPE_GENERAL;
         
-        mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, K_eff, descr, m, 0.0, g_total);
-        mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, G_sparse, descr, U, 1.0, g_total);
+        int status = static_cast<int>(
+            mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, K_eff, descr, m, 0.0, g_total)
+        );
+        if (status != 0) return status;
+        status = static_cast<int>(
+            mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, G_sparse, descr, U, 1.0, g_total)
+        );
+        if (status != 0) return status;
         
         double energy = 0.0;
         #pragma omp parallel for reduction(+:energy)
@@ -203,34 +259,40 @@ extern "C" {
         
         *E = 0.5 * energy * inv_Vmag;
         cblas_dscal(3 * N, inv_Vmag, g_total, 1);
+        return 0;
     }
 
-    void solve_poisson(int N, const double* m, int64_t pardiso_handle, sparse_matrix_t D_sparse, double* U, const double* boundary_mask) {
-        if (pardiso_handle == 0) return;
+    int solve_poisson(int N, const double* m, int64_t pardiso_handle, sparse_matrix_t D_sparse, double* U, const double* boundary_mask) {
+        if (pardiso_handle == 0) return 0;
         struct matrix_descr descr;
         descr.type = SPARSE_MATRIX_TYPE_GENERAL;
         
         double* rhs = new double[N]();
-        mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, D_sparse, descr, m, 0.0, rhs);
+        int status = static_cast<int>(
+            mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, D_sparse, descr, m, 0.0, rhs)
+        );
         
-        if (boundary_mask != nullptr) {
+        if (status == 0 && boundary_mask != nullptr) {
             for (int i = 0; i < N; ++i) {
                 rhs[i] *= boundary_mask[i];
             }
         }
         
-        pardiso_solve_direct(pardiso_handle, rhs, U);
+        if (status == 0) {
+            status = pardiso_solve_direct(pardiso_handle, rhs, U);
+        }
         
-        if (boundary_mask != nullptr) {
+        if (status == 0 && boundary_mask != nullptr) {
             for (int i = 0; i < N; ++i) {
                 U[i] *= boundary_mask[i];
             }
         }
         
         delete[] rhs;
+        return status;
     }
 
-    void solve_Py_g(
+    int solve_Py_g(
         int N,
         const double* m,
         const double* g_ext,
@@ -274,12 +336,18 @@ extern "C" {
         bool done = false;
 
         int it_loop = 0;
+        int status = 0;
         for (it_loop = 0; it_loop < max_iter; ++it_loop) {
             if (rho <= target_rho || rho <= 1e-25 || rho >= 1e20 || done) {
                 break;
             }
 
-            mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, K_eff, descr, p, 0.0, Kp);
+            status = static_cast<int>(
+                mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, K_eff, descr, p, 0.0, Kp)
+            );
+            if (status != 0) {
+                break;
+            }
 
             #pragma omp parallel for
             for (int i = 0; i < N; ++i) {
@@ -341,13 +409,15 @@ extern "C" {
         }
         double z_norm = cblas_dnrm2(3 * N, z_fallback, 1);
 
-        if (y_norm > 10.0 * z_norm) {
+        if (status == 0 && y_norm > 10.0 * z_norm) {
             cblas_dscal(3 * N, (10.0 * z_norm) / (y_norm + 1e-30), y, 1);
         }
 
-        double y_dot_g = cblas_ddot(3 * N, y, 1, g_tan_ext, 1);
-        if (y_dot_g <= 1e-12) {
-            std::copy(z_fallback, z_fallback + 3 * N, y);
+        if (status == 0) {
+            double y_dot_g = cblas_ddot(3 * N, y, 1, g_tan_ext, 1);
+            if (y_dot_g <= 1e-12) {
+                std::copy(z_fallback, z_fallback + 3 * N, y);
+            }
         }
 
         delete[] r;
@@ -356,9 +426,10 @@ extern "C" {
         delete[] Ap;
         delete[] Kp;
         delete[] z_fallback;
+        return status;
     }
 
-    void armijo_ls(
+    int armijo_ls(
         int N,
         const double* m,
         double pg,
@@ -396,7 +467,7 @@ extern "C" {
             std::copy(g_raw_init, g_raw_init + 3 * N, g_raw_out);
             *evals_out = 0;
             *demag_out = 0;
-            return;
+            return 0;
         }
 
         double s = s0;
@@ -414,6 +485,7 @@ extern "C" {
         double* m_exp = new double[3 * N];
         double d_exp = 0.0;
         int demag_accum = 0;
+        int status = 0;
 
         std::copy(g_raw_init, g_raw_init + 3 * N, g_raw_exp);
         std::copy(U_base, U_base + N, U_exp);
@@ -422,11 +494,20 @@ extern "C" {
         // Expansion loop
         while (it_exp < max_evals && !done_exp) {
             cayley_update(N, m, H, s, m_trial);
-            solve_poisson(N, m_trial, pardiso_handle, D_sparse, U_trial, boundary_mask);
+            status = solve_poisson(N, m_trial, pardiso_handle, D_sparse, U_trial, boundary_mask);
+            if (status != 0) {
+                break;
+            }
             demag_accum++;
 
             double E_trial = 0.0;
-            evaluate_energy_and_grad(N, m_trial, U_trial, B_ext, M_nodal, K_eff, G_sparse, &E_trial, g_trial, inv_Vmag);
+            status = evaluate_energy_and_grad(
+                N, m_trial, U_trial, B_ext, M_nodal, K_eff, G_sparse,
+                &E_trial, g_trial, inv_Vmag
+            );
+            if (status != 0) {
+                break;
+            }
 
             if (!std::isfinite(E_trial)) {
                 E_trial = 1e20;
@@ -450,6 +531,16 @@ extern "C" {
             done_exp = stop;
         }
 
+        if (status != 0) {
+            delete[] m_trial;
+            delete[] U_trial;
+            delete[] g_trial;
+            delete[] g_raw_exp;
+            delete[] U_exp;
+            delete[] m_exp;
+            return status;
+        }
+
         // Contraction loop
         bool con_done_init = (d_exp >= eta1) && (d_exp < 1e10);
         double s_final = s;
@@ -468,11 +559,20 @@ extern "C" {
         while (it_con < max_evals && !done_con) {
             double s_next = s_min + c * (s_final - s_min);
             cayley_update(N, m, H, s_next, m_trial);
-            solve_poisson(N, m_trial, pardiso_handle, D_sparse, U_trial, boundary_mask);
+            status = solve_poisson(N, m_trial, pardiso_handle, D_sparse, U_trial, boundary_mask);
+            if (status != 0) {
+                break;
+            }
             demag_accum++;
 
             double E_trial = 0.0;
-            evaluate_energy_and_grad(N, m_trial, U_trial, B_ext, M_nodal, K_eff, G_sparse, &E_trial, g_trial, inv_Vmag);
+            status = evaluate_energy_and_grad(
+                N, m_trial, U_trial, B_ext, M_nodal, K_eff, G_sparse,
+                &E_trial, g_trial, inv_Vmag
+            );
+            if (status != 0) {
+                break;
+            }
 
             if (!std::isfinite(E_trial)) {
                 E_trial = 1e20;
@@ -492,19 +592,21 @@ extern "C" {
             done_con = stop;
         }
 
-        bool is_safe = d_final >= 0.0;
-        if (is_safe) {
-            *s_out = s_final;
-            *E_out = E_final;
-            std::copy(m_final, m_final + 3 * N, m_out);
-            std::copy(U_final, U_final + N, U_out);
-            std::copy(g_raw_final, g_raw_final + 3 * N, g_raw_out);
-        } else {
-            *s_out = 0.0;
-            *E_out = E0;
-            std::copy(m, m + 3 * N, m_out);
-            std::copy(U_base, U_base + N, U_out);
-            std::copy(g_raw_init, g_raw_init + 3 * N, g_raw_out);
+        if (status == 0) {
+            bool is_safe = d_final >= 0.0;
+            if (is_safe) {
+                *s_out = s_final;
+                *E_out = E_final;
+                std::copy(m_final, m_final + 3 * N, m_out);
+                std::copy(U_final, U_final + N, U_out);
+                std::copy(g_raw_final, g_raw_final + 3 * N, g_raw_out);
+            } else {
+                *s_out = 0.0;
+                *E_out = E0;
+                std::copy(m, m + 3 * N, m_out);
+                std::copy(U_base, U_base + N, U_out);
+                std::copy(g_raw_init, g_raw_init + 3 * N, g_raw_out);
+            }
         }
 
         *evals_out = it_exp + it_con;
@@ -519,6 +621,7 @@ extern "C" {
         delete[] g_raw_final;
         delete[] U_final;
         delete[] m_final;
+        return status;
     }
 
     bool check_convergence(
@@ -554,12 +657,50 @@ extern "C" {
         int L, int beta_type,
         int* out_iters, int* out_evals, int* out_demag, int* out_preco, double* out_E, double* out_gnorm
     ) {
-        sparse_matrix_t K_eff, G_sparse, D_sparse;
-        mkl_sparse_d_create_csr(&K_eff, SPARSE_INDEX_BASE_ZERO, 3*N, 3*N, K_ptr, K_ptr+1, K_col, K_val);
-        mkl_sparse_d_create_csr(&G_sparse, SPARSE_INDEX_BASE_ZERO, 3*N, N, G_ptr, G_ptr+1, G_col, G_val);
-        mkl_sparse_d_create_csr(&D_sparse, SPARSE_INDEX_BASE_ZERO, N, 3*N, D_ptr, D_ptr+1, D_col, D_val);
-        
-        mkl_sparse_optimize(K_eff); mkl_sparse_optimize(G_sparse); mkl_sparse_optimize(D_sparse);
+        sparse_matrix_t K_eff = nullptr;
+        sparse_matrix_t G_sparse = nullptr;
+        sparse_matrix_t D_sparse = nullptr;
+        int status = static_cast<int>(
+            mkl_sparse_d_create_csr(
+                &K_eff, SPARSE_INDEX_BASE_ZERO, 3*N, 3*N,
+                K_ptr, K_ptr+1, K_col, K_val
+            )
+        );
+        if (status != 0) {
+            K_eff = nullptr;
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
+        status = static_cast<int>(
+            mkl_sparse_d_create_csr(
+                &G_sparse, SPARSE_INDEX_BASE_ZERO, 3*N, N,
+                G_ptr, G_ptr+1, G_col, G_val
+            )
+        );
+        if (status != 0) {
+            G_sparse = nullptr;
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
+        status = static_cast<int>(
+            mkl_sparse_d_create_csr(
+                &D_sparse, SPARSE_INDEX_BASE_ZERO, N, 3*N,
+                D_ptr, D_ptr+1, D_col, D_val
+            )
+        );
+        if (status != 0) {
+            D_sparse = nullptr;
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
+
+        status = static_cast<int>(mkl_sparse_optimize(K_eff));
+        if (status == 0) {
+            status = static_cast<int>(mkl_sparse_optimize(G_sparse));
+        }
+        if (status == 0) {
+            status = static_cast<int>(mkl_sparse_optimize(D_sparse));
+        }
+        if (status != 0) {
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
 
         // Normalize m
         #pragma omp parallel for
@@ -577,8 +718,21 @@ extern "C" {
         double* H = new double[3 * N];
         
         double E = 0.0;
-        solve_poisson(N, m, pardiso_handle, D_sparse, U, boundary_mask);
-        evaluate_energy_and_grad(N, m, U, B_ext, M_nodal, K_eff, G_sparse, &E, g_raw, inv_Vmag);
+        status = solve_poisson(N, m, pardiso_handle, D_sparse, U, boundary_mask);
+        if (status == 0) {
+            status = evaluate_energy_and_grad(
+                N, m, U, B_ext, M_nodal, K_eff, G_sparse,
+                &E, g_raw, inv_Vmag
+            );
+        }
+        if (status != 0) {
+            delete[] g_raw;
+            delete[] g_prev;
+            delete[] y_prev;
+            delete[] d_prev;
+            delete[] H;
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
         
         // Print debug info
         double sum_g = 0.0;
@@ -608,7 +762,22 @@ extern "C" {
             pc_tol = std::min(pc_force_eta, std::pow(gnorm_inf, pc_force_alpha));
         }
         int initial_preco_it = 0;
-        solve_Py_g(N, m, g_raw, g_tan_ext, inv_M_prec, K_eff, pc_iters, pc_tol, pc_reg, pc_stagnation_nu, inv_Vmag, y_prev, &initial_preco_it);
+        status = solve_Py_g(
+            N, m, g_raw, g_tan_ext, inv_M_prec, K_eff,
+            pc_iters, pc_tol, pc_reg, pc_stagnation_nu, inv_Vmag,
+            y_prev, &initial_preco_it
+        );
+        if (status != 0) {
+            delete[] g_raw;
+            delete[] g_prev;
+            delete[] y_prev;
+            delete[] d_prev;
+            delete[] H;
+            delete[] g_tan;
+            delete[] g_tan_ext;
+            delete[] g_raw_scaled;
+            return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
+        }
 
         std::copy(g_tan_ext, g_tan_ext + 3 * N, g_prev);
         #pragma omp parallel for
@@ -653,7 +822,14 @@ extern "C" {
             }
             
             int current_preco_it = 0;
-            solve_Py_g(N, m, g_raw, g_tan_ext, inv_M_prec, K_eff, pc_iters, pc_tol, pc_reg, pc_stagnation_nu, inv_Vmag, y, &current_preco_it);
+            status = solve_Py_g(
+                N, m, g_raw, g_tan_ext, inv_M_prec, K_eff,
+                pc_iters, pc_tol, pc_reg, pc_stagnation_nu, inv_Vmag,
+                y, &current_preco_it
+            );
+            if (status != 0) {
+                break;
+            }
             preco_iters += current_preco_it;
             
             gnorm_inf_smooth = std::abs(y[cblas_idamax(3 * N, y, 1)]);
@@ -712,10 +888,18 @@ extern "C" {
             int ls_evals = 0;
             int ls_demag = 0;
             
-            armijo_ls(N, m, pg, H, E, U, g_raw, B_ext, M_nodal, K_eff, G_sparse, D_sparse, pardiso_handle,
-                      boundary_mask,
-                      eta1, eta2, C, c, 1.0, max_ls_evals, inv_Vmag,
-                      &tau, &E_new, g_raw_new, U_new, m_new, &ls_evals, &ls_demag);
+            status = armijo_ls(
+                N, m, pg, H, E, U, g_raw, B_ext, M_nodal,
+                K_eff, G_sparse, D_sparse, pardiso_handle, boundary_mask,
+                eta1, eta2, C, c, 1.0, max_ls_evals, inv_Vmag,
+                &tau, &E_new, g_raw_new, U_new, m_new, &ls_evals, &ls_demag
+            );
+            if (status != 0) {
+                delete[] m_new;
+                delete[] U_new;
+                delete[] g_raw_new;
+                break;
+            }
             
             evals += ls_evals;
             demag += ls_demag;
@@ -736,12 +920,14 @@ extern "C" {
             delete[] g_raw_new;
         }
         
-        *out_iters = it;
-        *out_evals = evals;
-        *out_demag = demag;
-        if (out_preco) *out_preco = preco_iters;
-        if (out_E) *out_E = E;
-        if (out_gnorm) *out_gnorm = final_gnorm_inf;
+        if (status == 0) {
+            *out_iters = it;
+            *out_evals = evals;
+            *out_demag = demag;
+            if (out_preco) *out_preco = preco_iters;
+            if (out_E) *out_E = E;
+            if (out_gnorm) *out_gnorm = final_gnorm_inf;
+        }
         
         delete[] g_raw;
         delete[] g_prev;
@@ -755,10 +941,6 @@ extern "C" {
         delete[] y;
         delete[] d_prev_proj;
         
-        mkl_sparse_destroy(K_eff);
-        mkl_sparse_destroy(G_sparse);
-        mkl_sparse_destroy(D_sparse);
-        
-        return 0;
+        return destroy_sparse_handles(status, K_eff, G_sparse, D_sparse);
     }
 }

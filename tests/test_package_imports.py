@@ -39,6 +39,28 @@ def test_tommos_namespace_is_importable() -> None:
     assert module.__name__ == "tommos"
 
 
+def test_native_loader_import_does_not_access_mkl_distribution_or_cdll() -> None:
+    """Keep oneMKL metadata lookup and dynamic loading lazy at package import."""
+    code = """
+import ctypes
+from importlib import metadata
+
+def unexpected(*args, **kwargs):
+    raise AssertionError(f"unexpected eager native access: {args!r} {kwargs!r}")
+
+ctypes.CDLL = unexpected
+metadata.distribution = unexpected
+import tommos._native_loader
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("module_name", IMPORTABLE_MODULES)
 def test_modules_import_through_tommos_namespace(module_name: str) -> None:
     """Import a module through the tommos namespace.

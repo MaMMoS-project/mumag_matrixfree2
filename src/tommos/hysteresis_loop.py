@@ -10,8 +10,8 @@ License: MIT
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +27,9 @@ from .io_utils import (
 )
 from .minimizers import make_minimizer
 from .poisson_solve import make_solve_U
+
+if TYPE_CHECKING:
+    from ._native_loader import NativeSelections
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 
@@ -99,7 +102,7 @@ class LoopParams:
     cg_maxiter: int = 2000
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
-    poisson_solver: str = "jax"
+    poisson_solver: str = "auto"
     mfinal: float | None = None
     mstep: float | None = None
     bias_type: str | None = None
@@ -122,7 +125,7 @@ class LoopParams:
     wg_threshold: float = 1e-6
     benchmark: bool = False
     L: int | None = None
-    cpp_mkl: bool = True
+    cpp_mkl: bool | None = None
 
 
 def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.ndarray:
@@ -223,6 +226,43 @@ def jax_compute_volume_averaged_m(
     return m_vol_avg
 
 
+def _finalize_loop_outputs(
+    m: Any,
+    U: Any,
+    solve_U: Any,
+    sparse_operators: tuple[Any, ...] = (),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Synchronize successful outputs and explicitly close PARDISO.
+
+    Args:
+        m: Final magnetization output.
+        U: Final scalar-potential output.
+        solve_U: Poisson solver that may own a PARDISO handle.
+        sparse_operators: Top-level sparse operators with optional close methods.
+
+    Returns:
+        Final magnetization and scalar potential as NumPy arrays.
+    """
+    m.block_until_ready()
+    U.block_until_ready()
+    last_m = np.array(m)
+    last_U = np.array(U)
+    solver_close = getattr(solve_U, "close", None)
+    if solver_close is not None:
+        solver_close()
+    else:
+        pardiso_obj = getattr(solve_U, "pardiso_obj", None)
+        if pardiso_obj is not None:
+            pardiso_obj.close()
+    closed: set[int] = set()
+    for operator in sparse_operators:
+        close = getattr(operator, "close", None)
+        if close is not None and id(operator) not in closed:
+            closed.add(id(operator))
+            close()
+    return last_m, last_U
+
+
 def run_hysteresis_loop(  # noqa: D417
     points: np.ndarray,
     geom: TetGeom,
@@ -262,7 +302,8 @@ def run_hysteresis_loop(  # noqa: D417
     K_eff_scipy: Any = None,
     D_scipy: Any = None,
     G_scipy: Any = None,
-    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    cpu_spmv_backend: str = "auto",
+    native_selections: NativeSelections | None = None,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -295,7 +336,30 @@ def run_hysteresis_loop(  # noqa: D417
         Kan_sparse: Assembled anisotropy matrix.
         k_nodes: Precomputed easy axis per node.
         Kex_diag: Precomputed diagonal of Kex.
+        native_selections: Optional authoritative caller-resolved backends.
     """
+    if native_selections is None:
+        from ._native_loader import resolve_native_selections
+
+        try:
+            has_gpu = any(device.platform == "gpu" for device in jax.devices())
+        except Exception:
+            has_gpu = False
+        selections = resolve_native_selections(
+            params.cpp_mkl,
+            params.poisson_solver,
+            cpu_spmv_backend,
+            has_gpu=has_gpu,
+        )
+    else:
+        selections = native_selections
+    params = replace(
+        params,
+        cpp_mkl=selections.cpp_minimizer == "cpp_mkl",
+        poisson_solver=selections.poisson_solver,
+    )
+    cpu_spmv_backend = selections.cpu_spmv_backend
+
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
     write_hysteresis_header(csv_path)
@@ -335,6 +399,7 @@ def run_hysteresis_loop(  # noqa: D417
         A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
         poisson_solver=params.poisson_solver,
+        native_selections=selections,
     )
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
@@ -648,10 +713,33 @@ def run_hysteresis_loop(  # noqa: D417
         f"Total function evaluations: {total_evals}\n"
         f"Total Poisson (demag) iterations: {total_demag_iters}"
     )
+    last_m, last_U = _finalize_loop_outputs(
+        m,
+        U,
+        solve_U,
+        (
+            A_sparse,
+            Dx_sparse,
+            Dy_sparse,
+            Dz_sparse,
+            K_eff_sparse,
+            Kx_sparse,
+            Ky_sparse,
+            Kz_sparse,
+            Gx_sparse,
+            Gy_sparse,
+            Gz_sparse,
+            D_sparse,
+            G_sparse,
+        ),
+    )
     return {
         "out_dir": str(out_dir),
         "csv_path": str(csv_path),
-        "last_m": np.array(m),
-        "last_U": np.array(U),
+        "last_m": last_m,
+        "last_U": last_U,
         "history": np.array(history),
+        "cpp_minimizer": selections.cpp_minimizer,
+        "poisson_solver": selections.poisson_solver,
+        "cpu_spmv_backend": selections.cpu_spmv_backend,
     }

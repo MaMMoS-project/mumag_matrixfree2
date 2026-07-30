@@ -1,48 +1,37 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Use Slurm job ID to create a unique local folder, or fallback to PID
 if [[ "$OSTYPE" != "linux-gnu"* ]]; then
     echo "Skipping C++ minimizer compilation on non-Linux platform."
     exit 0
 fi
-if [ -n "$SLURM_JOB_ID" ]; then
+
+PROJECT_ROOT="${PIXI_PROJECT_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+
+echo "Rebuilding the editable tommos installation through isolated PEP 517..."
+python -m pip install --no-deps --force-reinstall --no-cache-dir --editable "$PROJECT_ROOT"
+
+if [ -n "${SLURM_JOB_ID:-}" ]; then
     LOCAL_BUILD_DIR="/tmp/mumag_build_${SLURM_JOB_ID}"
-    # Slurm users build output directly into the isolated tmp folder
-    export MUMAG_LIB_OUT="$LOCAL_BUILD_DIR"
-else
-    LOCAL_BUILD_DIR="/tmp/mumag_build_$$"
-    # Desktop/head-node users still build the source safely in /tmp to avoid 
-    # cluttering the repository, but the final compiled .so library 
-    # is placed permanently in the global lib/ folder!
-    if [ -n "$PIXI_PROJECT_ROOT" ]; then
-        export MUMAG_LIB_OUT="$PIXI_PROJECT_ROOT/lib"
-        mkdir -p "$MUMAG_LIB_OUT"
-    fi
+    mkdir -p "$LOCAL_BUILD_DIR"
+    NATIVE_LIBRARY="$(
+        python - <<'PY'
+from importlib.metadata import distribution
+
+native_entries = [
+    entry
+    for entry in distribution("tommos").files or ()
+    if str(entry).endswith("tommos/_native/libcpp_mkl_minimizer.so")
+]
+if len(native_entries) != 1:
+    raise SystemExit(
+        f"expected one installed libcpp_mkl_minimizer.so, found {len(native_entries)}"
+    )
+print(distribution("tommos").locate_file(native_entries[0]).resolve(strict=True))
+PY
+    )"
+    cp "$NATIVE_LIBRARY" "$LOCAL_BUILD_DIR/libcpp_mkl_minimizer.so"
+    echo "Copied Slurm compatibility library to $LOCAL_BUILD_DIR/libcpp_mkl_minimizer.so"
 fi
 
-echo "Compiling locally in $LOCAL_BUILD_DIR..."
-
-# Create local directory and copy CMake files and source
-mkdir -p "$LOCAL_BUILD_DIR/src/cpp"
-# Copy from the original source location to the local temp directory
-cp -r src/cpp/* "$LOCAL_BUILD_DIR/src/cpp/"
-
-cd "$LOCAL_BUILD_DIR/src/cpp"
-rm -rf build && mkdir build && cd build
-
-# We need to tell CMake where to find the conda prefix manually because CMAKE_CURRENT_SOURCE_DIR changed
-if [ -z "$CONDA_PREFIX" ]; then
-    # Pixi sets PIXI_PROJECT_ROOT automatically. We use that to reliably find the env.
-    if [ -n "$PIXI_PROJECT_ROOT" ]; then
-        export CONDA_PREFIX="$PIXI_PROJECT_ROOT/.pixi/envs/default"
-    else
-        echo "Error: Neither CONDA_PREFIX nor PIXI_PROJECT_ROOT are set."
-        exit 1
-    fi
-fi
-
-cmake ..
-make -j
-
-echo "Successfully compiled library to $LOCAL_BUILD_DIR/libcpp_mkl_minimizer.so"
+echo "Successfully rebuilt the editable tommos installation."

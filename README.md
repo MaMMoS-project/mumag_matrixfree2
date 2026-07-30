@@ -4,24 +4,104 @@ MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **J
 
 ## 1. Prerequisites and Installation
 
-The project uses **Pixi** for cross-platform dependency management, environment isolation, and automated C++ compilation.
+The project requires Python 3.11 or newer. Linux x86-64 supports the native
+C++/oneMKL capabilities. macOS uses the portable SciPy/JAX implementations.
+Windows and Linux architectures other than x86-64 are not supported.
 
 ### Prerequisites
-1. **Pixi**: Install Pixi if you haven't already:
+
+1. **Python**: Use Python 3.11 or newer.
+2. **Pixi (optional)**: Install Pixi to use the maintained development
+   environments and tasks:
+
    ```bash
    curl -fsSL https://pixi.sh/install.sh | bash
    ```
-2. **GPU Drivers** (Optional): If running on an NVIDIA GPU, ensure you have appropriate NVIDIA drivers installed. The CUDA toolkit is managed directly by Pixi.
+3. **GPU drivers (optional)**: An NVIDIA GPU environment requires a compatible
+   host driver. The CUDA Python packages are managed by the Pixi CUDA
+   environment.
 
-### Installation
-Clone the repository and let Pixi handle everything. The environments will automatically build themselves upon first execution.
+### Editable installation
+
+Clone the repository, create or activate an environment, and install the
+project in editable mode:
+
 ```bash
 git clone git@github.com:MaMMoS-project/mumag_matrixfree2.git
 cd mumag_matrixfree2
+python -m pip install -e .
 ```
-*Note: For Linux users running on CPU, Pixi will automatically compile the highly optimized `libcpp_mkl_minimizer.so` shared libraries using the Intel MKL in the background when the environment activates.*
 
-*Note for Mac Users (Apple Silicon / ARM64): Intel MKL is not available on Mac. You must bypass the MKL backends by appending `--cpu-spmv-backend scipy --no-cpp-mkl` to your `python -m tommos.loop` simulation commands.*
+This is pip's standard
+[editable local-project installation](https://pip.pypa.io/en/stable/topics/local-project-installs/).
+On Linux x86-64, build isolation obtains the oneMKL headers from the PyPI
+`mkl-devel` package, and the installed project dependencies provide the
+[PyPI `mkl` runtime](https://pypi.org/project/mkl/) and
+[`sparse-dot-mkl`](https://pypi.org/project/sparse-dot-mkl/). The native
+library is compiled into `tommos/_native/`; environment activation itself does
+not compile code.
+
+The Linux package does not search `MKLROOT`, `LD_LIBRARY_PATH`, or generic
+system-library paths for an externally installed oneMKL. An external oneMKL
+installation is unsupported. The versioned runtime must come from the
+installed PyPI `mkl` distribution, and oneMKL is not copied into the `tommos`
+wheel.
+
+Repaired Linux review wheels retain the RPATH
+`$ORIGIN/../../tommos.libs:$ORIGIN/../../../..`. The first route resolves
+compiler runtimes grafted by `auditwheel`; the second resolves the versioned
+PyPI oneMKL runtime installed in the environment's `lib` directory. The
+`tommos` wheel does not bundle oneMKL.
+
+On macOS, the build skips the Linux C++ extension and does not install the
+Linux-only MKL dependencies. Use the portable paths explicitly when a
+reproducible portable run is required:
+
+```bash
+python -m tommos.loop <modelname> \
+    --no-cpp-mkl \
+    --poisson-solver jax \
+    --cpu-spmv-backend scipy
+```
+
+The native Linux wheel workflow retains review artifacts in GitHub Actions. It
+contains no package-publication or PyPI-upload step.
+
+### Native diagnostics and clean rebuilds
+
+The diagnostic API reports each capability independently, including the
+selected native path, provenance, and original error:
+
+```bash
+python - <<'PY'
+from tommos._native_loader import NATIVE_ABI_VERSION, native_diagnostics
+
+print(f"native ABI: {NATIVE_ABI_VERSION}")
+for name, probe in native_diagnostics().items():
+    print(
+        name,
+        f"available={probe.available}",
+        f"path={probe.path}",
+        f"source={probe.source}",
+        f"error={probe.error!r}",
+    )
+PY
+```
+
+After changing C++ sources, CMake configuration, or build metadata, rebuild
+the editable installation without using cached build artifacts:
+
+```bash
+python -m pip install --no-deps --force-reinstall --no-cache-dir -e .
+```
+
+The maintained compatibility command performs the same editable rebuild and,
+when `SLURM_JOB_ID` is set, also copies the resulting native library to the
+legacy per-job location:
+
+```bash
+./compile_local.sh
+```
 
 ## 2. How to Run the Software Locally
 
@@ -233,13 +313,17 @@ pixi run sample
 ```
 *(This automatically meshes a cube, runs a full hysteresis loop, and outputs the results).*
 
-**5. Run the Pipeline on Mac (Apple Silicon / ARM64):**
-Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
+**5. Run the Portable Pipeline on macOS:**
+The existing sample task selects the portable SciPy/JAX backends on macOS:
+```bash
+pixi run sample
+```
+The equivalent manual commands are optional when running a custom workflow:
 ```bash
 # Generate the mesh
 pixi run python -m tommos.mesh --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
-# Run the simulation without MKL
-pixi run python -m tommos.loop cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
+# Run the simulation through SciPy/JAX without native MKL capabilities
+pixi run python -m tommos.loop cube_20nm --add-shell --cpu-spmv-backend scipy --poisson-solver jax --no-cpp-mkl
 ```
 
 ## 7. Numerical Methods & Algorithms
@@ -267,7 +351,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--K` | float | Geometric growth factor for shell layer thickness (default: 1.5). |
 | `--hmax` | float | Target edge length at the outermost shell boundary (default: auto scales with magnet size). |
 | `--shell-type`| choice | Outer boundary: `triangles` or `hull` (default: `hull`). |
-| `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
+| `--cpp-mkl` / `--no-cpp-mkl` | flag | Require the C++ backend or force the portable Python minimizer. The default is capability-based automatic selection. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
 | `--operator-mode` | choice | Mode for execution: `assembled` (default, recommended) or `matrix_free` (experimental, do not use). |
@@ -354,8 +438,8 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | :--- | :--- | :--- |
 | `--operator-mode` | SpMV execution mode: `assembled` (default, sparse matrix) or `matrix_free` (experimental, do not use). | `assembled` |
 | `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
-| `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
-| `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
+| `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`auto`, `persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `auto` |
+| `--cpp-mkl` / `--no-cpp-mkl` | Require the C++ MKL minimizer or force the portable Python minimizer. | Capability-based `auto` |
 | `--chunk-elems` | Number of elements processed per chunk to control peak GPU memory. | `200000` |
 | `--geom-backend` | Strategy for providing shape gradients: `stored_JinvT`, `stored_grad_phi`, or `on_the_fly`. | `stored_JinvT` |
 

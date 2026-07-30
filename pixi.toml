@@ -24,17 +24,10 @@ gmsh = ">=4.12.2,<5"
 neper = "*"
 
 [target.linux-64.dependencies]
-mkl = "*"
-mkl-include = "*"
-libblas = { version = "*", build = "*mkl" }
-sparse_dot_mkl = "*"
-_openmp_mutex = { version = "*", build = "*_llvm" }
+libblas = { version = "*", build = "*openblas" }
 cmake = "*"
 make = "*"
 cxx-compiler = "*"
-
-[target.linux-64.activation]
-scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
 build = "*"
@@ -60,9 +53,6 @@ build-package = "python -m build"
 # Compile locally to /tmp/ to avoid Slurm filesystem race conditions
 compile = "bash compile_local.sh"
 
-# Compile globally to the shared ../lib/ folder on Ceph
-compile-global = "rm -rf src/cpp/build && mkdir -p src/cpp/build && cd src/cpp/build && cmake .. && make"
-
 # Run unit tests. Usage: pixi run test
 test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/" }
 # Clean temporary mesh files
@@ -75,11 +65,11 @@ sample = { cmd = "cd samples && ./run_cube.sh" }
 
 [target.osx-arm64.tasks]
 # Run the demagnetization curve sample on Mac (bypasses MKL)
-sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --poisson-solver jax --no-cpp-mkl" }
 
 [target.osx-64.tasks]
 # Run the demagnetization curve sample on Mac (bypasses MKL)
-sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --poisson-solver jax --no-cpp-mkl" }
 
 [target.win-64.tasks]
 # Run the demagnetization curve sample on Windows (bypasses MKL)
