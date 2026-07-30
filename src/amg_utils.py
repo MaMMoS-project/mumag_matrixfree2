@@ -260,16 +260,14 @@ class DistributedCSR:
             indices_list.append(indices_padded)
             indptr_list.append(block.indptr)
 
-        # Stack into arrays with a leading device dimension by concatenating (flat arrays)
-        data_stacked = jnp.asarray(np.concatenate(data_list))
-        indices_stacked = jnp.asarray(np.concatenate(indices_list))
-        indptr_stacked = jnp.asarray(np.concatenate(indptr_list))
-
         # Explicitly shard across the mesh
         P = jax.sharding.PartitionSpec("devices")
-        data_sharded = jax.device_put(data_stacked, jax.sharding.NamedSharding(mesh, P))
-        indices_sharded = jax.device_put(indices_stacked, jax.sharding.NamedSharding(mesh, P))
-        indptr_sharded = jax.device_put(indptr_stacked, jax.sharding.NamedSharding(mesh, P))
+        sharding = jax.sharding.NamedSharding(mesh, P)
+
+        # Directly device_put NumPy arrays to avoid allocating the full array on GPU 0
+        data_sharded = jax.device_put(np.concatenate(data_list), sharding)
+        indices_sharded = jax.device_put(np.concatenate(indices_list), sharding)
+        indptr_sharded = jax.device_put(np.concatenate(indptr_list), sharding)
 
         return cls(data_sharded, indices_sharded, indptr_sharded, scipy_mat.shape, mesh)
 
