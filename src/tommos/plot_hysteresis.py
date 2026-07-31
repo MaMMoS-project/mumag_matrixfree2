@@ -32,7 +32,7 @@ def plot_hysteresis(csv_path: str | Path, output_image: str | Path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python src/plot_hysteresis.py <csv_file> [output_image]")
+        print("Usage: python -m tommos.plot_hysteresis <csv_file> [output_image]")
         sys.exit(1)
 
     csv_file = sys.argv[1]
