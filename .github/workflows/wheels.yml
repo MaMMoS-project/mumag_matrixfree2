@@ -37,9 +37,6 @@ jobs:
         CIBW_TEST_SOURCES: tests
         CIBW_TEST_COMMAND_LINUX: >-
           unset MKLROOT LD_LIBRARY_PATH PYTHONPATH &&
-          TOMMOS_VERIFY_CLEAN_INSTALL=1
-          TOMMOS_CHECKOUT_PATH={project}
-          python -m pytest -q tests/test_wheel_install.py -k clean_install &&
           python -m pytest -q tests/test_cpp_minimizer.py
     - name: Inspect repaired wheel contents and ELF metadata
       shell: bash

@@ -16,19 +16,15 @@ authors = [
 ]
 dependencies = [
   "jax",
+  "mammos-entity",
   "matplotlib",
+  "meshio",
   "meshpy",
   "mkl>=2026.0,<2027; sys_platform == \"linux\" and platform_machine == \"x86_64\"",
   "numpy",
   "pyamg",
   "scipy",
   "sparse-dot-mkl>=0.9.10; sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-]
-
-[project.optional-dependencies]
-io = [
-  "mammos-entity",
-  "meshio",
 ]
 
 [tool.scikit-build]
@@ -50,9 +46,18 @@ platforms = ["linux-64", "osx-arm64", "osx-64"]
 [tool.pixi.pypi-dependencies]
 tommos = { path = ".", editable = true }
 
+[tool.pixi.tasks]
+sample = { cmd = "cd samples && ./run_cube.sh" }
+clean-samples = { cmd = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log" }
+
+[tool.pixi.target.osx-arm64.tasks]
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
+[tool.pixi.target.osx-64.tasks]
+sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --no-cpp-mkl" }
+
 [tool.pixi.feature.test.pypi-dependencies]
 pytest = "*"
-packaging = "*"
 
 [tool.pixi.feature.test.tasks]
 test = { cmd = "JAX_ENABLE_X64=True pytest tests/" }
@@ -81,16 +86,6 @@ neper = "*"
 jaxopt = "*"
 mammos-analysis = "*"
 
-[tool.pixi.feature.sample.tasks]
-sample = { cmd = "cd samples && ./run_cube.sh" }
-clean-samples = { cmd = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log" }
-
-[tool.pixi.feature.sample.target.osx-arm64.tasks]
-sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --poisson-solver jax --no-cpp-mkl" }
-
-[tool.pixi.feature.sample.target.osx-64.tasks]
-sample = { cmd = "cd samples && ./run_cube.sh --cpu-spmv-backend scipy --poisson-solver jax --no-cpp-mkl" }
-
 [tool.pixi.feature.cuda.pypi-dependencies]
 jax = { version = "*", extras = ["cuda12"] }
 
@@ -103,8 +98,8 @@ cpu = { solve-group = "tommos" }
 test = { features = ["test"], solve-group = "tommos" }
 lint = { features = ["lint"], solve-group = "tommos" }
 build = { features = ["build"], solve-group = "tommos" }
-sample = { features = ["sample", "io"], solve-group = "tommos" }
-cuda = { features = ["cuda", "sample", "io"], solve-group = "tommos" }
+sample = { features = ["sample"], solve-group = "tommos" }
+cuda = { features = ["cuda", "sample"], solve-group = "tommos" }
 
 [tool.ruff]
 target-version = "py311"
