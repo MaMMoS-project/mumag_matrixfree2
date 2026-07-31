@@ -185,11 +185,14 @@ class DistributedCSR:
 
     def __init__(
         self,
-        data: jnp.ndarray,
-        indices: jnp.ndarray,
-        indptr: jnp.ndarray,
+        data_diag: jnp.ndarray,
+        indices_diag: jnp.ndarray,
+        indptr_diag: jnp.ndarray,
         shape: tuple[int, int],
         mesh: jax.sharding.Mesh | None = None,
+        data_off: jnp.ndarray | None = None,
+        indices_off: jnp.ndarray | None = None,
+        indptr_off: jnp.ndarray | None = None,
         send_indices: jnp.ndarray | None = None,
         unpack_src: jnp.ndarray | None = None,
         unpack_k: jnp.ndarray | None = None,
@@ -199,22 +202,28 @@ class DistributedCSR:
         """Initialize the DistributedCSR sparse matrix.
 
         Args:
-            data (jnp.ndarray): Non-zero values.
-            indices (jnp.ndarray): Column indices.
-            indptr (jnp.ndarray): Row pointers.
+            data_diag (jnp.ndarray): Non-zero values for local block.
+            indices_diag (jnp.ndarray): Column indices for local block.
+            indptr_diag (jnp.ndarray): Row pointers for local block.
             shape (tuple[int, int]): Shape of the sparse matrix.
             mesh (jax.sharding.Mesh | None, optional): Target sharding mesh. Defaults to None.
+            data_off (jnp.ndarray | None, optional): Non-zero values for ghost block.
+            indices_off (jnp.ndarray | None, optional): Column indices for ghost block.
+            indptr_off (jnp.ndarray | None, optional): Row pointers for ghost block.
             send_indices (jnp.ndarray | None, optional): Sharded routing send indices for Halo Exchange.
             unpack_src (jnp.ndarray | None, optional): Sharded routing unpack src indices.
             unpack_k (jnp.ndarray | None, optional): Sharded routing unpack k indices.
             max_ghosts_per_pair (int): Max ghost cells per device pair.
             max_total_ghosts (int): Max total ghost cells per device.
         """
-        self.data = data
-        self.indices = indices
-        self.indptr = indptr
+        self.data_diag = data_diag
+        self.indices_diag = indices_diag
+        self.indptr_diag = indptr_diag
         self.shape = shape
         self.mesh = mesh
+        self.data_off = data_off
+        self.indices_off = indices_off
+        self.indptr_off = indptr_off
         self.send_indices = send_indices
         self.unpack_src = unpack_src
         self.unpack_k = unpack_k
@@ -224,7 +233,9 @@ class DistributedCSR:
     def tree_flatten(self):
         """Flatten the DistributedCSR for JAX."""
         return (
-            (self.data, self.indices, self.indptr, self.send_indices, self.unpack_src, self.unpack_k),
+            (self.data_diag, self.indices_diag, self.indptr_diag,
+             self.data_off, self.indices_off, self.indptr_off,
+             self.send_indices, self.unpack_src, self.unpack_k),
             (self.shape, self.mesh, self.max_ghosts_per_pair, self.max_total_ghosts),
         )
 
@@ -232,9 +243,10 @@ class DistributedCSR:
     def tree_unflatten(cls, aux_data, children):
         """Unflatten the DistributedCSR for JAX."""
         shape, mesh, max_ghosts_per_pair, max_total_ghosts = aux_data
-        data, indices, indptr, send_indices, unpack_src, unpack_k = children
+        data_diag, indices_diag, indptr_diag, data_off, indices_off, indptr_off, send_indices, unpack_src, unpack_k = children
         return cls(
-            data, indices, indptr, shape, mesh,
+            data_diag, indices_diag, indptr_diag, shape, mesh,
+            data_off, indices_off, indptr_off,
             send_indices, unpack_src, unpack_k,
             max_ghosts_per_pair, max_total_ghosts
         )
@@ -333,12 +345,48 @@ class DistributedCSR:
                 unpack_src_all[dest, idx] = src
                 unpack_k_all[dest, idx] = k_pos
 
-        # 3. Remap CSR column indices for each block
-        max_nnz = max(block.nnz for block in blocks)
-        if max_nnz > CUSPARSE_NNZ_LIMIT:
+        # 3. Split block into diag and offdiag matrices
+        diag_blocks = []
+        offdiag_blocks = []
+        for i, block in enumerate(blocks):
+            cols = block.indices
+            is_local = (cols >= i * cols_per_block) & (cols < (i + 1) * cols_per_block)
+            
+            # Diag block
+            diag_cols = cols[is_local] - i * cols_per_block
+            diag_data = block.data[is_local]
+            
+            # Offdiag block
+            ghost_mask = ~is_local
+            ghost_cols = cols[ghost_mask]
+            
+            offdiag_cols = np.empty_like(ghost_cols)
+            if len(ghost_cols) > 0:
+                pos_in_unique = np.searchsorted(unique_ghosts_list[i], ghost_cols)
+                offdiag_cols[:] = pos_in_unique
+            offdiag_data = block.data[ghost_mask]
+            
+            # Vectorized indptr construction
+            row_indices = np.repeat(np.arange(block.shape[0]), np.diff(block.indptr))
+            local_count = np.bincount(row_indices[is_local], minlength=block.shape[0])
+            ghost_count = np.bincount(row_indices[ghost_mask], minlength=block.shape[0])
+            
+            diag_indptr = np.zeros(block.shape[0] + 1, dtype=block.indptr.dtype)
+            diag_indptr[1:] = np.cumsum(local_count)
+            
+            offdiag_indptr = np.zeros(block.shape[0] + 1, dtype=block.indptr.dtype)
+            offdiag_indptr[1:] = np.cumsum(ghost_count)
+
+            diag_blocks.append(sp.csr_matrix((diag_data, diag_cols, diag_indptr), shape=(block.shape[0], cols_per_block)))
+            offdiag_blocks.append(sp.csr_matrix((offdiag_data, offdiag_cols, offdiag_indptr), shape=(block.shape[0], max_total_ghosts)))
+
+        max_nnz_diag = max(db.nnz for db in diag_blocks)
+        max_nnz_off = max(ob.nnz for ob in offdiag_blocks)
+
+        if max(max_nnz_diag, max_nnz_off) > CUSPARSE_NNZ_LIMIT:
             logging.warning(
                 f"\n================================================================================\n"
-                f"WARNING: A partitioned sparse matrix block contains {max_nnz} non-zeros, which exceeds\n"
+                f"WARNING: A partitioned sparse matrix block exceeds\n"
                 f"the JAX cuSPARSE 32-bit limit of {CUSPARSE_NNZ_LIMIT}.\n"
                 f"The simulation will likely crash during JIT execution with a PyBind11 TypeError.\n"
                 f"Please scale out and increase the number of active GPUs to partition the matrix\n"
@@ -346,35 +394,35 @@ class DistributedCSR:
                 f"================================================================================\n"
             )
 
-        data_list, indices_list, indptr_list = [], [], []
-        for i, block in enumerate(blocks):
-            cols = block.indices.copy()
-            is_local = (cols >= i * cols_per_block) & (cols < (i + 1) * cols_per_block)
+        # Pad and gather arrays
+        data_diag_list, indices_diag_list, indptr_diag_list = [], [], []
+        data_off_list, indices_off_list, indptr_off_list = [], [], []
+        
+        for i in range(num_devices):
+            db = diag_blocks[i]
+            ob = offdiag_blocks[i]
             
-            new_cols = np.empty_like(cols)
-            new_cols[is_local] = cols[is_local] - i * cols_per_block
-
-            ghost_mask = ~is_local
-            if np.any(ghost_mask):
-                ghost_cols = cols[ghost_mask]
-                pos_in_unique = np.searchsorted(unique_ghosts_list[i], ghost_cols)
-                new_cols[ghost_mask] = cols_per_block + pos_in_unique
-
-            pad_len = max_nnz - block.nnz
-            data_padded = np.pad(block.data, (0, pad_len))
-            indices_padded = np.pad(new_cols, (0, pad_len))
-
-            data_list.append(data_padded)
-            indices_list.append(indices_padded)
-            indptr_list.append(block.indptr)
+            pad_diag = max_nnz_diag - db.nnz
+            data_diag_list.append(np.pad(db.data, (0, pad_diag)))
+            indices_diag_list.append(np.pad(db.indices, (0, pad_diag)))
+            indptr_diag_list.append(db.indptr)
+            
+            pad_off = max_nnz_off - ob.nnz
+            data_off_list.append(np.pad(ob.data, (0, pad_off)))
+            indices_off_list.append(np.pad(ob.indices, (0, pad_off)))
+            indptr_off_list.append(ob.indptr)
 
         # 4. Explicitly shard across the mesh
         P = jax.sharding.PartitionSpec("devices")
         sharding = jax.sharding.NamedSharding(mesh, P)
 
-        data_sharded = jax.device_put(np.concatenate(data_list), sharding)
-        indices_sharded = jax.device_put(np.concatenate(indices_list), sharding)
-        indptr_sharded = jax.device_put(np.concatenate(indptr_list), sharding)
+        data_diag_sharded = jax.device_put(np.concatenate(data_diag_list), sharding)
+        indices_diag_sharded = jax.device_put(np.concatenate(indices_diag_list), sharding)
+        indptr_diag_sharded = jax.device_put(np.concatenate(indptr_diag_list), sharding)
+        
+        data_off_sharded = jax.device_put(np.concatenate(data_off_list), sharding)
+        indices_off_sharded = jax.device_put(np.concatenate(indices_off_list), sharding)
+        indptr_off_sharded = jax.device_put(np.concatenate(indptr_off_list), sharding)
 
         send_indices_flat = send_indices_all.reshape(num_devices, -1)
         send_indices_sharded = jax.device_put(send_indices_flat, sharding)
@@ -383,7 +431,8 @@ class DistributedCSR:
         unpack_k_sharded = jax.device_put(unpack_k_all, sharding)
 
         return cls(
-            data_sharded, indices_sharded, indptr_sharded, scipy_mat.shape, mesh,
+            data_diag_sharded, indices_diag_sharded, indptr_diag_sharded, scipy_mat.shape, mesh,
+            data_off=data_off_sharded, indices_off=indices_off_sharded, indptr_off=indptr_off_sharded,
             send_indices=send_indices_sharded,
             unpack_src=unpack_src_sharded,
             unpack_k=unpack_k_sharded,
@@ -415,7 +464,7 @@ class DistributedCSR:
 
         if self.mesh is None:
             # Single GPU Path
-            csr = sparse.CSR((self.data, self.indices, self.indptr), shape=self.shape)
+            csr = sparse.CSR((self.data_diag, self.indices_diag, self.indptr_diag), shape=self.shape)
             return csr @ x
 
         # Multi GPU Path: Halo Exchange via jax.lax.all_to_all
@@ -428,37 +477,44 @@ class DistributedCSR:
         max_ghosts_per_pair = self.max_ghosts_per_pair
         max_total_ghosts = self.max_total_ghosts
 
-        def _dot(data_loc, indices_loc, indptr_loc, send_indices_loc, unpack_src_loc, unpack_k_loc, x_loc):
-            # 1. Extract ghost values to send: shape (num_devices, max_ghosts_per_pair)
+        def _dot(data_diag_loc, indices_diag_loc, indptr_diag_loc, 
+                 data_off_loc, indices_off_loc, indptr_off_loc, 
+                 send_indices_loc, unpack_src_loc, unpack_k_loc, x_loc):
+            
+            # 1. Start Network Request immediately
             send_indices_2d = send_indices_loc.reshape((num_devices, max_ghosts_per_pair))
             send_buffer = x_loc[send_indices_2d]
-
-            # 2. Exchange ghost buffers across GPUs via all_to_all
             recv_buffer = jax.lax.all_to_all(send_buffer, split_axis=0, concat_axis=0, axis_name="devices")
-
-            # 3. Unpack received ghost values: shape (max_total_ghosts,)
+            
+            # 2. Asynchronous Overlap: Compute Local Math
+            csr_diag = sparse.CSR((data_diag_loc, indices_diag_loc, indptr_diag_loc), shape=(rows_per_block, cols_per_block))
+            y_local = csr_diag @ x_loc
+            
+            # 3. Synchronize Network and Unpack
             x_ghosts = recv_buffer[unpack_src_loc.reshape(-1), unpack_k_loc.reshape(-1)]
-
-            # 4. Pack local vector and ghosts into x_padded
-            x_padded = jnp.concatenate([x_loc, x_ghosts])
-
-            # 5. Local matrix-vector multiplication
-            local_shape = (rows_per_block, cols_per_block + max_total_ghosts)
-            csr_loc = sparse.CSR((data_loc, indices_loc, indptr_loc), shape=local_shape)
-            return csr_loc @ x_padded
+            
+            # 4. Compute Boundary Math
+            csr_offdiag = sparse.CSR((data_off_loc, indices_off_loc, indptr_off_loc), shape=(rows_per_block, max_total_ghosts))
+            y_ghosts = csr_offdiag @ x_ghosts
+            
+            # 5. Combine Output
+            return y_local + y_ghosts
 
         _dot_sharded = jax.jit(
             shard_map(
                 _dot,
                 mesh=self.mesh,
-                in_specs=(P, P, P, P, P, P, P),
+                in_specs=(P, P, P, P, P, P, P, P, P, P),
                 out_specs=P,
             )
         )
         return _dot_sharded(
-            self.data,
-            self.indices,
-            self.indptr,
+            self.data_diag,
+            self.indices_diag,
+            self.indptr_diag,
+            self.data_off,
+            self.indices_off,
+            self.indptr_off,
             self.send_indices,
             self.unpack_src,
             self.unpack_k,
@@ -475,10 +531,9 @@ class DistributedCSR:
         from jax.experimental import sparse
 
         if self.mesh is None:
-            csr = sparse.CSR((self.data, self.indices, self.indptr), shape=self.shape)
+            csr = sparse.CSR((self.data_diag, self.indices_diag, self.indptr_diag), shape=self.shape)
             return csr.T
         raise NotImplementedError("Distributed transpose is not yet implemented.")
-
 
 def csr_to_jax_CSR(mat: sp.csr_matrix, device=None) -> Any:
     """Convert a SciPy CSR matrix to JAX DistributedCSR format.
