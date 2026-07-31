@@ -49,15 +49,15 @@ All operations are executed through `pixi run`. The default environment is `cpu`
 ### Running Locally on CPU
 To run simulations or meshes on the CPU (uses Intel MKL and C++ backend by default on Linux):
 ```bash
-pixi run python -m tommos.loop <modelname> [options]
+pixi run tommos loop <modelname> [options]
 # Or explicitly targeting the CPU environment:
-pixi run -e cpu python -m tommos.loop <modelname> [options]
+pixi run -e cpu tommos loop <modelname> [options]
 ```
 
 ### Running Locally on GPU
 To run purely on the GPU (bypasses C++ MKL in favor of JAX XLA compilation):
 ```bash
-pixi run -e cuda python -m tommos.loop <modelname> [options]
+pixi run -e cuda tommos loop <modelname> [options]
 ```
 
 ## 3. How to Submit Jobs with Slurm
@@ -111,7 +111,7 @@ export OMP_WAIT_POLICY=ACTIVE
 echo "========================="
 echo "=== Running minimizer ==="
 echo "========================="
-pixi run -e cpu python -m tommos.loop cube \
+pixi run -e cpu tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_cpu \
     --benchmark \
@@ -139,7 +139,7 @@ echo "=== Running Assembled Test on A100 ==="
 export JAX_ENABLE_X64=True
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 
-pixi run -e cuda python -m tommos.loop cube \
+pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_a100 \
     --benchmark \
@@ -172,7 +172,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 # or lockups on cluster nodes without NVLink bridges.
 export JAX_DISABLE_P2P=1
 
-pixi run -e cuda python -m tommos.loop cube \
+pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_multi_gpu \
     --benchmark \
@@ -190,7 +190,7 @@ sbatch test_cpu.slurm
 
 A simulation requires three primary input files, usually sharing the same `<modelname>` prefix:
 
-1. **Mesh File (`<modelname>.npz`)**: A numpy archive containing the tetrahedral mesh nodes (`knt`) and elements (`ijk`). It can be generated using `python -m tommos.mesh`. Alternatively, you can convert existing meshes using provided scripts:
+1. **Mesh File (`<modelname>.npz`)**: A numpy archive containing the tetrahedral mesh nodes (`knt`) and elements (`ijk`). It can be generated using `tommos mesh`. Alternatively, you can convert existing meshes using provided scripts:
    - `python -m tommos.mesh_convert`: Converts a VTK UnstructuredGrid (`.vtu`) mesh into the required `.npz` format (and vice versa).
    - `python -m tommos.salomeMeshToNpz`: Converts FEMME input files (`.knt` for nodes, `.ijk` for connectivity) into the `.npz` format.
 2. **Parameters File (`<modelname>.p2`)**: An INI-formatted configuration file defining the physical environment, field sweeps, and solver tolerances.
@@ -235,17 +235,17 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 
 **1. Create a 20nm Cube Mesh:**
 ```bash
-pixi run python -m tommos.mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
 ```
 
 **2. Create a 20nm Cube Mesh with an Auto-Generated Airbox:**
 ```bash
-pixi run python -m tommos.mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
 ```
 
 **3. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
 ```bash
-pixi run python -m tommos.loop cube_20nm --add-shell
+pixi run tommos loop cube_20nm --add-shell
 ```
 
 **4. Run a Full Pipeline Example (Provided):**
@@ -258,9 +258,9 @@ pixi run sample
 Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
 ```bash
 # Generate the mesh
-pixi run python -m tommos.mesh --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
 # Run the simulation without MKL
-pixi run python -m tommos.loop cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
+pixi run tommos loop cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
 ```
 
 ## 7. Numerical Methods & Algorithms
@@ -278,7 +278,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 
 ## 8. CLI Features & Arguments
 
-### `python -m tommos.loop` (Main Driver)
+### `tommos loop` (Main Driver)
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `modelname` | string | **Positional**. Base name. Looks for `<modelname>.npz`, `.krn`, and `.p2`. |
@@ -296,7 +296,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
 
-### `python -m tommos.mesh` (Meshing Tool)
+### `tommos mesh` (Meshing Tool)
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. |
@@ -309,7 +309,7 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--out-name` | string | Base name for output files. |
 | `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. |
 
-### `python -m tommos.add_shell` (Standalone Airbox Tool)
+### `tommos add-shell` (Standalone Airbox Tool)
 The airbox tool can be run independently to add a far-field vacuum region to an existing mesh. It is highly optimized to minimize the number of tetrahedrons using a convex hull.
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -322,9 +322,9 @@ The airbox tool can be run independently to add a far-field vacuum region to an 
 | `--hmax` | float | Target edge length at the outermost boundary. Defaults to `None` (intelligently auto-scales to 20% of the expanded airbox bounds to prevent element explosions on large models). |
 | `--auto-layers`| flag | Automatically compute the number of layers required to reach `KL` using growth rate `K`. This is intrinsically enabled if `--layers` is omitted. |
 
-## 9. Appendix: Complete CLI Parameters for `python -m tommos.loop`
+## 9. Appendix: Complete CLI Parameters for `tommos loop`
 
-Below is an exhaustive list of all command-line arguments accepted by the main driver module `tommos.loop`, categorized by function.
+Below is an exhaustive list of all command-line arguments accepted by the `tommos loop` main driver, categorized by function.
 
 ### Positional Arguments
 | Parameter | Description | Default |
@@ -423,7 +423,7 @@ The code dynamically merges parameters with the following strict priority:
 2. **`.p2` Parameter File** (Overwrites built-in defaults)
 3. **Built-in Defaults** (Lowest priority)
 
-This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run python -m tommos.loop my_model --method lbfgs`).
+This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run tommos loop my_model --method lbfgs`).
 
 ### Supported `.p2` Parameters
 
@@ -495,7 +495,7 @@ pixi run -e cuda python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
 ```
 *(Alternatively, submit `sbatch run_evaluate_properties.slurm` to a cluster).*
 This wrapper script orchestrates two distinct phases for the specified intrinsic properties across all 10 structures:
-- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `python -m tommos.loop` sequentially for each structure.
+- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `tommos loop` sequentially for each structure.
 - **Analyze Phase:** Analyzes the simulation outputs, automatically handling demagnetization field shearing and detecting overskewed coercivities.
 
 Results are written to the `evaluations/` directory, including a visual plot (`*_demag_curves.png`) and three strictly typed, ontology-mapped CSV files:

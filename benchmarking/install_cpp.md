@@ -67,9 +67,9 @@ make
 ## 6. Testing
 Run the Poisson convergence test:
 ```bash
-# Generate a test mesh first using Python
-python -m tommos.mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
-python -m tommos.add_shell --in cube_20nm.npz --layers 4 --out-npz cube_with_shell.npz
+# Generate a test mesh first
+tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
+tommos add-shell --in cube_20nm.npz --layers 4 --out-npz cube_with_shell.npz
 
 # Run C++ solver
 ./test_poisson_convergence ../cube_with_shell.npz

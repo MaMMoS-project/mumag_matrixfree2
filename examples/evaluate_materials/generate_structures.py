@@ -34,9 +34,8 @@ def main():
 
         # 1. Generate Mesh
         mesh_cmd = [
-            sys.executable,
-            "-m",
-            "tommos.mesh",
+            "tommos",
+            "mesh",
             "--geom",
             "poly",
             "--n",

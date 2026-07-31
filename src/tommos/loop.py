@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import ctypes
 import os
+import sys
+from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -347,7 +349,7 @@ def load_materials(
     return A, K1, Js, k_easy
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """Main CLI entry point for the micromagnetics hysteresis driver.
 
     Orchestrates the entire simulation pipeline:
@@ -356,8 +358,15 @@ def main() -> None:
     - Precomputing geometry.
     - Running the hysteresis loop.
     - Exporting results.
+
+    Args:
+        argv: Command arguments. Uses `sys.argv` when omitted.
     """
-    ap = argparse.ArgumentParser(description="Micromagnetics hysteresis driver with shell + preprocessing.")
+    cli_arguments = sys.argv[1:] if argv is None else argv
+    ap = argparse.ArgumentParser(
+        prog="tommos loop",
+        description="Micromagnetics hysteresis driver with shell + preprocessing.",
+    )
     ap.add_argument(
         "modelname",
         nargs="?",
@@ -752,7 +761,7 @@ def main() -> None:
         help="Run a dummy warmup step before the hysteresis loop to compile JIT functions.",
     )
 
-    args = ap.parse_args()
+    args = ap.parse_args(cli_arguments)
 
     # Dynamic defaults based on platform
     try:
@@ -1013,8 +1022,7 @@ def main() -> None:
 
     # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
     # it should win over BOTH defaults and p2.
-    # We check if the arg flag is actually present in sys.argv.
-    import sys
+    # We check if the arg flag is actually present in cli_arguments.
 
     # Map destination variable names to the flags that can set them
     dest_to_flags = {}
@@ -1025,9 +1033,9 @@ def main() -> None:
     explicit_cli_args = set()
     for dest, flags in dest_to_flags.items():
         for flag in flags:
-            # Check if any flag matching this dest is in sys.argv
+            # Check if any flag matching this dest is in cli_arguments
             # (handles both --flag value and --flag=value)
-            if any(arg.startswith(flag) for arg in sys.argv):
+            if any(argument.startswith(flag) for argument in cli_arguments):
                 explicit_cli_args.add(dest)
                 break
 

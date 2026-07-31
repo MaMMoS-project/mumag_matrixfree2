@@ -108,9 +108,8 @@ def step1_generate_mesh(
         print(f"[CONFIG] Grain count: {grains}")
 
         mesh_cmd = [
-            sys.executable,
-            "-m",
-            "tommos.mesh",
+            "tommos",
+            "mesh",
             "--geom",
             "poly",
             "--n",
@@ -313,7 +312,7 @@ def step3_run_loop(base: Path, benchmark_dir: Path, num_loops: int = 1) -> None:
             if num_loops > 1:
                 print(f"\n[LOOP] Run {loop_idx}/{num_loops}")
 
-            loop_cmd = [sys.executable, "-m", "tommos.loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
+            loop_cmd = ["tommos", "loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
 
             print(f"\n[COMMAND] {' '.join(loop_cmd)}")
             print("[SIMULATION] Running micromagnetic hysteresis loop...")
@@ -377,7 +376,7 @@ def step3b_run_loop_up(base: Path, benchmark_dir: Path, num_loops: int = 1) -> N
             if num_loops > 1:
                 print(f"\n[LOOP] Run {loop_idx}/{num_loops}")
 
-            loop_cmd = [sys.executable, "-m", "tommos.loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
+            loop_cmd = ["tommos", "loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
 
             print(f"\n[COMMAND] {' '.join(loop_cmd)}")
             print("[SIMULATION] Running micromagnetic hysteresis loop...")
