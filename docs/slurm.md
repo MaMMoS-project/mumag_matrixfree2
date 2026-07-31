@@ -24,7 +24,7 @@ Jobs sharing one Pixi environment should treat it as read-only. Do not run
 The job itself runs the installed package:
 
 ```bash
-pixi run -e cpu python -m tommos.loop <modelname> [options]
+pixi run -e cpu tommos loop <modelname> [options]
 ```
 
 ## What changed

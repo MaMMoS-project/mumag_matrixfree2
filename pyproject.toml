@@ -27,6 +27,9 @@ dependencies = [
   "sparse-dot-mkl>=0.9.10; sys_platform == \"linux\" and platform_machine == \"x86_64\"",
 ]
 
+[project.scripts]
+tommos = "tommos.cli:main"
+
 [tool.scikit-build]
 minimum-version = "build-system.requires"
 cmake.source-dir = "src/cpp"

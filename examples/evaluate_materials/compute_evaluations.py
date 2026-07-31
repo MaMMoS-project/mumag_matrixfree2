@@ -96,7 +96,7 @@ def main():
 
         # Run loop.py
         print(f"\n--- Running loop.py for {struct_name} ---")
-        loop_cmd = [sys.executable, "-m", "tommos.loop", "isotrop", "--mesh", "isotrop.npz", "--add-shell"]
+        loop_cmd = ["tommos", "loop", "isotrop", "--mesh", "isotrop.npz", "--add-shell"]
         subprocess.run(loop_cmd, cwd=run_struct_dir, check=True)
 
 

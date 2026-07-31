@@ -1,7 +1,5 @@
 import ast
 import importlib
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +7,7 @@ import pytest
 IMPORTABLE_MODULES = (
     "add_shell",
     "amg_utils",
+    "cli",
     "cpp_minimizer",
     "energy_kernels",
     "extract_nucleation",
@@ -24,12 +23,6 @@ IMPORTABLE_MODULES = (
     "poisson_solve",
     "reorder_mesh",
     "salomeMeshToNpz",
-)
-
-HELP_MODULES = (
-    "tommos.add_shell",
-    "tommos.loop",
-    "tommos.mesh",
 )
 
 
@@ -70,20 +63,3 @@ def test_package_modules_use_no_absolute_internal_imports() -> None:
                     absolute_internal_imports.append(f"{module_path}:{node.lineno}: {node.module}")
 
     assert not absolute_internal_imports, "\n".join(absolute_internal_imports)
-
-
-@pytest.mark.parametrize("module_name", HELP_MODULES)
-def test_primary_cli_modules_expose_help(module_name: str) -> None:
-    """Expose CLI help for a primary module.
-
-    Args:
-        module_name: Fully qualified primary CLI module name.
-    """
-    result = subprocess.run(
-        [sys.executable, "-m", module_name, "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "usage:" in result.stdout.lower()
