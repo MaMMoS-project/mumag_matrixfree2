@@ -185,7 +185,7 @@ While line search methods represent the majority of our evaluated solvers, an en
 \end{algorithmic}
 \end{algorithm}
 
-These two foundational blueprints (Algorithm \ref{alg:generic_minimizer} and Algorithm \ref{alg:generic_trust_region}) form the rigorous basis of the specific solvers implemented in our framework. To evaluate their relative performance, the solvers are categorized into five major mathematical families.
+These two foundational blueprints (Algorithm \ref{alg:generic_minimizer} and Algorithm \ref{alg:generic_trust_region}) form the rigorous basis of the specific solvers implemented in our framework. To evaluate their relative performance, the solvers are categorized into key mathematical families.
 
 \subsection{Conjugate Gradient Methods}
 This class of algorithms utilizes search directions that are conjugate to previous steps with respect to the local energy curvature. Our implementation includes the standard adapted conjugate gradient method for spherical constraints pioneered by Cohen, Lin, and Luskin \cite{Cohen1989}, as well as heavily preconditioned variants (PCG) designed to cluster the stiff exchange eigenspectrum and accelerate convergence in complex microstructures.
@@ -220,21 +220,13 @@ The preconditioned Cohen method utilizing the Hestenes-Stiefel (HS) update rule 
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Accelerated Gradient Methods}
-To overcome the traditionally slow convergence of pure gradient descent, accelerated gradient schemes incorporate historical momentum to propel the system rapidly toward the minimum. We have implemented preconditioned Nesterov Accelerated Gradient (NAG) methods, alongside exact and standard variants of the Accelerated Alternating Projected Gradient (AAPG) method, adapting these powerful convex optimization techniques for the non-convex micromagnetic manifold.
+\subsection{Trust Region Methods}
+For problems requiring rigorous evaluation of the local curvature, we implement a preconditioned Trust Region method. The solver constructs its constrained local quadratic model using the sparse assembled Hessian incorporating local interactions (exchange and crystalline anisotropy energies) and solves the internal subproblem efficiently via Steihaug-Toint preconditioned conjugate gradients.
 
-\subsection{Curvilinear Search Methods}
-Unlike methods that step linearly along tangent planes and rely on post-update renormalizations, curvilinear search algorithms evaluate the objective function directly along curves tracing the spherical manifold. We implement the Wen-Goldfarb curvilinear line search \cite{Wen2009}, which intrinsically preserves the norm constraint at every trial point during the line search phase without suffering from tangent-space distortion.
-
-\subsection{Quasi-Newton Methods}
-Quasi-Newton methods build an approximation of the inverse Hessian matrix using historical gradient information to achieve superlinear convergence. We employ the Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm, carefully adapted for spherical manifolds. To further handle the specific stiffness of the micromagnetic exchange interaction, we implement preconditioned (PL-BFGS) and doubly preconditioned variants, as well as a hybrid approach combining the robustness of Cohen's method with L-BFGS acceleration.
-
-\subsection{Newton-Type and Trust Region Methods}
-For problems requiring rigorous evaluation of the local curvature, we implement both Truncated Newton and Trust Region methods. The standard trust region solver constructs its constrained local model using an approximated sparse Hessian—incorporating only near-field and local interactions such as the exchange and crystalline anisotropy energies. Conversely, our advanced preconditioned trust region method utilizes the exact, full dense Hessian (including the long-range magnetostatic interactions) to build the trust region model, while employing the sparse local near-field Hessian strictly as a preconditioner to solve the internal subproblem efficiently.
 \section{Software Implementation}
 
 \subsection{JAX-Based Framework}
-Our implementation utilizes the JAX library to construct a fully differentiable, matrix-free solver. This allows us to leverage constructs such as Just-In-Time (JIT) compilation, automatic differentiation, and robust hardware acceleration on GPUs for extreme performance.
+Our implementation utilizes the JAX library to construct a GPU-accelerated solver based on pre-assembled sparse matrices. This allows us to leverage constructs such as Just-In-Time (JIT) compilation, automatic differentiation, and highly optimized sparse matrix-vector (SpMV) operations on GPUs for maximum throughput.
 
 \section{Results and Validation}
 
@@ -258,11 +250,11 @@ To establish the theoretical maximum performance of our hardware, we first measu
 
 We evaluated the total time to solution and the average time per minimizer iteration for the large polycrystalline mesh on both platforms. On the 16-core CPU, the minimizer required an average of $1.203$ seconds per iteration. On the A100 GPU, the minimizer required merely $0.0527$ seconds per iteration. 
 
-This yields an empirical performance speedup of $22.8\times$ for the GPU over the CPU. This measured speedup in the minimizer iteration time correlates almost perfectly with the measured $21.2\times$ ratio in hardware memory bandwidth between the two platforms. This correlation confirms that the execution time of the matrix-free minimizer scales with the memory bandwidth. The slight additional advantage of the GPU over the raw bandwidth ratio is likely attributable to the massive $40$ MB L2 cache of the A100, which can capture temporal locality during sparse matrix operations more effectively than the CPU's cache hierarchy.
+This yields an empirical performance speedup of $22.8\times$ for the GPU over the CPU. This measured speedup in the minimizer iteration time correlates almost perfectly with the measured $21.2\times$ ratio in hardware memory bandwidth between the two platforms. This correlation confirms that the execution time of the sparse assembled minimizer scales with the memory bandwidth. The slight additional advantage of the GPU over the raw bandwidth ratio is likely attributable to the massive $40$ MB L2 cache of the A100, which can capture temporal locality during sparse matrix operations more effectively than the CPU's cache hierarchy.
 
 \section{Conclusion}
 
-Future directions in computational micromagnetics must continue to account for architectural memory bandwidth limitations. As demonstrated, the execution speed of energy minimization algorithms using matrix-free methods is bound by memory throughput. Moving forward, as meshes scale to tens of millions of nodes and state vectors exceed the caches of modern GPUs, execution will remain limited by HBM bandwidth limits. Consequently, algorithms designed for the next generation of micromagnetic solvers must prioritize minimizing data movement and maximizing arithmetic intensity to fully exploit modern computational hardware.
+Future directions in computational micromagnetics must continue to account for architectural memory bandwidth limitations. As demonstrated, the execution speed of energy minimization algorithms using sparse assembled GPU methods is bound by memory throughput. Moving forward, as meshes scale to tens of millions of nodes and state vectors exceed the caches of modern GPUs, execution will remain limited by HBM bandwidth limits. Consequently, algorithms designed for the next generation of micromagnetic solvers must prioritize minimizing data movement and maximizing arithmetic intensity to fully exploit modern computational hardware.
 
 \bibliographystyle{plain}
 \bibliography{references}
