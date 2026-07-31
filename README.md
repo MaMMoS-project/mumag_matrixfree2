@@ -25,8 +25,7 @@ cd mumag_matrixfree2
 
 ## 2. How to Run the Software Locally
 
-> [!WARNING]
-> **Experimental Feature:** The `--operator-mode matrix_free` flag is highly experimental and is **not recommended** for use. It incurs excessively long JAX JIT compilation times on GPUs. Please use the default `--operator-mode assembled` for all workloads.
+
 
 All operations are executed through `pixi run`. The default environment is `cpu`.
 
@@ -247,8 +246,7 @@ pixi run python3 src/loop.py cube_20nm --add-shell --cpu-spmv-backend scipy --no
 ### Energy Minimization Methods (`--method`)
 The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ constraint at every node.
 - **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks.
-- **`pcohen`**: Preconditioned Cohen CG with Polak-Ribière update.
-- **`tn`**: Truncated Newton-CG.
+- **`tr`**: Trust Region Newton Conjugate Gradient method.
 
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
@@ -270,7 +268,6 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
-| `--operator-mode` | choice | Mode for execution: `assembled` (default, recommended) or `matrix_free` (experimental, do not use). |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
@@ -352,7 +349,6 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Solver Backend & Parallelization
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--operator-mode` | SpMV execution mode: `assembled` (default, sparse matrix) or `matrix_free` (experimental, do not use). | `assembled` |
 | `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
@@ -362,20 +358,13 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Energy Minimizer Configuration
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `pcohen`, `tn`). | `pcohen_hs` |
+| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `tr`). | `pcohen_hs` |
 | `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `2000` |
 | `--tau-f` | Relative energy convergence tolerance for the minimizer. | `1e-8` |
 | `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `1e-12` |
 | `--tau0` | Initial step size guess for the minimizer line search. | `0.01` |
-| `--tau-min` | Minimum allowed step size (mainly for the BB minimizer). | `1e-6` |
-| `--tau-max` | Maximum allowed step size (mainly for the BB minimizer). | `1.0` |
 | `--L` | Restart frequency for conjugate gradient methods. | Number of nodes |
-| `--memory` | History size ($m$) for L-BFGS and Anderson acceleration. | `5` |
 | `--tn-iters` | Maximum inner iterations for Truncated Newton-CG solvers. | `5` |
-| `--lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` |
-| `--mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` |
-| `--wg-gamma` | Number of steps in convex region before switching to BB (WG method). | `5` |
-| `--wg-threshold` | Convexity threshold for the WG algorithm. | `1e-6` |
 
 ### Preconditioning Configuration
 | Parameter | Description | Default |
@@ -435,19 +424,12 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | `tol_fun` | Relative energy convergence tolerance. | `1e-8` | `--tau-f` |
 | `eps_a` | Absolute tangent gradient norm tolerance. | `1e-12` | `--eps-a` |
 | `tau0` | Initial step size guess. | `0.01` | `--tau0` |
-| `tau_min` | Minimum allowed step size. | `1e-6` | `--tau-min` |
-| `tau_max` | Maximum allowed step size. | `1.0` | `--tau-max` |
 | `pc_iters` | Inner iteration limit for preconditioning solvers. | `10` | `--pc-iters` |
 | `pc_auto` | Enable automated tuning of preconditioning. | `True` | `--pc-auto` |
 | `pc_force_eta` | Base forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-eta` |
 | `pc_force_alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-alpha` |
 | `pc_stagnation_nu`| Stagnation threshold for quadratic models. | `0.01` | `--pc-stagnation-nu` |
-| `memory` | History size for L-BFGS and Anderson acceleration. | `5` | `--memory` |
 | `tn_iters` | Maximum inner iterations for Truncated Newton-CG. | `5` | `--tn-iters` |
-| `lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` | `--lr` |
-| `mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` | `--mu` |
-| `wg_gamma` | Steps in convex region before switching to BB. | `5` | `--wg-gamma` |
-| `wg_threshold` | Convexity threshold for the WG algorithm. | `1e-6` | `--wg-threshold` |
 
 #### `[poisson]`
 | Parameter | Description | Default | CLI Equivalent |
