@@ -37,6 +37,8 @@ cxx-compiler = "*"
 scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
+build = "*"
+tommos = { path = ".", editable = true }
 jaxopt = "*"
 mammos-entity = "*"
 mammos-analysis = "*"
@@ -53,6 +55,8 @@ cpu = ["cpu"]
 cuda = ["cuda"]
 
 [tasks]
+build-package = "python -m build"
+
 # Compile locally to /tmp/ to avoid Slurm filesystem race conditions
 compile = "bash compile_local.sh"
 

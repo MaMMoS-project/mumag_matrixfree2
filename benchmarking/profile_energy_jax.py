@@ -6,7 +6,6 @@ Uses jax.profiler to capture a trace for analysis in perfetto.
 
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 
@@ -18,13 +17,11 @@ from dataclasses import replace  # noqa: E402
 
 import jax.numpy as jnp  # noqa: E402
 
-# Add src to path for imports
-sys.path.append(str(Path(__file__).parent.parent / "src"))
-import add_shell  # noqa: E402
-from energy_kernels import make_energy_kernels  # noqa: E402
-from fem_utils import TetGeom, compute_node_volumes  # noqa: E402
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
-from poisson_solve import make_solve_U  # noqa: E402
+from tommos import add_shell  # noqa: E402
+from tommos.energy_kernels import make_energy_kernels  # noqa: E402
+from tommos.fem_utils import TetGeom, compute_node_volumes  # noqa: E402
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT  # noqa: E402
+from tommos.poisson_solve import make_solve_U  # noqa: E402
 
 
 def profile_energy() -> None:

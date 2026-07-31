@@ -1,14 +1,8 @@
 """Generate a simple tetrahedral test mesh."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 
-# Add src to path for imports
-sys.path.append(str(Path(__file__).parent.parent / "src"))
-import add_shell
-import mesh
+from tommos import add_shell, mesh
 
 L_cube = 20.0
 h = 2.0

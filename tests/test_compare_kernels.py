@@ -11,17 +11,15 @@ pytestmark = pytest.mark.skipif(
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-
-from amg_utils import (
+from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
     assemble_poisson_matrix_cpu,
     make_sparse_operator,
 )
-from fem_utils import TetGeom, compute_node_volumes
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
-from minimizers import tangent_grad
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+from tommos.minimizers import tangent_grad
 
 
 def test_compare():
@@ -116,7 +114,7 @@ def test_compare():
     )
 
     # Preconditioning setup in Python
-    from energy_kernels import compute_exchange_diagonal
+    from tommos.energy_kernels import compute_exchange_diagonal
 
     d_diag = compute_exchange_diagonal(
         geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
@@ -124,7 +122,7 @@ def test_compare():
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
 
     # 2. Setup Solve_U
-    from poisson_solve import make_solve_U
+    from tommos.poisson_solve import make_solve_U
 
     solve_U = make_solve_U(
         geom,
@@ -165,7 +163,7 @@ def test_compare():
     )
 
     # 4. Compute Energy and Gradient
-    from energy_kernels import make_energy_kernels
+    from tommos.energy_kernels import make_energy_kernels
 
     py_energy_and_grad, _, _, local_grad_only = make_energy_kernels(
         geom,
@@ -355,7 +353,7 @@ def test_compare():
     # Compute Python PCG for exactly 1 iteration
     p_jax = g_tan_ext * inv_M_prec
 
-    from minimizers import make_preconditioner_op
+    from tommos.minimizers import make_preconditioner_op
 
     np.ascontiguousarray(1.0 / (M_nodal / np.max(M_nodal) + 1e-30), dtype=np.float64)
     apply_P_py, _ = make_preconditioner_op(local_grad_only)

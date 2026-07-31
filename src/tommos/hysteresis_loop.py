@@ -17,16 +17,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from energy_kernels import make_energy_kernels
-from fem_utils import TetGeom
-from io_utils import (
+from .energy_kernels import make_energy_kernels
+from .fem_utils import TetGeom
+from .io_utils import (
     append_hysteresis_row,
     ensure_dir,
     write_hysteresis_header,
     write_vtu_tetra,
 )
-from minimizers import make_minimizer
-from poisson_solve import make_solve_U
+from .minimizers import make_minimizer
+from .poisson_solve import make_solve_U
 
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 
@@ -339,7 +339,7 @@ def run_hysteresis_loop(  # noqa: D417
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    from energy_kernels import compute_exchange_diagonal
+    from .energy_kernels import compute_exchange_diagonal
 
     d_diag = compute_exchange_diagonal(
         geom,
@@ -455,13 +455,13 @@ def run_hysteresis_loop(  # noqa: D417
         start_step = time.time()
 
         if params.cpp_mkl:
-            from cpp_minimizer import cpp_minimize
+            from .cpp_minimizer import cpp_minimize
 
             # Add parameters needed by C++ wrapper
             params.M_nodal = M_nodal
             params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
             params.V_mag = V_mag
-            from energy_kernels import compute_exchange_diagonal
+            from .energy_kernels import compute_exchange_diagonal
 
             d_diag = compute_exchange_diagonal(
                 geom,

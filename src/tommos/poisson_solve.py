@@ -19,7 +19,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 
-from fem_utils import (  # noqa: E402
+from .fem_utils import (  # noqa: E402
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,
@@ -572,7 +572,7 @@ def make_solve_U(  # noqa: D417
         import numpy as np
         import pyamg
 
-        from amg_utils import (
+        from .amg_utils import (
             assemble_poisson_matrix_cpu,
             make_jax_amg_vcycle,
             make_jax_amgcl_vcycle,
@@ -581,7 +581,7 @@ def make_solve_U(  # noqa: D417
         if geom.grad_phi is not None:
             gp = np.array(geom.grad_phi)
         else:
-            from loop import compute_grad_phi_from_JinvT
+            from .loop import compute_grad_phi_from_JinvT
 
             gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
 
@@ -607,7 +607,7 @@ def make_solve_U(  # noqa: D417
             levels_jax = []
             for i in range(len(ml.levels)):
                 level = ml.levels[i]
-                from amg_utils import compute_spai0_diagonal, make_sparse_operator
+                from .amg_utils import compute_spai0_diagonal, make_sparse_operator
 
                 csr_A = level.A.tocsr()
                 level_dict = {
@@ -622,7 +622,7 @@ def make_solve_U(  # noqa: D417
                     level_dict["A_dense"] = jnp.asarray(csr_A.todense())
                 levels_jax.append(level_dict)
 
-            from amg_utils import AMGHierarchy
+            from .amg_utils import AMGHierarchy
 
             hierarchy_jax = AMGHierarchy(levels_jax)
 
@@ -641,12 +641,12 @@ def make_solve_U(  # noqa: D417
     if poisson_solver == "pardiso":
         import numpy as np
 
-        from amg_utils import assemble_poisson_matrix_cpu, make_pardiso_solve_linear
+        from .amg_utils import assemble_poisson_matrix_cpu, make_pardiso_solve_linear
 
         if geom.grad_phi is not None:
             gp = np.array(geom.grad_phi)
         else:
-            from loop import compute_grad_phi_from_JinvT
+            from .loop import compute_grad_phi_from_JinvT
 
             gp = compute_grad_phi_from_JinvT(np.array(geom.JinvT))
 
@@ -680,7 +680,7 @@ def make_solve_U(  # noqa: D417
         num_gpus = 0
 
     if num_gpus >= 2:
-        from amg_utils import get_gpu_assignments
+        from .amg_utils import get_gpu_assignments
 
         assignments = get_gpu_assignments(num_gpus, gpus)
         master_device = gpus[0]

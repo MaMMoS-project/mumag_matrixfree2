@@ -52,7 +52,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 from jax import lax  # noqa: E402
 
-from fem_utils import (  # noqa: E402
+from .fem_utils import (  # noqa: E402
     TetGeom,
     _B_split_from_JinvT,
     _compute_JinvT_from_coords,

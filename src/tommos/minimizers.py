@@ -2961,7 +2961,7 @@ def make_minimizer(
     **kwargs,
 ):
     """Factory function to create various micromagnetic energy minimizers."""
-    from energy_kernels import make_energy_kernels
+    from .energy_kernels import make_energy_kernels
 
     if "energy_assembly" in kwargs:
         kwargs["assembly"] = kwargs.pop("energy_assembly")
@@ -2979,7 +2979,7 @@ def make_minimizer(
     if kwargs.get("mode", "matrix_free") == "assembled" and Kex_diag is not None:
         pass
     else:
-        from energy_kernels import compute_exchange_diagonal
+        from .energy_kernels import compute_exchange_diagonal
 
         compute_exchange_diagonal(
             geom,
@@ -3467,7 +3467,7 @@ def make_minimizer(
         if num_gpus >= 2:
             import numpy as np
 
-            from amg_utils import get_gpu_assignments
+            from .amg_utils import get_gpu_assignments
 
             B_bias = kwargs.get("B_bias")
             inv_Vmag = 1.0 / V_mag

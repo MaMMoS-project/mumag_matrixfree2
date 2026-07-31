@@ -1,3 +1,36 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tommos"
+version = "0.1.0"
+description = "Matrix-free micromagnetic simulations with JAX"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "MaMMoS-project" },
+]
+dependencies = [
+  "jax",
+  "matplotlib",
+  "meshpy",
+  "numpy",
+  "pyamg",
+  "scipy",
+]
+
+[project.optional-dependencies]
+io = [
+  "mammos-entity",
+  "meshio",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["tommos*"]
+namespaces = false
+
 [tool.ruff]
 target-version = "py311"
 exclude = [
@@ -14,7 +47,7 @@ select = [
   "SIM", # flake8-simplify
   "UP",  # pyupgrade
 ]
-isort.known-local-folder = [ "src" ]
+isort.known-local-folder = [ "tommos" ]
 pydocstyle.convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
