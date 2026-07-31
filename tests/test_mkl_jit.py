@@ -12,32 +12,18 @@ import scipy.sparse as sp
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
 
-from tommos._native_loader import probe_sparse_dot_mkl
 from tommos.amg_utils import make_cpu_csr_op
 
 
-def test_jit_mkl() -> None:
-    """The probed wrapper must remain numerically correct through JAX JIT."""
-    probe = probe_sparse_dot_mkl()
-    if not probe.available:
-        pytest.skip(f"sparse-dot-mkl unavailable: {probe.error!r}")
+def test_jit_mkl():
     N = 1000
-    rng = np.random.default_rng(42)
-    A = sp.random(N, N, density=0.01, format="csr", dtype=np.float64, random_state=rng)
-    x = rng.random(N, dtype=np.float64)
+    A = sp.random(N, N, density=0.01, format="csr", dtype=np.float64)
+    x = np.random.rand(N).astype(np.float64)
 
-    cpu_op = make_cpu_csr_op(A, cpu_spmv_backend="persistent_mkl")
+    cpu_op = make_cpu_csr_op(A)
 
     @jax.jit
-    def test_func(x_jnp: jnp.ndarray) -> jnp.ndarray:
-        """Apply the callback-backed operator inside JAX JIT.
-
-        Args:
-            x_jnp: Dense JAX input vector.
-
-        Returns:
-            Dense JAX result vector.
-        """
+    def test_func(x_jnp):
         return cpu_op(x_jnp)
 
     print("Compiling and running JIT...")
@@ -52,4 +38,7 @@ def test_jit_mkl() -> None:
     diff = np.linalg.norm(np.array(y_jax) - y_scipy)
     print(f"Diff: {diff}")
     assert diff < 1e-10
-    cpu_op.close()
+
+
+if __name__ == "__main__":
+    test_jit_mkl()

@@ -1,6 +1,8 @@
 # ruff: noqa: E402
 import os
 import sys
+from importlib.resources import files
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +13,6 @@ pytestmark = pytest.mark.skipif(
 import jax.numpy as jnp
 import numpy as np
 
-from tommos._native_loader import probe_cpp_minimizer, probe_pardiso, probe_sparse_dot_mkl
 from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
@@ -23,11 +24,7 @@ from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_
 from tommos.minimizers import tangent_grad
 
 
-def test_compare() -> None:
-    """Compare native kernels only when each consumed capability is available."""
-    for probe in (probe_cpp_minimizer(), probe_pardiso(), probe_sparse_dot_mkl()):
-        if not probe.available:
-            pytest.skip(f"{probe.name} unavailable: {probe.error!r}")
+def test_compare():
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -199,12 +196,11 @@ def test_compare() -> None:
     }
     py_E, py_g = py_energy_and_grad(m, U, B_ext, sparse_ops=sparse_ops_py)
 
-    # C++ Energy & Grad from the ABI-validated loader-owned library.
+    # C++ Energy & Grad
     import ctypes
 
-    from tommos import _native_loader
-
-    lib = _native_loader.require_pardiso().library
+    lib_path = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+    lib = ctypes.CDLL(str(lib_path))
 
     # Let's call evaluate_energy_and_grad using ctypes
     lib.evaluate_energy_and_grad.argtypes = [
@@ -221,10 +217,36 @@ def test_compare() -> None:
     ]
     lib.evaluate_energy_and_grad.restype = None
 
-    interface = _native_loader.require_sparse_dot_mkl()
+    # Recreate handles directly in our script to be safe
+    mkl_lib = ctypes.CDLL(str(Path(sys.prefix) / "lib" / "libmkl_rt.so.3"))
+    mkl_lib.mkl_sparse_d_create_csr.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    mkl_lib.mkl_sparse_d_create_csr.restype = ctypes.c_int
 
     K_csr = K_eff_scipy
-    K_handle, _, _ = interface._create_mkl_sparse(K_csr)
+    K_val = np.ascontiguousarray(K_csr.data, dtype=np.float64)
+    K_col = np.ascontiguousarray(K_csr.indices, dtype=np.int32)
+    K_ptr = np.ascontiguousarray(K_csr.indptr, dtype=np.int32)
+
+    K_handle = ctypes.c_void_p()
+    mkl_lib.mkl_sparse_d_create_csr(
+        ctypes.byref(K_handle),
+        0,
+        3 * N,
+        3 * N,
+        K_ptr[:-1].ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        K_ptr[1:].ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        K_col.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        K_val.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+    )
 
     # Convert G_scipy to interleaved for C++ since C++ expects interleaved output
     row_indices = np.arange(3 * N, dtype=np.int32)
@@ -236,7 +258,21 @@ def test_compare() -> None:
     G_scipy_cpp = P_mat @ G_scipy
 
     G_csr = G_scipy_cpp
-    G_handle, _, _ = interface._create_mkl_sparse(G_csr)
+    G_val = np.ascontiguousarray(G_csr.data, dtype=np.float64)
+    G_col = np.ascontiguousarray(G_csr.indices, dtype=np.int32)
+    G_ptr = np.ascontiguousarray(G_csr.indptr, dtype=np.int32)
+
+    G_handle = ctypes.c_void_p()
+    mkl_lib.mkl_sparse_d_create_csr(
+        ctypes.byref(G_handle),
+        0,
+        3 * N,
+        N,
+        G_ptr[:-1].ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        G_ptr[1:].ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        G_col.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+        G_val.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+    )
 
     # Call C++ energy and grad
     cpp_E = ctypes.c_double(0.0)
@@ -340,5 +376,9 @@ def test_compare() -> None:
     assert max_diff_y < 1e-10
 
     # Clean up MKL handles
-    interface._destroy_mkl_handle(K_handle)
-    interface._destroy_mkl_handle(G_handle)
+    mkl_lib.mkl_sparse_destroy(K_handle)
+    mkl_lib.mkl_sparse_destroy(G_handle)
+
+
+if __name__ == "__main__":
+    test_compare()

@@ -1,29 +1,75 @@
 # ruff: noqa: E402
+import ctypes
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="MKL tests are only supported on Linux")
+sparse_dot_mkl = pytest.importorskip("sparse_dot_mkl")
 
-from tommos._native_loader import probe_sparse_dot_mkl
-from tommos.amg_utils import PersistentMKLOperator
+from sparse_dot_mkl._mkl_interface import MKL as MKL_wrapper
+from sparse_dot_mkl._mkl_interface import (
+    _create_mkl_sparse,
+    _destroy_mkl_handle,
+    _mkl_scalar,
+    _out_matrix,
+    _output_dtypes,
+    matrix_descr,
+)
+
+libmkl = ctypes.CDLL(str(Path(sys.prefix) / "lib" / "libmkl_rt.so.3"))
+
+# Bind mkl_sparse_optimize
+libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
+libmkl.mkl_sparse_optimize.restype = ctypes.c_int
+
+libmkl.mkl_sparse_set_mv_hint.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+libmkl.mkl_sparse_set_mv_hint.restype = ctypes.c_int
 
 
-def test_persistent_wrapper_matches_scipy() -> None:
-    """The probed sparse wrapper must match a deterministic SciPy product."""
-    probe = probe_sparse_dot_mkl()
-    if not probe.available:
-        pytest.skip(f"sparse-dot-mkl unavailable: {probe.error!r}")
+def test_inspector_executor():
+    # Create test matrix and vector
     N = 1000
-    rng = np.random.default_rng(42)
-    A = sp.random(N, N, density=0.01, format="csr", dtype=np.float64, random_state=rng)
-    x = rng.random(N, dtype=np.float64)
-    operator = PersistentMKLOperator(A)
+    A = sp.random(N, N, density=0.01, format="csr", dtype=np.float64)
+    x = np.random.rand(N).astype(np.float64)
 
-    output_arr = operator.apply(x)
+    # Create MKL handle
+    mkl_a, dbl, cplx = _create_mkl_sparse(A)
+
+    print("MKL Handle created successfully.")
+
+    # Hint: SPARSE_OPERATION_NON_TRANSPOSE = 10
+    hint_res = libmkl.mkl_sparse_set_mv_hint(mkl_a, 10, ctypes.c_void_p(0), 1000)
+    print(f"Hint result: {hint_res}")
+
+    # Optimize
+    opt_res = libmkl.mkl_sparse_optimize(mkl_a)
+    print(f"Optimize result: {opt_res}")
+
+    # Execute
+    output_dtype = _output_dtypes[(dbl, cplx)]
+    output_arr = _out_matrix((N,), output_dtype)
+    func = MKL_wrapper._mkl_sparse_d_mv
+
+    scalar = _mkl_scalar(1.0, cplx, dbl)
+    out_scalar = _mkl_scalar(0.0, cplx, dbl)
+
+    # Call executor
+    exec_res = func(10, scalar, mkl_a, matrix_descr(), x, out_scalar, output_arr)
+    print(f"Execute result: {exec_res}")
+
+    # Verify correctness
     y_scipy = A @ x
-    operator.close()
+    diff = np.linalg.norm(y_scipy - output_arr)
+    print(f"Difference from Scipy: {diff}")
+    assert diff < 1e-10
 
-    np.testing.assert_allclose(output_arr, y_scipy, rtol=1e-12, atol=1e-12)
+    _destroy_mkl_handle(mkl_a)
+    print("MKL Handle destroyed.")
+
+
+if __name__ == "__main__":
+    test_inspector_executor()

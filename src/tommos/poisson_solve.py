@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Literal
 
 import jax
 
@@ -27,9 +27,6 @@ from .fem_utils import (  # noqa: E402
     assemble_segment_sum,
     pad_geom_for_chunking,
 )
-
-if TYPE_CHECKING:
-    from ._native_loader import NativeSelections
 
 Array = jnp.ndarray
 GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
@@ -503,9 +500,8 @@ def make_solve_U(  # noqa: D417
     Dy_sparse: Any = None,  # noqa: F821
     Dz_sparse: Any = None,  # noqa: F821
     A_diag: Any = None,  # noqa: F821
-    cpu_spmv_backend: str = "auto",
-    poisson_solver: str = "auto",
-    native_selections: NativeSelections | None = None,
+    cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    poisson_solver: str = "jax",
 ) -> Callable[[Array, Array, float | None, bool], Array | tuple[Array, int, float]]:
     """Create a high-level function to solve the Poisson potential U in matrix-free or matrix-assembled mode.
 
@@ -532,31 +528,10 @@ def make_solve_U(  # noqa: D417
         A_sparse (Any | None): Assembled stiffness matrix in JAX BCOO format.
         Dx_sparse, Dy_sparse, Dz_sparse (Any | None): Assembled divergence component matrices.
         A_diag (Array | None): Precomputed diagonal of Poisson stiffness matrix A.
-        cpu_spmv_backend: Automatic or explicit CPU sparse backend.
-        poisson_solver: Automatic, JAX, or PARDISO Poisson solver.
-        native_selections: Optional authoritative caller-resolved backends.
 
     Returns:
         Callable: solve_U(m, x0, tol, return_info) -> U or (U, iterations, residual).
     """
-    if native_selections is None:
-        from ._native_loader import resolve_native_selections
-
-        try:
-            has_gpu = any(device.platform == "gpu" for device in jax.devices())
-        except Exception:
-            has_gpu = False
-        selections = resolve_native_selections(
-            False,
-            poisson_solver,
-            cpu_spmv_backend,
-            has_gpu=has_gpu,
-        )
-    else:
-        selections = native_selections
-    poisson_solver = selections.poisson_solver
-    cpu_spmv_backend = selections.cpu_spmv_backend
-
     if enforce_zero_mean is None:
         enforce_zero_mean = boundary_mask is None
 
@@ -624,48 +599,44 @@ def make_solve_U(  # noqa: D417
 
         print(f"AMG hierarchy has {len(ml.levels)} levels.")
 
-        levels_jax = []
-        for i in range(len(ml.levels)):
-            level = ml.levels[i]
-            from .amg_utils import compute_spai0_diagonal, make_sparse_operator
-
-            csr_A = level.A.tocsr()
-            level_dict = {
-                "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
-                "Mdiag": jnp.asarray(csr_A.diagonal()),
-                "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
-            }
-            if i < len(ml.levels) - 1:
-                level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-                level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
-            else:
-                level_dict["A_dense"] = jnp.asarray(csr_A.todense())
-            levels_jax.append(level_dict)
-
-        from .amg_utils import AMGHierarchy
-
-        hierarchy_jax = AMGHierarchy(levels_jax)
-
-        def apply_A_masked(sparse_ops: dict[str, Any], v: Array) -> Array:
-            """Apply the assembled operator and its optional boundary mask.
-
-            Args:
-                sparse_ops: Runtime sparse operators and boundary mask.
-                v: Dense input vector.
-
-            Returns:
-                Masked matrix-vector product.
-            """
-            res = apply_A(sparse_ops, v)
-            boundary_mask_dyn = sparse_ops.get("boundary_mask")
-            if boundary_mask_dyn is not None:
-                res = res * boundary_mask_dyn
-            return res
-
-        if precond_type == "amgcl":
-            apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
+        if poisson_solver == "jax_mkl":
+            raise ValueError(
+                "poisson_solver='jax_mkl' was removed because JAX FFI is no longer used. Use poisson_solver='jax' instead."  # noqa: E501
+            )
         else:
-            apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
+            levels_jax = []
+            for i in range(len(ml.levels)):
+                level = ml.levels[i]
+                from .amg_utils import compute_spai0_diagonal, make_sparse_operator
+
+                csr_A = level.A.tocsr()
+                level_dict = {
+                    "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend),
+                    "Mdiag": jnp.asarray(csr_A.diagonal()),
+                    "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
+                }
+                if i < len(ml.levels) - 1:
+                    level_dict["P"] = make_sparse_operator(level.P.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                    level_dict["R"] = make_sparse_operator(level.R.tocsr(), cpu_spmv_backend=cpu_spmv_backend)
+                else:
+                    level_dict["A_dense"] = jnp.asarray(csr_A.todense())
+                levels_jax.append(level_dict)
+
+            from .amg_utils import AMGHierarchy
+
+            hierarchy_jax = AMGHierarchy(levels_jax)
+
+            def apply_A_masked(sparse_ops, v: Array) -> Array:
+                res = apply_A(sparse_ops, v)
+                boundary_mask_dyn = sparse_ops.get("boundary_mask")
+                if boundary_mask_dyn is not None:
+                    res = res * boundary_mask_dyn
+                return res
+
+            if precond_type == "amgcl":
+                apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
+            else:
+                apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
 
     if poisson_solver == "pardiso":
         import numpy as np
@@ -688,7 +659,7 @@ def make_solve_U(  # noqa: D417
         )
 
         solve_linear = make_pardiso_solve_linear(A_cpu)
-    else:
+    elif poisson_solver != "jax_mkl":
         solve_linear = make_pcg_solve(
             apply_A,
             Mdiag,
@@ -801,15 +772,5 @@ def make_solve_U(  # noqa: D417
 
     if hasattr(solve_linear, "pardiso_obj"):
         solve_U.pardiso_obj = solve_linear.pardiso_obj
-
-    def close_solver_resources() -> None:
-        """Release PARDISO and hierarchy-owned sparse resources."""
-        pardiso_obj = getattr(solve_linear, "pardiso_obj", None)
-        if pardiso_obj is not None:
-            pardiso_obj.close()
-        if hierarchy_jax is not None:
-            hierarchy_jax.close()
-
-    solve_U.close = close_solver_resources
 
     return solve_U

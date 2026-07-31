@@ -50,14 +50,22 @@ fi
 
 patchelf \
     --add-rpath '$ORIGIN/../../../..' \
-    --force-rpath \
     "$NATIVE_EXTENSION"
 
-EXPECTED_RPATH='$ORIGIN/../../tommos.libs:$ORIGIN/../../../..'
-ACTUAL_RPATH="$(patchelf --print-rpath "$NATIVE_EXTENSION")"
-if [[ "$ACTUAL_RPATH" != "$EXPECTED_RPATH" ]]; then
-    echo "unexpected repaired RPATH: $ACTUAL_RPATH" >&2
-    exit 1
-fi
+ACTUAL_RUNPATH="$(patchelf --print-rpath "$NATIVE_EXTENSION")"
+IFS=: read -r -a RUNPATH_COMPONENTS <<<"$ACTUAL_RUNPATH"
+for REQUIRED_COMPONENT in '$ORIGIN/../../tommos.libs' '$ORIGIN/../../../..'; do
+    COMPONENT_FOUND=false
+    for COMPONENT in "${RUNPATH_COMPONENTS[@]}"; do
+        if [[ "$COMPONENT" == "$REQUIRED_COMPONENT" ]]; then
+            COMPONENT_FOUND=true
+            break
+        fi
+    done
+    if [[ "$COMPONENT_FOUND" != true ]]; then
+        echo "repaired RUNPATH is missing $REQUIRED_COMPONENT: $ACTUAL_RUNPATH" >&2
+        exit 1
+    fi
+done
 
 python -m wheel pack --dest-dir "$DEST_DIR" "$UNPACKED_ROOT"

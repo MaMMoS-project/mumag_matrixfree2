@@ -23,7 +23,7 @@ jobs:
     - name: Setup Pixi
       uses: prefix-dev/setup-pixi@v0.9.4
     - name: Build Python distributions
-      run: pixi run build-package
+      run: pixi run -e build build-package
     - name: Verify portable macOS wheel outside checkout
       if: ${{ runner.os == 'macOS' }}
       shell: bash
@@ -37,11 +37,11 @@ jobs:
         wheel_path="$(cd "$(dirname "${wheels[0]}")" && pwd)/$(basename "${wheels[0]}")"
         portable_root="$(mktemp -d "${TMPDIR:-/tmp}/tommos-portable-install.XXXXXX")"
         portable_env="${portable_root}/venv"
-        pixi run python -m venv "${portable_env}"
+        pixi run -e test python -m venv "${portable_env}"
         "${portable_env}/bin/python" -m pip install "${wheel_path}" pytest
         isolated_cwd="$(mktemp -d "${TMPDIR:-/tmp}/tommos-portable-cwd.XXXXXX")"
         cd "${isolated_cwd}"
-        unset PYTHONPATH MKLROOT LD_LIBRARY_PATH TOMMOS_NATIVE_LIBRARY MUMAG_LIB_OUT SLURM_JOB_ID
+        unset PYTHONPATH MKLROOT LD_LIBRARY_PATH
         TOMMOS_VERIFY_PORTABLE_INSTALL=1 \
           TOMMOS_WHEEL_PATH="${wheel_path}" \
           TOMMOS_CHECKOUT_PATH="${GITHUB_WORKSPACE}" \
@@ -49,9 +49,9 @@ jobs:
           "${GITHUB_WORKSPACE}/tests/test_wheel_install.py" \
           -k macos_wheel_is_portable_and_runs_outside_checkout
     - name: Run tests
-      run: pixi run test
+      run: pixi run -e test test
     - name: Run example
-      run: pixi run sample
+      run: pixi run -e sample sample
     # for later: standardised task names
     # - name: unit tests
     #   run: pixi run test-unittest

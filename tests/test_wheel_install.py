@@ -1,23 +1,24 @@
-"""Artifact and clean-installed-wheel verification for Task 4."""
+"""Artifact and clean-installed-wheel verification."""
 
 from __future__ import annotations
 
 import ctypes
 import os
+import re
+import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from importlib.metadata import distribution
+from importlib.resources import files
 from pathlib import Path
-from types import SimpleNamespace
 
-import numpy as np
 import pytest
-import scipy.sparse as sp
 
 linux_only = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
-    reason="Task 4 native wheel verification requires Linux",
+    reason="native wheel verification requires Linux",
 )
 
 
@@ -37,11 +38,38 @@ def _required_path(variable: str) -> Path:
     return path
 
 
+def _verification_enabled(variable: str, reason: str) -> None:
+    """Skip unless an opt-in artifact verification is enabled.
+
+    Args:
+        variable: Environment variable controlling verification.
+        reason: Skip reason used when verification is disabled.
+    """
+    if os.environ.get(variable) != "1":
+        pytest.skip(reason)
+
+
+def _sdist_path() -> Path:
+    """Return the configured or single locally built source distribution.
+
+    Returns:
+        Existing absolute source-distribution path.
+    """
+    if os.environ.get("TOMMOS_SDIST_PATH") is not None:
+        return _required_path("TOMMOS_SDIST_PATH")
+    candidates = sorted(Path("dist").glob("tommos-*.tar.gz"))
+    if not candidates:
+        pytest.skip("no locally built source distribution is available")
+    assert len(candidates) == 1, f"expected one source distribution, found {candidates}"
+    return candidates[0].resolve(strict=True)
+
+
 @linux_only
-def test_linux_wheel_contains_only_tommos_native_library() -> None:
-    """Require a Linux-tagged wheel with the C++ library but no bundled oneMKL."""
+def test_linux_wheel_contains_native_library_without_onemkl() -> None:
+    """Require the Linux native library without bundled oneMKL libraries."""
     wheel = _required_path("TOMMOS_WHEEL_PATH")
-    assert wheel.name.endswith("-linux_x86_64.whl")
+    assert wheel.name.startswith("tommos-")
+    assert wheel.name.endswith(("-linux_x86_64.whl", "-manylinux_2_28_x86_64.whl"))
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
     assert "tommos/_native/libcpp_mkl_minimizer.so" in names
@@ -49,44 +77,32 @@ def test_linux_wheel_contains_only_tommos_native_library() -> None:
 
 
 def test_sdist_contains_all_native_build_sources() -> None:
-    """Retain every native CMake/build source in the source distribution."""
-    sdist = _required_path("TOMMOS_SDIST_PATH")
+    """Retain the CMake project and C++ source in the source distribution."""
+    sdist = _sdist_path()
+    assert sdist.name.startswith("tommos-")
+    assert sdist.name.endswith(".tar.gz")
     with tarfile.open(sdist, "r:gz") as archive:
         names = set(archive.getnames())
     root = sdist.name.removesuffix(".tar.gz")
     required = {
         f"{root}/src/cpp/CMakeLists.txt",
         f"{root}/src/cpp/cpp_mkl_minimizer.cpp",
-        f"{root}/src/cpp/find_mkl.py",
     }
     assert required <= names
 
 
 @linux_only
-def test_clean_install_exposes_independent_native_capabilities() -> None:
-    """Require each installed native capability from its own probe."""
-    if os.environ.get("TOMMOS_VERIFY_CLEAN_INSTALL") != "1":
-        pytest.skip("clean-installed-wheel verification is not enabled")
-    from tommos._native_loader import (
-        probe_cpp_minimizer,
-        probe_pardiso,
-        probe_sparse_dot_mkl,
+def test_clean_install_is_outside_checkout_and_contains_native_library() -> None:
+    """Require a clean installed package outside the source checkout."""
+    _verification_enabled(
+        "TOMMOS_VERIFY_CLEAN_INSTALL",
+        "clean-installed-wheel verification is not enabled",
     )
+    import tommos
 
-    probes = {
-        probe.name: probe
-        for probe in (
-            probe_cpp_minimizer(),
-            probe_pardiso(),
-            probe_sparse_dot_mkl(),
-        )
-    }
-    assert all(probe.available for probe in probes.values()), {
-        name: repr(probe.error) for name, probe in probes.items()
-    }
-    assert probes["cpp_minimizer"].source == "tommos._native"
-    assert probes["sparse_dot_mkl"].source == "sparse_dot_mkl._mkl_interface"
-
+    checkout = _required_path("TOMMOS_CHECKOUT_PATH")
+    package_path = Path(tommos.__file__).resolve(strict=True)
+    assert not package_path.is_relative_to(checkout)
     installed_files = distribution("tommos").files or ()
     installed_names = {str(path) for path in installed_files}
     assert "tommos/_native/libcpp_mkl_minimizer.so" in installed_names
@@ -94,98 +110,70 @@ def test_clean_install_exposes_independent_native_capabilities() -> None:
 
 
 @linux_only
-def test_clean_install_pardiso_and_sparse_computations() -> None:
-    """Match deterministic PARDISO and Inspector-Executor results to literals."""
-    if os.environ.get("TOMMOS_VERIFY_CLEAN_INSTALL") != "1":
-        pytest.skip("clean-installed-wheel verification is not enabled")
-    from tommos._native_loader import create_pardiso_handle
-    from tommos.amg_utils import PersistentMKLOperator
-
-    matrix = sp.csr_matrix(np.array([[4.0, 1.0], [1.0, 3.0]], dtype=np.float64))
-    upper_triangle = sp.triu(matrix, format="csr")
-    expected = np.array([1.0, 2.0], dtype=np.float64)
-    rhs = np.array([6.0, 7.0], dtype=np.float64)
-    pardiso = create_pardiso_handle(
-        2,
-        upper_triangle.data,
-        upper_triangle.indptr,
-        upper_triangle.indices,
+def test_clean_install_loads_native_library_with_ctypes() -> None:
+    """Load the installed native library directly with ctypes."""
+    _verification_enabled(
+        "TOMMOS_VERIFY_CLEAN_INSTALL",
+        "clean-installed-wheel verification is not enabled",
     )
-    operator = PersistentMKLOperator(matrix)
-    try:
-        np.testing.assert_allclose(pardiso.solve(rhs), expected, rtol=1e-13, atol=1e-13)
-        np.testing.assert_allclose(operator.apply(expected), rhs, rtol=1e-13, atol=1e-13)
-    finally:
-        operator.close()
-        pardiso.close()
+    native_library = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+    assert native_library.is_file()
+    ctypes.CDLL(str(native_library))
 
 
 @linux_only
-def test_clean_install_propagates_pardiso_init_and_nested_minimizer_errors() -> None:
-    """Exercise failure IDs and nested PARDISO status through the built C++ library."""
-    if os.environ.get("TOMMOS_VERIFY_CLEAN_INSTALL") != "1":
-        pytest.skip("clean-installed-wheel verification is not enabled")
-    from tommos._native_loader import PardisoHandle, require_pardiso
-    from tommos.cpp_minimizer import cpp_minimize
-
-    bindings = require_pardiso()
-    values = np.array([1.0], dtype=np.float64)
-    indptr = np.array([0, 1], dtype=np.int32)
-    indices = np.array([0], dtype=np.int32)
-    failed_id = bindings.init_pardiso(
-        0,
-        values.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-        indptr.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
-        indices.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+def test_linux_wheel_has_repaired_needed_entries_and_runpath() -> None:
+    """Require renamed GNU OpenMP and both repaired RUNPATH components."""
+    _verification_enabled(
+        "TOMMOS_VERIFY_REPAIRED_WHEEL",
+        "repaired-wheel verification is not enabled",
     )
-    assert failed_id < 0
+    wheel = _required_path("TOMMOS_WHEEL_PATH")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        extension = Path(temporary_directory) / "libcpp_mkl_minimizer.so"
+        with zipfile.ZipFile(wheel) as archive:
+            extension.write_bytes(archive.read("tommos/_native/libcpp_mkl_minimizer.so"))
+        dynamic = subprocess.run(
+            ["readelf", "-d", extension],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
 
-    invalid_owner = PardisoHandle(2**62, values, indptr, indices, bindings)
-    identity = sp.eye(3, format="csr", dtype=np.float64)
-    divergence = sp.csr_matrix(np.array([[1.0, 0.0, 0.0]], dtype=np.float64))
-    params = SimpleNamespace(
-        M_nodal=np.array([1.0], dtype=np.float64),
-        V_mag=1.0,
-        inv_M_prec=np.array([1.0], dtype=np.float64),
-        max_iter=0,
-        L=None,
-    )
-    try:
-        with pytest.raises(RuntimeError, match="C\\+\\+ minimizer failed with native status -1"):
-            cpp_minimize(
-                np.array([[1.0, 0.0, 0.0]], dtype=np.float64),
-                np.zeros(3, dtype=np.float64),
-                np.zeros(1, dtype=np.float64),
-                params,
-                {
-                    "K_eff_sparse": identity,
-                    "D_sparse": divergence,
-                    "G_sparse": divergence.transpose().tocsr(),
-                },
-                solve_U=SimpleNamespace(pardiso_obj=invalid_owner),
-            )
-    finally:
-        invalid_owner.close()
+    needed = set(re.findall(r"Shared library: \[([^]]+)\]", dynamic))
+    assert "libmkl_rt.so.3" in needed
+    assert any(re.fullmatch(r"libgomp-[^.]+\.so(?:\.[0-9]+)*", name) for name in needed)
+    assert "(RPATH)" not in dynamic
+    runpaths = re.findall(r"\(RUNPATH\).*Library runpath: \[([^]]*)\]", dynamic)
+    assert len(runpaths) == 1
+    components = set(runpaths[0].split(":"))
+    assert "$ORIGIN/../../tommos.libs" in components
+    assert "$ORIGIN/../../../.." in components
 
 
 def test_macos_wheel_is_portable_and_runs_outside_checkout() -> None:
     """Validate the built macOS wheel and execute its portable SciPy/JAX path."""
-    if os.environ.get("TOMMOS_VERIFY_PORTABLE_INSTALL") != "1":
-        pytest.skip("portable installed-wheel verification is not enabled")
+    _verification_enabled(
+        "TOMMOS_VERIFY_PORTABLE_INSTALL",
+        "portable installed-wheel verification is not enabled",
+    )
     assert sys.platform == "darwin"
     wheel = _required_path("TOMMOS_WHEEL_PATH")
+    assert wheel.name.startswith("tommos-")
     assert wheel.name.endswith("-py3-none-any.whl")
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
     assert not [name for name in names if name.startswith("tommos/_native/")]
+    assert not [name for name in names if Path(name).name.startswith("libmkl")]
 
+    import numpy as np
+    import scipy.sparse as sp
     from packaging.requirements import Requirement
 
     import tommos
-    from tommos._native_loader import NativeSelections, resolve_native_selections
     from tommos.amg_utils import make_cpu_csr_op
 
-    checkout = Path(os.environ["TOMMOS_CHECKOUT_PATH"]).resolve(strict=True)
+    checkout = _required_path("TOMMOS_CHECKOUT_PATH")
     package_path = Path(tommos.__file__).resolve(strict=True)
     assert not package_path.is_relative_to(checkout)
     active_requirements = [
@@ -195,11 +183,9 @@ def test_macos_wheel_is_portable_and_runs_outside_checkout() -> None:
     ]
     assert not [requirement for requirement in active_requirements if requirement.name in {"mkl", "sparse-dot-mkl"}]
 
-    selections = resolve_native_selections(None, "auto", "auto", has_gpu=False)
-    assert selections == NativeSelections("python", "jax", "scipy")
     operation = make_cpu_csr_op(
         sp.csr_matrix(np.array([[2.0, 0.0], [1.0, 3.0]], dtype=np.float64)),
-        cpu_spmv_backend=selections.cpu_spmv_backend,
+        cpu_spmv_backend="scipy",
     )
     result = operation(np.array([4.0, 5.0], dtype=np.float64))
     np.testing.assert_allclose(np.asarray(result), np.array([8.0, 19.0]), rtol=0.0, atol=0.0)

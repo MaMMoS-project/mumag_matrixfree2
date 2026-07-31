@@ -9,32 +9,31 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(MKL_LINK "sdl")
-set(MKL_INTERFACE "lp64")
-set(MKL_THREADING "gnu_thread")
-
 find_package(Python REQUIRED COMPONENTS Interpreter)
 execute_process(
-    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/find_mkl.py" --cmake-dir
-    RESULT_VARIABLE MKL_DISCOVERY_RESULT
-    OUTPUT_VARIABLE MKL_CMAKE_DIR
-    ERROR_VARIABLE MKL_DISCOVERY_ERROR
+    COMMAND "${Python_EXECUTABLE}" -c "import sys; print(sys.prefix)"
+    RESULT_VARIABLE PYTHON_PREFIX_RESULT
+    OUTPUT_VARIABLE PYTHON_PREFIX
+    ERROR_VARIABLE PYTHON_PREFIX_ERROR
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-if(NOT MKL_DISCOVERY_RESULT EQUAL 0)
-    message(FATAL_ERROR "Could not locate distribution-owned oneMKL CMake metadata: ${MKL_DISCOVERY_ERROR}")
+if(NOT PYTHON_PREFIX_RESULT EQUAL 0 OR PYTHON_PREFIX STREQUAL "")
+    message(FATAL_ERROR "Could not obtain the build Python prefix: ${PYTHON_PREFIX_ERROR}")
 endif()
-get_filename_component(MKL_ROOT_FROM_METADATA "${MKL_CMAKE_DIR}/../../.." ABSOLUTE)
-set(MKL_ROOT "${MKL_ROOT_FROM_METADATA}" CACHE PATH
-    "oneMKL root derived from mkl-devel distribution metadata" FORCE)
 
-find_package(MKL CONFIG REQUIRED PATHS "${MKL_CMAKE_DIR}" NO_DEFAULT_PATH)
+set(MKL_ROOT "${PYTHON_PREFIX}" CACHE PATH
+    "oneMKL root in the build Python prefix" FORCE)
+set(MKL_DIR "${PYTHON_PREFIX}/lib/cmake/mkl" CACHE PATH
+    "oneMKL CMake configuration in the build Python prefix" FORCE)
+set(MKL_LINK "sdl")
+set(MKL_INTERFACE "lp64")
+
+find_package(MKL CONFIG REQUIRED NO_DEFAULT_PATH)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 add_library(cpp_mkl_minimizer SHARED cpp_mkl_minimizer.cpp)
-target_include_directories(cpp_mkl_minimizer PRIVATE ${MKL_INCLUDE})
+target_include_directories(cpp_mkl_minimizer PRIVATE "${MKL_INCLUDE}")
 target_compile_options(cpp_mkl_minimizer PRIVATE -O3)
-target_link_options(cpp_mkl_minimizer PRIVATE "LINKER:--enable-new-dtags")
 target_link_libraries(cpp_mkl_minimizer PRIVATE
     MKL::mkl_rt
     OpenMP::OpenMP_CXX
@@ -45,7 +44,6 @@ set_target_properties(cpp_mkl_minimizer PROPERTIES
     OUTPUT_NAME "cpp_mkl_minimizer"
     SKIP_BUILD_RPATH TRUE
     INSTALL_RPATH_USE_LINK_PATH FALSE
-    INSTALL_REMOVE_ENVIRONMENT_RPATH TRUE
     INSTALL_RPATH "$ORIGIN/../../../.."
 )
 

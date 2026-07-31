@@ -300,11 +300,10 @@ must not be published as generally usable native wheels until Stage 2C passes.
 
 ### 6.4 Stage 2C: Native-wheel delivery
 
-Produce a reviewable Linux x86-64 native wheel that declares
-platform-conditioned runtime dependencies on Intel's `mkl` wheel and
-`sparse-dot-mkl`. Retaining a CI artifact does not authorize publication. Do
-not copy oneMKL libraries into the `tommos` wheel, statically link oneMKL, or
-add an external-runtime mode. Intel documents distinct `mkl`, `mkl-devel`, and
+Publish a Linux x86-64 native wheel that declares platform-conditioned runtime
+dependencies on Intel's `mkl` wheel and `sparse-dot-mkl`. Do not copy oneMKL
+libraries into the `tommos` wheel, statically link oneMKL, or add an
+external-runtime mode. Intel documents distinct `mkl`, `mkl-devel`, and
 `mkl-include` PyPI packages:
 [Intel oneMKL installation options](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-download.html).
 
@@ -329,31 +328,6 @@ environment without `MKLROOT` or `LD_LIBRARY_PATH`.
 Use `cibuildwheel` or an equivalently reviewed pipeline only after the
 PyPI-oneMKL loading mechanism and CPU baseline are reviewed:
 [official cibuildwheel documentation](https://github.com/pypa/cibuildwheel).
-
-The reviewed pipeline uses `cibuildwheel` 4.1.1 and explicitly selects Linux
-x86-64 CPython 3.11, 3.12, 3.13, and 3.14 builds in the
-`manylinux_2_28` image. Its Linux repair command excludes only
-`libmkl_rt.so.3`; `auditwheel` remains responsible for grafting non-policy
-compiler runtimes such as `libgomp`. After `auditwheel` repairs the wheel, the
-reviewed helper unpacks it, restores the distribution-owned oneMKL route with
-`patchelf --add-rpath '$ORIGIN/../../../..' --force-rpath`, and repacks it with
-`wheel` so that `RECORD` is regenerated for the modified ELF object. The final
-extension must have the exact RPATH
-`$ORIGIN/../../tommos.libs:$ORIGIN/../../../..`: the first route resolves the
-grafted compiler runtime, and the second resolves the versioned PyPI oneMKL
-runtime installed in the environment's `lib` directory. The extension retains
-its `libmkl_rt.so.3` dependency without bundling oneMKL.
-[cibuildwheel repair options](https://cibuildwheel.pypa.io/en/latest/options/#repair-wheel-command)
-and the [auditwheel project](https://github.com/pypa/auditwheel) document the
-repair mechanisms used by this policy.
-
-Wheel tests run from cibuildwheel's copied test directory rather than the
-checkout, with `MKLROOT`, `LD_LIBRARY_PATH`, `PYTHONPATH`, and native-library
-overrides unset. They require packaged-library provenance, ABI validation,
-independent C++ minimizer/PARDISO/sparse-wrapper capabilities, deterministic
-native computations, no bundled oneMKL, and successful loading of the grafted
-runtime. The workflow uploads the repaired wheels as 30-day review artifacts
-and contains no package-index publication step.
 
 ## 7. Stage 3: Replace Pixi Responsibilities and Remove `pixi.toml`
 
@@ -491,38 +465,6 @@ Linux repair requires an explicit check because `auditwheel` documents that
 dependencies reached through runtime `ctypes`/`dlopen` loading can escape
 static detection:
 [auditwheel limitations](https://pypi.org/project/auditwheel/).
-
-Local Linux verification on 2026-07-29 established the pre-CI baseline:
-
-- an isolated system-GCC build produced
-  `tommos-0.1.0-py3-none-linux_x86_64.whl` and the corresponding source
-  distribution with no host-specific compiler flags;
-- the native wheel contained
-  `tommos/_native/libcpp_mkl_minimizer.so`, no `libmkl*.so*`, a
-  `libmkl_rt.so.3` NEEDED entry, and the pre-repair
-  `$ORIGIN/../../../..` RUNPATH;
-- an installation outside the checkout, with `MKLROOT`,
-  `LD_LIBRARY_PATH`, `CONDA_PREFIX`, and `PYTHONPATH` unset, reported
-  `4 passed` for the installed-wheel harness and `1 passed` for the
-  deterministic C++ minimizer test; and
-- an `auditwheel` 6.7.0 preflight excluded `libmkl_rt.so.3`, grafted
-  `libgomp`, and replaced the extension RUNPATH with an
-  `$ORIGIN/../../tommos.libs` RPATH. That graft-only artifact was diagnostic,
-  not the final wheel policy; and
-- in the retained `manylinux_2_28` build root, the reviewed repair helper
-  produced a target-tagged wheel with the exact RPATH
-  `$ORIGIN/../../tommos.libs:$ORIGIN/../../../..` and a regenerated `RECORD`.
-  Installation outside the checkout under `env -i` passed the installed
-  capability/computation tests and the deterministic C++ minimizer test.
-
-The retained host-built wheel uses glibc 2.34 symbols and therefore cannot be
-relabeled as `manylinux_2_28`; the target wheel was instead built and repaired
-inside the retained manylinux root. A raw chroot invocation that omitted normal
-container resources was rejected as negative runtime evidence because
-`/proc/self/exe` was unavailable; a control invocation with the required
-runtime resources advanced through the native PARDISO computation. These are
-local verification results only. No remote GitHub Actions run or PyPI upload is
-claimed.
 
 ### 8.5 Stage 3
 
