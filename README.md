@@ -258,7 +258,7 @@ state = hyst_cube/state_cfg00003_B-1.0000e+00T.vtu
 ```
 
 ```bash
-pixi run python -m tommos.loop cube --ini hyst_cube/state_cfg00003_B-1.0000e+00T.vtu
+pixi run tommos loop cube --ini hyst_cube/state_cfg00003_B-1.0000e+00T.vtu
 ```
 
 Relative VTU paths in `.p2` files are resolved relative to the `.p2` file. The snapshot must contain exactly the same
