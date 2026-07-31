@@ -5,9 +5,7 @@ from importlib.resources import files
 
 import numpy as np
 
-library_path = files("tommos").joinpath(
-    "_native", "libcpp_mkl_minimizer.so"
-)
+library_path = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
 
 if not library_path.is_file():
     lib = None

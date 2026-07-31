@@ -790,9 +790,7 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
     import ctypes
 
-    library_path = files("tommos").joinpath(
-        "_native", "libcpp_mkl_minimizer.so"
-    )
+    library_path = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
 
     if not library_path.is_file():
         raise ImportError(f"libcpp_mkl_minimizer.so was not found at {library_path}. Please compile it.")
