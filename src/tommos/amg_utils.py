@@ -4,9 +4,9 @@ Utilities for Algebraic Multigrid (AMG) setup using PyAMG.
 Assembles the Poisson matrix on CPU and prepares the hierarchy for JAX.
 """
 
-import os
 from collections.abc import Callable
 from functools import partial
+from importlib.resources import files
 from typing import Any
 
 import jax
@@ -203,19 +203,16 @@ class PersistentMKLOperator:
     def __init__(self, scipy_csr_mat: sp.csr_matrix):
         """Initialize persistent MKL operator."""
         import ctypes
-        import ctypes.util
 
         from sparse_dot_mkl._mkl_interface import MKL, _create_mkl_sparse, _output_dtypes, matrix_descr
+        from sparse_dot_mkl._mkl_interface._cfunctions import mkl_library_name
 
         self.scipy_csr_mat = scipy_csr_mat  # IMPORTANT: Keep reference to prevent GC of underlying arrays!
         self.shape = scipy_csr_mat.shape
         self.dtype = scipy_csr_mat.dtype
 
         # 1. Load MKL directly to access the Inspector-Executor functions
-        mkl_lib_path = ctypes.util.find_library("mkl_rt")
-        if not mkl_lib_path:
-            mkl_lib_path = "libmkl_rt.so"
-        self.libmkl = ctypes.cdll.LoadLibrary(mkl_lib_path)
+        self.libmkl = ctypes.CDLL(mkl_library_name())
         self.libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]
         self.libmkl.mkl_sparse_optimize.restype = ctypes.c_int
 
@@ -793,24 +790,11 @@ def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:
     """Create a JAX linear solver using MKL PARDISO FFI."""
     import ctypes
 
-    lib_path = None
-    slurm_job_id = os.environ.get("SLURM_JOB_ID")
-    if slurm_job_id:
-        local_lib = f"/tmp/mumag_build_{slurm_job_id}/libcpp_mkl_minimizer.so"
-        if os.path.exists(local_lib):
-            lib_path = local_lib
+    library_path = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
 
-    if not lib_path and "MUMAG_LIB_OUT" in os.environ:
-        env_lib = os.path.join(os.environ["MUMAG_LIB_OUT"], "libcpp_mkl_minimizer.so")
-        if os.path.exists(env_lib):
-            lib_path = env_lib
-
-    if not lib_path:
-        lib_path = os.path.join(os.path.dirname(__file__), "../../lib/libcpp_mkl_minimizer.so")
-
-    if not os.path.exists(lib_path):
-        raise ImportError(f"libcpp_mkl_minimizer.so was not found at {lib_path}. Please compile it.")
-    ffi_lib = ctypes.CDLL(lib_path)
+    if not library_path.is_file():
+        raise ImportError(f"libcpp_mkl_minimizer.so was not found at {library_path}. Please compile it.")
+    ffi_lib = ctypes.CDLL(str(library_path))
 
     ffi_lib.init_pardiso.argtypes = [
         ctypes.c_int,

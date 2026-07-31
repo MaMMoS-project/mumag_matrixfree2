@@ -1,6 +1,8 @@
 # ruff: noqa: E402
 import os
 import sys
+from importlib.resources import files
+from pathlib import Path
 
 import pytest
 
@@ -197,8 +199,8 @@ def test_compare():
     # C++ Energy & Grad
     import ctypes
 
-    lib_path = os.path.join(os.path.dirname(__file__), "../lib/libcpp_mkl_minimizer.so")
-    lib = ctypes.CDLL(lib_path)
+    lib_path = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+    lib = ctypes.CDLL(str(lib_path))
 
     # Let's call evaluate_energy_and_grad using ctypes
     lib.evaluate_energy_and_grad.argtypes = [
@@ -216,7 +218,7 @@ def test_compare():
     lib.evaluate_energy_and_grad.restype = None
 
     # Recreate handles directly in our script to be safe
-    mkl_lib = ctypes.CDLL("libmkl_rt.so")
+    mkl_lib = ctypes.CDLL(str(Path(sys.prefix) / "lib" / "libmkl_rt.so.3"))
     mkl_lib.mkl_sparse_d_create_csr.argtypes = [
         ctypes.POINTER(ctypes.c_void_p),
         ctypes.c_int,

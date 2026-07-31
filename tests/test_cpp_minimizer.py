@@ -1,6 +1,8 @@
 # ruff: noqa: E402
+import ctypes
 import os
 import sys
+from importlib.resources import files
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +21,20 @@ from tommos.amg_utils import (
 from tommos.cpp_minimizer import cpp_minimize
 from tommos.fem_utils import TetGeom, compute_node_volumes
 from tommos.hysteresis_loop import LoopParams
-from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+from tommos.loop import _native_mkl_available, compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+
+
+def test_native_library_is_installed_as_package_resource() -> None:
+    """Load the installed native library through the package resource."""
+    native_library = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+
+    assert native_library.is_file()
+    ctypes.CDLL(str(native_library))
+
+
+def test_native_mkl_is_available_for_dynamic_defaults() -> None:
+    """Recognize the installed native backend without assuming an MKL SONAME."""
+    assert _native_mkl_available()
 
 
 def test():

@@ -21,7 +21,9 @@ License: MIT
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,16 @@ _GRAD_HAT = np.array(
     ],
     dtype=np.float64,
 )
+
+
+def _native_mkl_available() -> bool:
+    """Return whether the packaged MKL-dependent native backend can be loaded."""
+    native_library = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+    try:
+        ctypes.CDLL(str(native_library))
+    except OSError:
+        return False
+    return True
 
 
 def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -748,13 +760,7 @@ def main() -> None:
     except Exception:
         has_gpu = False
 
-    try:
-        import ctypes
-
-        ctypes.CDLL("libmkl_rt.so")
-        has_mkl = True
-    except OSError:
-        has_mkl = False
+    has_mkl = _native_mkl_available()
 
     if args.cpp_mkl is None:
         args.cpp_mkl = not has_gpu and has_mkl

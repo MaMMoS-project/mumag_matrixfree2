@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 import ctypes
-import ctypes.util
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -20,11 +20,7 @@ from sparse_dot_mkl._mkl_interface import (
     matrix_descr,
 )
 
-mkl_lib_path = ctypes.util.find_library("mkl_rt")
-if not mkl_lib_path:
-    # Try direct load if in LD_LIBRARY_PATH or conda env
-    mkl_lib_path = "libmkl_rt.so"
-libmkl = ctypes.cdll.LoadLibrary(mkl_lib_path)
+libmkl = ctypes.CDLL(str(Path(sys.prefix) / "lib" / "libmkl_rt.so.3"))
 
 # Bind mkl_sparse_optimize
 libmkl.mkl_sparse_optimize.argtypes = [ctypes.c_void_p]

@@ -4,7 +4,9 @@ MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **J
 
 ## 1. Prerequisites and Installation
 
-The project uses **Pixi** for cross-platform dependency management, environment isolation, and automated C++ compilation.
+The project uses **Pixi** for cross-platform dependency management and
+development tasks. Linux x86-64 installs the native oneMKL backend; macOS uses
+portable paths.
 
 ### Prerequisites
 1. **Pixi**: Install Pixi if you haven't already:
@@ -14,14 +16,28 @@ The project uses **Pixi** for cross-platform dependency management, environment 
 2. **GPU Drivers** (Optional): If running on an NVIDIA GPU, ensure you have appropriate NVIDIA drivers installed. The CUDA toolkit is managed directly by Pixi.
 
 ### Installation
-Clone the repository and let Pixi handle everything. The environments will automatically build themselves upon first execution.
+Clone the repository and install the development environments:
+
 ```bash
 git clone git@github.com:MaMMoS-project/mumag_matrixfree2.git
 cd mumag_matrixfree2
+pixi install
 ```
-*Note: For Linux users running on CPU, Pixi will automatically compile the highly optimized `libcpp_mkl_minimizer.so` shared libraries using the Intel MKL in the background when the environment activates.*
 
-*Note for Mac Users (Apple Silicon / ARM64): Intel MKL is not available on Mac. You must bypass the MKL backends by appending `--cpu-spmv-backend scipy --no-cpp-mkl` to your `python -m tommos.loop` simulation commands.*
+Run the development tasks with:
+
+```bash
+pixi run test
+pixi run lint
+pixi run build-package
+```
+
+After C++, CMake, dependency-metadata, or package-file changes, reinstall the
+editable package in the test environment:
+
+```bash
+pixi reinstall -e test tommos
+```
 
 ## 2. How to Run the Software Locally
 
@@ -46,16 +62,27 @@ pixi run -e cuda python -m tommos.loop <modelname> [options]
 
 ## 3. How to Submit Jobs with Slurm
 
+Prepare or rebuild the CPU environment before submitting jobs:
+
+```bash
+pixi install -e cpu
+pixi reinstall -e cpu tommos
+```
+
+Jobs that share this environment should treat it as read-only and run the
+installed package; they should not reinstall it concurrently. See the
+[Slurm transition guide](docs/slurm.md) for the former per-job native build
+behavior and optional JAX compilation-cache configuration.
+
 ### Slurm Pipeline Examples
 
 Below are complete end-to-end Slurm pipeline examples. These scripts automatically handle the execution and performance environment tuning for different hardware profiles. You can save these as `.slurm` files in your simulation directory and submit them using `sbatch`.
 
 **1. `test_cpu.slurm`** (High-Performance CPU)
-- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node). Sets critical thread pinning (OpenMP) environment variables to guarantee optimal bare-metal CPU performance (MKL variables are now securely handled automatically in Python).
-- **Workflow**: 
-  - Triggers a secure, isolated local compilation of the C++ MKL backend directly into `/tmp/` to avoid network filesystem race conditions.
-  - Runs the demagnetization simulation using the generated cubic mesh.
-  - Safely deletes the `/tmp/` build artifacts upon completion to leave the node clean.
+- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node)
+  and configures OpenMP thread placement.
+- **Workflow**: Runs the demagnetization simulation with the native backend
+  already installed in the shared Pixi environment.
 
 ```bash
 #!/bin/bash
@@ -81,20 +108,14 @@ export OMP_PLACES=cores
 # Keep threads awake between rapid matrix multiplications to avoid sleep/wake latency
 export OMP_WAIT_POLICY=ACTIVE
 
-# compile the C++ library
-pixi run compile
-
 echo "========================="
 echo "=== Running minimizer ==="
 echo "========================="
-pixi run python -m tommos.loop cube \
+pixi run -e cpu python -m tommos.loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_cpu \
     --benchmark \
     --verbose || echo "=== WARNING: minimizer failed! ==="
-
-# clean tmp
-rm -rf /tmp/mumag_build_${SLURM_JOB_ID}
 
 echo "=== JAX simulation finished ==="
 ```
