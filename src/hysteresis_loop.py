@@ -233,8 +233,8 @@ def run_hysteresis_loop(  # noqa: D417
     m0: np.ndarray,
     params: LoopParams,
     V_mag: float,
-    node_volumes: jnp.ndarray,
     M_nodal: jnp.ndarray,
+    V_mag_nodal: jnp.ndarray,
     B_bias: np.ndarray | None = None,
     precond_type: str = "jacobi",
     order: int = 3,
@@ -267,8 +267,8 @@ def run_hysteresis_loop(  # noqa: D417
         m0 (np.ndarray): Initial magnetization vector.
         params (LoopParams): sweep and solver settings.
         V_mag (float): Magnetic volume.
-        node_volumes (Array): Nodal volume vector.
         M_nodal (Array): Nodal magnetic moment scaling.
+        V_mag_nodal (Array): Pure magnetic nodal geometric volume.
         B_bias (np.ndarray | None): Bias field.
         precond_type (str): Preconditioning strategy.
         order (int): Chebyshev preconditioner order.
@@ -342,9 +342,8 @@ def run_hysteresis_loop(  # noqa: D417
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
         Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
-        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        k_easy_lookup=k_easy_lookup,
         V_mag=V_mag,
-        node_volumes=node_volumes,
         M_nodal=M_nodal,
         solve_U=solve_U,
         cg_tol=params.cg_tol,
@@ -516,23 +515,18 @@ def run_hysteresis_loop(  # noqa: D417
         total_evals += info.get("evals", info.get("nf", 0))
         total_demag_iters += info.get("demag_iters", info.get("icg", 0))
 
-        # Compute volume averages on CPU
-        m_cpu = np.asarray(m)
-        Jpar = cpu_compute_volume_averaged_J_parallel(
-            m_cpu,
-            np.asarray(geom.conn),
-            np.asarray(geom.volume),
-            np.asarray(geom.mat_id),
-            np.asarray(Js_lookup),
-            np.asarray(h),
-        )
-        m_avg = cpu_compute_volume_averaged_m(
-            m_cpu,
-            np.asarray(geom.conn),
-            np.asarray(geom.volume),
-            np.asarray(geom.mat_id),
-            np.asarray(Js_lookup)
-        )
+        # Compute volume averages instantly on GPU (JAX)
+        J_avg_gpu = jnp.sum(m * M_nodal[:, None], axis=0) / V_mag
+        J_avg = np.array(J_avg_gpu)
+        
+        h_dir = np.asarray(h)
+        h_unit = h_dir / (np.linalg.norm(h_dir) + 1e-30)
+        Jpar = float(np.dot(J_avg, h_unit))
+
+        # mx, my, mz are the simple volume-averaged components of m.
+        # We use V_mag_nodal which strictly excludes air elements (like the original CPU code).
+        m_avg_gpu = jnp.sum(m * V_mag_nodal[:, None], axis=0) / jnp.sum(V_mag_nodal)
+        m_avg = np.array(m_avg_gpu)
 
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref

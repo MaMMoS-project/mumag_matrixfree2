@@ -851,7 +851,6 @@ def make_minimizer(
     Js_lookup,
     k_easy_lookup,
     V_mag,
-    node_volumes,
     M_nodal,
     solve_U,
     cg_tol,

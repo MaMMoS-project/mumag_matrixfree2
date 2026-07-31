@@ -136,7 +136,6 @@ def test():
         Js_lookup=jnp.asarray(Js_red, dtype=jnp.float64),
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
         V_mag=V_mag,
-        node_volumes=node_vols,
         M_nodal=M_nodal,
         solve_U=solve_U,
         cg_tol=1e-8,
