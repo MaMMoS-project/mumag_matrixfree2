@@ -179,7 +179,8 @@ def pad_scipy_csr(mat: sp.csr_matrix, num_devices: int, pad_rows: bool = True, p
 class DistributedCSR:
     """A distributed CSR sparse matrix for multi-GPU support using JAX.
 
-    Provides a uniform API for both single and multi-GPU matrix-vector multiplication.
+    Provides a uniform API for both single and multi-GPU matrix-vector multiplication
+    with optimized Halo Exchange via jax.lax.all_to_all.
     """
 
     def __init__(
@@ -189,6 +190,11 @@ class DistributedCSR:
         indptr: jnp.ndarray,
         shape: tuple[int, int],
         mesh: jax.sharding.Mesh | None = None,
+        send_indices: jnp.ndarray | None = None,
+        unpack_src: jnp.ndarray | None = None,
+        unpack_k: jnp.ndarray | None = None,
+        max_ghosts_per_pair: int = 0,
+        max_total_ghosts: int = 0,
     ):
         """Initialize the DistributedCSR sparse matrix.
 
@@ -198,23 +204,40 @@ class DistributedCSR:
             indptr (jnp.ndarray): Row pointers.
             shape (tuple[int, int]): Shape of the sparse matrix.
             mesh (jax.sharding.Mesh | None, optional): Target sharding mesh. Defaults to None.
+            send_indices (jnp.ndarray | None, optional): Sharded routing send indices for Halo Exchange.
+            unpack_src (jnp.ndarray | None, optional): Sharded routing unpack src indices.
+            unpack_k (jnp.ndarray | None, optional): Sharded routing unpack k indices.
+            max_ghosts_per_pair (int): Max ghost cells per device pair.
+            max_total_ghosts (int): Max total ghost cells per device.
         """
         self.data = data
         self.indices = indices
         self.indptr = indptr
         self.shape = shape
         self.mesh = mesh
+        self.send_indices = send_indices
+        self.unpack_src = unpack_src
+        self.unpack_k = unpack_k
+        self.max_ghosts_per_pair = max_ghosts_per_pair
+        self.max_total_ghosts = max_total_ghosts
 
     def tree_flatten(self):
         """Flatten the DistributedCSR for JAX."""
-        return ((self.data, self.indices, self.indptr), (self.shape, self.mesh))
+        return (
+            (self.data, self.indices, self.indptr, self.send_indices, self.unpack_src, self.unpack_k),
+            (self.shape, self.mesh, self.max_ghosts_per_pair, self.max_total_ghosts),
+        )
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         """Unflatten the DistributedCSR for JAX."""
-        shape, mesh = aux_data
-        data, indices, indptr = children
-        return cls(data, indices, indptr, shape, mesh)
+        shape, mesh, max_ghosts_per_pair, max_total_ghosts = aux_data
+        data, indices, indptr, send_indices, unpack_src, unpack_k = children
+        return cls(
+            data, indices, indptr, shape, mesh,
+            send_indices, unpack_src, unpack_k,
+            max_ghosts_per_pair, max_total_ghosts
+        )
 
     @classmethod
     def from_scipy(cls, scipy_mat: sp.csr_matrix, mesh: jax.sharding.Mesh | None = None, device=None) -> "DistributedCSR":
@@ -250,17 +273,65 @@ class DistributedCSR:
                 mesh=None,
             )
 
-        # Multi GPU Path: Explicit Sharding
+        # Multi GPU Path: Explicit Sharding & Halo Exchange Setup
         num_devices = mesh.shape["devices"]
         n_rows = scipy_mat.shape[0]
         if n_rows % num_devices != 0:
             raise ValueError(f"Rows ({n_rows}) must be divisible by number of devices ({num_devices})")
         rows_per_block = n_rows // num_devices
 
-        # Split matrix row-wise and find max_nnz
+        # Split matrix row-wise
         blocks = [scipy_mat[i * rows_per_block : (i + 1) * rows_per_block, :] for i in range(num_devices)]
+
+        # 1. Analyze ghost cells for each block
+        unique_ghosts_list = []
+        n_ghosts_list = []
+        for i, block in enumerate(blocks):
+            cols = block.indices
+            is_local = (cols >= i * rows_per_block) & (cols < (i + 1) * rows_per_block)
+            ghost_cols = cols[~is_local]
+            u_ghosts = np.unique(ghost_cols)
+            unique_ghosts_list.append(u_ghosts)
+            n_ghosts_list.append(len(u_ghosts))
+
+        max_total_ghosts = max(n_ghosts_list) if len(n_ghosts_list) > 0 else 0
+
+        # 2. Build pairwise request table: req_table[dest][src] = local indices on src requested by dest
+        req_table = [[[] for _ in range(num_devices)] for _ in range(num_devices)]
+        for dest in range(num_devices):
+            for g in unique_ghosts_list[dest]:
+                src = int(g // rows_per_block)
+                local_offset = int(g % rows_per_block)
+                req_table[dest][src].append(local_offset)
+
+        max_ghosts_per_pair = 0
+        for dest in range(num_devices):
+            for src in range(num_devices):
+                max_ghosts_per_pair = max(max_ghosts_per_pair, len(req_table[dest][src]))
+
+        # Build send_indices_all: shape (num_devices, num_devices, max_ghosts_per_pair)
+        send_indices_all = np.zeros((num_devices, num_devices, max_ghosts_per_pair), dtype=np.int32)
+        for dest in range(num_devices):
+            for src in range(num_devices):
+                reqs = req_table[dest][src]
+                if len(reqs) > 0:
+                    send_indices_all[src, dest, : len(reqs)] = reqs
+
+        # Build unpack_src_all and unpack_k_all: shape (num_devices, max_total_ghosts)
+        unpack_src_all = np.zeros((num_devices, max_total_ghosts), dtype=np.int32)
+        unpack_k_all = np.zeros((num_devices, max_total_ghosts), dtype=np.int32)
+
+        for dest in range(num_devices):
+            pair_counter = [0] * num_devices
+            for idx, g in enumerate(unique_ghosts_list[dest]):
+                src = int(g // rows_per_block)
+                k_pos = pair_counter[src]
+                pair_counter[src] += 1
+                unpack_src_all[dest, idx] = src
+                unpack_k_all[dest, idx] = k_pos
+
+        # 3. Remap CSR column indices for each block
         max_nnz = max(block.nnz for block in blocks)
-        
         if max_nnz > CUSPARSE_NNZ_LIMIT:
             logging.warning(
                 f"\n================================================================================\n"
@@ -272,27 +343,50 @@ class DistributedCSR:
                 f"================================================================================\n"
             )
 
-        # Pad blocks to max_nnz
         data_list, indices_list, indptr_list = [], [], []
-        for block in blocks:
+        for i, block in enumerate(blocks):
+            cols = block.indices.copy()
+            is_local = (cols >= i * rows_per_block) & (cols < (i + 1) * rows_per_block)
+            
+            new_cols = np.empty_like(cols)
+            new_cols[is_local] = cols[is_local] - i * rows_per_block
+
+            ghost_mask = ~is_local
+            if np.any(ghost_mask):
+                ghost_cols = cols[ghost_mask]
+                pos_in_unique = np.searchsorted(unique_ghosts_list[i], ghost_cols)
+                new_cols[ghost_mask] = rows_per_block + pos_in_unique
+
             pad_len = max_nnz - block.nnz
             data_padded = np.pad(block.data, (0, pad_len))
-            indices_padded = np.pad(block.indices, (0, pad_len))
+            indices_padded = np.pad(new_cols, (0, pad_len))
 
             data_list.append(data_padded)
             indices_list.append(indices_padded)
             indptr_list.append(block.indptr)
 
-        # Explicitly shard across the mesh
+        # 4. Explicitly shard across the mesh
         P = jax.sharding.PartitionSpec("devices")
         sharding = jax.sharding.NamedSharding(mesh, P)
 
-        # Directly device_put NumPy arrays to avoid allocating the full array on GPU 0
         data_sharded = jax.device_put(np.concatenate(data_list), sharding)
         indices_sharded = jax.device_put(np.concatenate(indices_list), sharding)
         indptr_sharded = jax.device_put(np.concatenate(indptr_list), sharding)
 
-        return cls(data_sharded, indices_sharded, indptr_sharded, scipy_mat.shape, mesh)
+        send_indices_flat = send_indices_all.reshape(num_devices, -1)
+        send_indices_sharded = jax.device_put(send_indices_flat, sharding)
+
+        unpack_src_sharded = jax.device_put(unpack_src_all, sharding)
+        unpack_k_sharded = jax.device_put(unpack_k_all, sharding)
+
+        return cls(
+            data_sharded, indices_sharded, indptr_sharded, scipy_mat.shape, mesh,
+            send_indices=send_indices_sharded,
+            unpack_src=unpack_src_sharded,
+            unpack_k=unpack_k_sharded,
+            max_ghosts_per_pair=max_ghosts_per_pair,
+            max_total_ghosts=max_total_ghosts,
+        )
 
     def dot(self, x: jnp.ndarray) -> jnp.ndarray:
         """Matrix-vector multiplication.
@@ -321,24 +415,51 @@ class DistributedCSR:
             csr = sparse.CSR((self.data, self.indices, self.indptr), shape=self.shape)
             return csr @ x
 
-        # Multi GPU Path
+        # Multi GPU Path: Halo Exchange via jax.lax.all_to_all
         from jax import shard_map
 
         P = jax.sharding.PartitionSpec("devices")
+        num_devices = self.mesh.shape["devices"]
+        rows_per_block = self.shape[0] // num_devices
+        max_ghosts_per_pair = self.max_ghosts_per_pair
+        max_total_ghosts = self.max_total_ghosts
 
-        def _dot(data_loc, indices_loc, indptr_loc, x_loc):
-            # Gather full vector from all devices
-            x_full = jax.lax.all_gather(x_loc, "devices", tiled=True)
+        def _dot(data_loc, indices_loc, indptr_loc, send_indices_loc, unpack_src_loc, unpack_k_loc, x_loc):
+            # 1. Extract ghost values to send: shape (num_devices, max_ghosts_per_pair)
+            send_indices_2d = send_indices_loc.reshape((num_devices, max_ghosts_per_pair))
+            send_buffer = x_loc[send_indices_2d]
 
-            # Reconstruct local CSR matrix slice
-            local_shape = (self.shape[0] // self.mesh.shape["devices"], self.shape[1])
+            # 2. Exchange ghost buffers across GPUs via all_to_all
+            recv_buffer = jax.lax.all_to_all(send_buffer, split_axis=0, concat_axis=0, axis_name="devices")
+
+            # 3. Unpack received ghost values: shape (max_total_ghosts,)
+            x_ghosts = recv_buffer[unpack_src_loc, unpack_k_loc]
+
+            # 4. Pack local vector and ghosts into x_padded
+            x_padded = jnp.concatenate([x_loc, x_ghosts])
+
+            # 5. Local matrix-vector multiplication
+            local_shape = (rows_per_block, rows_per_block + max_total_ghosts)
             csr_loc = sparse.CSR((data_loc, indices_loc, indptr_loc), shape=local_shape)
+            return csr_loc @ x_padded
 
-            # Local matrix-vector multiplication
-            return csr_loc @ x_full
-
-        _dot_sharded = jax.jit(shard_map(_dot, mesh=self.mesh, in_specs=(P, P, P, P), out_specs=P))
-        return _dot_sharded(self.data, self.indices, self.indptr, x)
+        _dot_sharded = jax.jit(
+            shard_map(
+                _dot,
+                mesh=self.mesh,
+                in_specs=(P, P, P, P, P, P, P),
+                out_specs=P,
+            )
+        )
+        return _dot_sharded(
+            self.data,
+            self.indices,
+            self.indptr,
+            self.send_indices,
+            self.unpack_src,
+            self.unpack_k,
+            x,
+        )
 
     @property
     def T(self):
