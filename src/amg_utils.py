@@ -276,9 +276,14 @@ class DistributedCSR:
         # Multi GPU Path: Explicit Sharding & Halo Exchange Setup
         num_devices = mesh.shape["devices"]
         n_rows = scipy_mat.shape[0]
+        n_cols = scipy_mat.shape[1]
         if n_rows % num_devices != 0:
             raise ValueError(f"Rows ({n_rows}) must be divisible by number of devices ({num_devices})")
+        if n_cols % num_devices != 0:
+            raise ValueError(f"Cols ({n_cols}) must be divisible by number of devices ({num_devices})")
+            
         rows_per_block = n_rows // num_devices
+        cols_per_block = n_cols // num_devices
 
         # Split matrix row-wise
         blocks = [scipy_mat[i * rows_per_block : (i + 1) * rows_per_block, :] for i in range(num_devices)]
@@ -286,11 +291,9 @@ class DistributedCSR:
         # 1. Analyze ghost cells for each block
         unique_ghosts_list = []
         n_ghosts_list = []
-        for i, block in enumerate(blocks):
+        for dest, block in enumerate(blocks):
             cols = block.indices
-            is_local = (cols >= i * rows_per_block) & (cols < (i + 1) * rows_per_block)
-            ghost_cols = cols[~is_local]
-            u_ghosts = np.unique(ghost_cols)
+            u_ghosts = np.unique(cols[(cols < dest * cols_per_block) | (cols >= (dest + 1) * cols_per_block)])
             unique_ghosts_list.append(u_ghosts)
             n_ghosts_list.append(len(u_ghosts))
 
@@ -300,8 +303,8 @@ class DistributedCSR:
         req_table = [[[] for _ in range(num_devices)] for _ in range(num_devices)]
         for dest in range(num_devices):
             for g in unique_ghosts_list[dest]:
-                src = int(g // rows_per_block)
-                local_offset = int(g % rows_per_block)
+                src = int(g // cols_per_block)
+                local_offset = int(g % cols_per_block)
                 req_table[dest][src].append(local_offset)
 
         max_ghosts_per_pair = 0
@@ -324,7 +327,7 @@ class DistributedCSR:
         for dest in range(num_devices):
             pair_counter = [0] * num_devices
             for idx, g in enumerate(unique_ghosts_list[dest]):
-                src = int(g // rows_per_block)
+                src = int(g // cols_per_block)
                 k_pos = pair_counter[src]
                 pair_counter[src] += 1
                 unpack_src_all[dest, idx] = src
@@ -346,16 +349,16 @@ class DistributedCSR:
         data_list, indices_list, indptr_list = [], [], []
         for i, block in enumerate(blocks):
             cols = block.indices.copy()
-            is_local = (cols >= i * rows_per_block) & (cols < (i + 1) * rows_per_block)
+            is_local = (cols >= i * cols_per_block) & (cols < (i + 1) * cols_per_block)
             
             new_cols = np.empty_like(cols)
-            new_cols[is_local] = cols[is_local] - i * rows_per_block
+            new_cols[is_local] = cols[is_local] - i * cols_per_block
 
             ghost_mask = ~is_local
             if np.any(ghost_mask):
                 ghost_cols = cols[ghost_mask]
                 pos_in_unique = np.searchsorted(unique_ghosts_list[i], ghost_cols)
-                new_cols[ghost_mask] = rows_per_block + pos_in_unique
+                new_cols[ghost_mask] = cols_per_block + pos_in_unique
 
             pad_len = max_nnz - block.nnz
             data_padded = np.pad(block.data, (0, pad_len))
@@ -421,6 +424,7 @@ class DistributedCSR:
         P = jax.sharding.PartitionSpec("devices")
         num_devices = self.mesh.shape["devices"]
         rows_per_block = self.shape[0] // num_devices
+        cols_per_block = self.shape[1] // num_devices
         max_ghosts_per_pair = self.max_ghosts_per_pair
         max_total_ghosts = self.max_total_ghosts
 
@@ -433,13 +437,13 @@ class DistributedCSR:
             recv_buffer = jax.lax.all_to_all(send_buffer, split_axis=0, concat_axis=0, axis_name="devices")
 
             # 3. Unpack received ghost values: shape (max_total_ghosts,)
-            x_ghosts = recv_buffer[unpack_src_loc, unpack_k_loc]
+            x_ghosts = recv_buffer[unpack_src_loc.reshape(-1), unpack_k_loc.reshape(-1)]
 
             # 4. Pack local vector and ghosts into x_padded
             x_padded = jnp.concatenate([x_loc, x_ghosts])
 
             # 5. Local matrix-vector multiplication
-            local_shape = (rows_per_block, rows_per_block + max_total_ghosts)
+            local_shape = (rows_per_block, cols_per_block + max_total_ghosts)
             csr_loc = sparse.CSR((data_loc, indices_loc, indptr_loc), shape=local_shape)
             return csr_loc @ x_padded
 
