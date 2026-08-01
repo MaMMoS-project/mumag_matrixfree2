@@ -68,7 +68,6 @@ Below are complete end-to-end Slurm pipeline examples. These scripts automatical
 
 echo "=== Running Assembled Test on CPU ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 
 # Force MKL and OpenMP to use exactly the number of cores allocated by Slurm
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -99,7 +98,7 @@ echo "=== JAX simulation finished ==="
 ```
 
 **2. `test_a100.slurm`** (Single GPU)
-- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores, configuring XLA memory allocation safely to prevent out-of-memory errors (`XLA_PYTHON_CLIENT_MEM_FRACTION`).
+- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores.
 - **Workflow**:
   - Sweeps the external field entirely on the extremely fast GPU backend (no C++ compilation required).
 
@@ -115,7 +114,6 @@ echo "=== JAX simulation finished ==="
 
 echo "=== Running Assembled Test on A100 ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 
 pixi run -e cuda python3 src/loop.py cube \
     --mesh cube_sorted.npz \
@@ -129,8 +127,7 @@ echo "=== JAX simulation finished ==="
 **3. `test_multi_gpu.slurm`** (Multi-GPU)
 - **Hardware**: Reserves 4 L40s GPUs. 
 - **Workflow**:
-  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
-  - **Crucial Setting**: Includes `export JAX_DISABLE_P2P=1`. When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely or silently fail. This forces JAX to route cross-device memory transfers safely through host RAM.
+  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them using distributed CSR matrices (`DistributedCSR`). Halo exchange is performed asynchronously via `jax.lax.all_to_all` within `shard_map`.
 
 ```bash
 #!/bin/bash
@@ -144,11 +141,6 @@ echo "=== JAX simulation finished ==="
 
 echo "=== Running Assembled Test on l40s multi-gpu ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
-
-# Disable direct GPU-to-GPU (P2P) transfers to prevent silent failures
-# or lockups on cluster nodes without NVLink bridges.
-export JAX_DISABLE_P2P=1
 
 pixi run -e cuda python3 src/loop.py cube \
     --mesh cube_sorted.npz \
