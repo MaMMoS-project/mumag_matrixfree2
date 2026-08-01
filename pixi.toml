@@ -37,7 +37,6 @@ cxx-compiler = "*"
 scripts = ["activate_build.sh"]
 
 [pypi-dependencies]
-jaxopt = "*"
 mammos-entity = "*"
 mammos-analysis = "*"
 
