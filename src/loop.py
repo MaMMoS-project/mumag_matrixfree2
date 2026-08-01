@@ -238,7 +238,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         if "tol_fun" in m_min:
             overrides["tau_f"] = float(m_min["tol_fun"])
         if "eps_a" in m_min:
-            overrides["eps_a"] = float(m_min["eps_a"])
+            val = str(m_min["eps_a"]).strip().lower()
+            overrides["eps_a"] = "auto" if val == "auto" else float(val)
         if "max_iter" in m_min:
             overrides["max_iter"] = int(m_min["max_iter"])
         if "tau_min" in m_min:
@@ -540,9 +541,9 @@ def main() -> None:
     )
     ap.add_argument(
         "--eps-a",
-        type=float,
-        default=1e-12,
-        help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+        type=str,
+        default="auto",
+        help="Absolute tangent gradient norm tolerance (float) or 'auto' (default).",
     )
     ap.add_argument(
         "--tau0",
@@ -897,7 +898,7 @@ def main() -> None:
         "dB": float(args.dB) / Js_ref,
         "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
-        "eps_a": float(args.eps_a),
+        "eps_a": args.eps_a,
         "tau0": float(args.tau0),
         "cg_maxiter": int(args.cg_maxiter),
         "cg_tol": float(args.cg_tol),
@@ -975,6 +976,13 @@ def main() -> None:
             # Re-scale field units if they came from CLI
             if dest in ["B_start", "B_end", "dB", "mfinal", "mstep"] and params_dict[dest] is not None:
                 params_dict[dest] /= Js_ref
+
+    # Resolve eps_a string/float logic to allow 'auto' overrides
+    final_eps_a = params_dict.get("eps_a", "auto")
+    if str(final_eps_a).lower() == "auto" or final_eps_a is None:
+        params_dict["eps_a"] = None
+    else:
+        params_dict["eps_a"] = float(final_eps_a)
 
     # Clean up params_dict to only include LoopParams fields
     import dataclasses

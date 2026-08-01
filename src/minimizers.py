@@ -942,6 +942,24 @@ def make_minimizer(
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_init = jnp.max(jnp.abs(g_tan))
         
+        # --- NEW LOGIC FOR eps_a ---
+        if params_dict.get("eps_a") is None:
+            # We explicitly construct phi_tol as min(cg_tol, tol_fun * 0.1)
+            # Note: tau_f is the internal variable for tol_fun
+            cg_tol_val = params_dict.get("cg_tol", 1e-8)
+            tau_f_val = params_dict.get("tau_f", 1e-8)
+            phi_tol_actual = min(cg_tol_val, tau_f_val * 0.1)
+            
+            eps_M = jnp.finfo(E.dtype).eps
+            N_nodes = m0.shape[0]
+            
+            # Relative noise floor: max of Poisson tolerance and round-off accumulation
+            eps_R = jnp.maximum(phi_tol_actual, jnp.sqrt(3 * N_nodes) * eps_M)
+            
+            # Scale by the initial energy (E0) to get the absolute tolerance
+            params_dict["eps_a"] = eps_R * (1.0 + jnp.abs(E))
+        # ---------------------------
+        
         state = init_state_fn(
             m,
             U,

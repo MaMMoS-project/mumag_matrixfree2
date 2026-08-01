@@ -128,6 +128,9 @@ echo "=== JAX simulation finished ==="
 - **Hardware**: Reserves 4 L40s GPUs. 
 - **Workflow**:
   - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them using distributed CSR matrices (`DistributedCSR`). Halo exchange is performed asynchronously via `jax.lax.all_to_all` within `shard_map`.
+- **Troubleshooting**:
+  - **Hangs on PCIe Nodes**: If the simulation hangs indefinitely without an error on nodes lacking NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing, e.g., the Gd or L40s nodes), the hardware is blocking direct GPU-to-GPU memory copies. You must set `export NCCL_P2P_DISABLE=1` to safely route cross-device memory transfers through the host RAM.
+  - **Communication Diagnostics**: To analyze GPU-to-GPU communication topologies and confirm whether P2P or SYS links are being negotiated, set `export NCCL_DEBUG=INFO` to output NCCL diagnostics directly into your log file.
 
 ```bash
 #!/bin/bash
@@ -141,6 +144,8 @@ echo "=== JAX simulation finished ==="
 
 echo "=== Running Assembled Test on l40s multi-gpu ==="
 export JAX_ENABLE_X64=True
+export NCCL_DEBUG=INFO
+export NCCL_P2P_DISABLE=1
 
 pixi run -e cuda python3 src/loop.py cube \
     --mesh cube_sorted.npz \
