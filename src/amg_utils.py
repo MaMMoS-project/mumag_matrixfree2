@@ -858,7 +858,9 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
             lvl = hierarchy[level_idx]
             # Base case: Coarsest level
             if level_idx == num_levels - 1:
-                if "A_dense" in lvl:
+                if "A_inv_dense" in lvl:
+                    return lvl["A_inv_dense"] @ b_curr
+                elif "A_dense" in lvl:
                     return jnp.linalg.solve(lvl["A_dense"], b_curr)
 
                 # Fallback
@@ -930,7 +932,9 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             # Base case: Coarsest level
             if level_idx == num_levels - 1:
-                if "A_dense" in lvl:
+                if "A_inv_dense" in lvl:
+                    return lvl["A_inv_dense"] @ b_curr
+                elif "A_dense" in lvl:
                     return jnp.linalg.solve(lvl["A_dense"], b_curr)
 
                 def apply_A_coarse(v):
@@ -964,7 +968,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
                 b_coarse = jax_csr.T @ r_res
 
             # 4. Recurse
-            x_coarse = jax.lax.cond(b_coarse[0] == 12345.6789, lambda: b_coarse, lambda: jnp.zeros_like(b_coarse))
+            x_coarse = b_coarse * 0.0
             e_coarse = vcycle_recursive(level_idx + 1, b_coarse, x_coarse)
 
             # 5. Prolongation and Correction
@@ -975,9 +979,8 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             return x_curr
 
-        # Start with a dynamically-shielded zero vector to prevent XLA from
-        # treating `x_curr` as a static constant and unrolling/folding apply_A_fine.
-        x_start = jax.lax.cond(r[0] == 12345.6789, lambda: r, lambda: jnp.zeros_like(r))
+        # Start with a zero vector dependent on r to prevent XLA constant-folding.
+        x_start = r * 0.0
         return vcycle_recursive(0, r, x_start)
 
     return jax.jit(vcycle)
