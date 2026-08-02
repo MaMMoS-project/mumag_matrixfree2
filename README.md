@@ -245,6 +245,17 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 - **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks.
 - **`tr`**: Trust Region Newton Conjugate Gradient method.
 
+### Convergence Criteria
+The solver employs a multi-tiered convergence criterion to decide when to stop the minimization loop. By default, it terminates when **all** of the following relative stability conditions are met simultaneously:
+1. **Energy Stability**: The energy decrease is smaller than the `--tau-f` tolerance (scaled by absolute energy).
+2. **Magnetization Stability**: The maximum change in magnetization between iterations is smaller than $\sqrt{\tau_f}$ (scaled).
+3. **Torque Bound**: The maximum norm of the tangent gradient (the torque $|m \times h_{eff}|$) is smaller than $\tau_f^{1/3}$ (scaled by absolute energy).
+
+Alternatively, the solver will instantly terminate if the **absolute** torque bound is reached:
+- **Absolute Torque Threshold**: The maximum norm of the tangent gradient strictly falls below the `--eps-a` parameter. 
+
+If `--eps-a` is set to `auto` (or left undefined), the solver dynamically computes a "noise floor" by taking the maximum of your Poisson tolerance and the theoretical machine precision accumulation limit, scaled by the initial energy.
+
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
 - **`pardiso`**: Direct sparse solver utilizing the C++ Intel MKL backend. Vastly superior for CPU nodes.

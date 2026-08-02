@@ -534,7 +534,8 @@ def main() -> None:
         help="Restart frequency for conjugate gradient methods (default: number of nodes).",
     )
     ap.add_argument(
-        "--tau-f",
+        "--tau-f", "--tol_fun", "--tol-fun",
+        dest="tau_f",
         type=float,
         default=1e-8,
         help="Relative energy convergence tolerance for the minimizer.",
