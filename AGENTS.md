@@ -1,5 +1,8 @@
 # Agent Rules
 
+## Rule 0: Global Pre-flight Checklist
+At the start of every message, you MUST explicitly output a markdown block titled **`[Rule Compliance Checklist]`**. In this checklist, you must list every rule relevant to your upcoming response and, if applicable, cite the exact tool call ID used to satisfy it before proceeding with your reasoning or actions.
+
 ## Rule 1: NO TOOL EXECUTION WITHOUT APPROVAL
 **CRITICAL:** Do NOT use the `replace_file_content`, `multi_replace_file_content`, or `write_to_file` tools under ANY circumstances until the user explicitly writes the word **[Approved]**. Always describe in detail what you plan to do. Once you propose a plan, you MUST immediately stop calling tools and end your turn. 
 
@@ -23,7 +26,7 @@ Before invoking the `run_command` tool with `git commit`, you must actively fetc
 You must explicitly output the exact phrase: *"I verify success via the following log output: [insert exact log quote]"*. If you cannot quote the success output from a tool call in your immediate context, you must abort the commit.
 
 ## Rule 6: No Assumptions Without Confirmation
-When using the `replace_file_content` or `multi_replace_file_content` tool, if your replacement chunk deletes more than 3 consecutive lines of existing code, or removes existing comments/docstrings, you MUST explicitly output: **'Warning: This plan deletes existing code.'** You are prohibited from executing the edit unless the user's prompt specifically instructed you to delete it.
+When using the `replace_file_content` or `multi_replace_file_content` tool, if your replacement chunk deletes more than 5 consecutive lines of existing code, or removes existing comments/docstrings, you MUST explicitly output: **'Warning: This plan deletes existing code.'** You are prohibited from executing the edit unless the user's prompt specifically instructed you to delete it.
 
 ## Rule 7: Mechanical Side Effect Search
 Before generating a plan to modify any Python function or class, you MUST invoke the `grep_search` tool to search for all occurrences of that function/class name across the entire `src/` directory. You must explicitly list all files that import or use the target before proposing your changes.
@@ -38,10 +41,15 @@ When citing log outputs or file contents to the user, you MUST enclose the exact
 Before stating any factual claim regarding third-party libraries, physics, or system behaviors, you MUST explicitly output `[Source: URL/File]` immediately following the claim. You are strictly prohibited from generating this citation unless you have actively executed the `search_web`, `read_url_content`, or `view_file` tool to read that exact source during the current session.
 
 ## Rule 11: Mechanical Link Verification
-You are prohibited from generating markdown hyperlinks `[text](http...)` to external sites unless you have explicitly invoked the `read_url_content` tool (or `run_command` with `curl -I`) on that exact URL in the current or previous turn. If the tool returns a 404 or cannot be reached, you must drop the link.
+You are prohibited from generating markdown hyperlinks `[text](http...)` to external sites unless you have explicitly invoked the `read_url_content` tool (or `run_command` with `curl -I`) on that exact URL in the current or previous turn. Before generating any external hyperlink, you MUST explicitly output a block titled `[LINK VERIFICATION]` containing the exact HTTP 200 OK output from your tool call. If you cannot quote the successful status code, you must drop the link.
 
 ## Rule 12: Resolve Contradictions
 Before proposing a diagnosis for an error, you MUST output a markdown table titled **'Hypothesis Check'** with two columns: [Current Hypothesis] and [Previous Hypothesis]. If they differ, you MUST output the exact phrase: **'I was wrong previously.'** before proposing the new fix.
+
+## Rule 13: The "Dead End" Admission Rule (Anti-Pivot)
+If you attempt to mechanically verify a claim, fact, or hypothesis and the verification fails (e.g., `grep_search` finds no results, a URL returns 404, or a log file lacks the expected output), you MUST immediately halt execution and output a markdown block titled **`[VERIFICATION FAILURE]`** detailing exactly what failed. 
+
+You are strictly **prohibited** from proposing an alternative hypothesis, generating a new claim, or pivoting to a new solution in the same response. You must explicitly state: *"I cannot verify my claim and must stop."* and immediately end your turn to await user guidance.
 
 
 
