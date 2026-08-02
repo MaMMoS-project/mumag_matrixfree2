@@ -426,6 +426,7 @@ def run_hysteresis_loop(  # noqa: D417
         _U.block_until_ready()
         print("Warmup complete. Starting main loop...")
 
+    global_start_time = time.time()
     total_time = 0.0
     total_iters = 0
     total_preco_iters = 0
@@ -435,6 +436,7 @@ def run_hysteresis_loop(  # noqa: D417
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
+        field_start_time = time.time()
         start_step = time.time()
 
         if params.cpp_mkl:
@@ -508,8 +510,8 @@ def run_hysteresis_loop(  # noqa: D417
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
         U.block_until_ready()
-        step_duration = time.time() - start_step
-        total_time += step_duration
+        t_gpu = time.time() - start_step
+        # total_time is now global, skipped local sum
         total_iters += info.get("iters", 0)
         total_preco_iters += info.get("preco_iters", 0)
         total_evals += info.get("evals", info.get("nf", 0))
@@ -574,11 +576,14 @@ def run_hysteresis_loop(  # noqa: D417
             float(info.get("gnorm", np.nan)),
         )
 
+        field_end_time = time.time()
+        t_total = field_end_time - field_start_time
+
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
-            f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
+            f"E={info.get('E', float('nan')):.6e}  t_gpu={t_gpu:.3f}s  t_total={t_total:.3f}s  "
             f"it={info.get('iters', 0):.0f}  "
-            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
+            f"t/it={t_gpu / max(1.0, info.get('iters', 1.0)):.3e}s  "
             f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
             f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
         )
@@ -590,8 +595,9 @@ def run_hysteresis_loop(  # noqa: D417
             )
             break
 
+    global_total_time = time.time() - global_start_time
     print(
-        f"\nHysteresis loop finished in {total_time:.3f} s.\n"
+        f"\nHysteresis loop finished in {global_total_time:.3f} s.\n"
         f"Total minimizer iterations: {total_iters}\n"
         f"Total preconditioner iterations: {total_preco_iters}\n"
         f"Total function evaluations: {total_evals}\n"
