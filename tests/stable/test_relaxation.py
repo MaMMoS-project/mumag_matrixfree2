@@ -34,7 +34,6 @@ def _write_p2_file(filename, theta, phi):
             hz = 1
             hstart = 0.0
             hfinal = 0.0
-            hstep = -0.5
             """
         )
     )
