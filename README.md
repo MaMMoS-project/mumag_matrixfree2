@@ -1,6 +1,6 @@
 # MaMMoS-MuMag: Matrix-Free Micromagnetics with JAX
 
-MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a **matrix-free FEM** approach for the Poisson equation (demagnetization field) to enable large-scale simulations on both CPU and GPU architectures without the severe memory overhead of storing global stiffness matrices. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a highly optimized, dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
+MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a highly optimized **assembled sparse matrix FEM approach** for the Poisson equation (demagnetization field) to enable ultra-fast, large-scale simulations on both CPU and GPU architectures. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
 
 ## 1. Prerequisites and Installation
 
@@ -80,12 +80,12 @@ export OMP_PLACES=cores
 export OMP_WAIT_POLICY=ACTIVE
 
 # compile the C++ library
-pixi run compile
+pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml compile
 
 echo "========================="
 echo "=== Running minimizer ==="
 echo "========================="
-pixi run python3 src/loop.py cube \
+pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cpu python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
     --mesh cube_sorted.npz \
     --out-dir test_cpu \
     --benchmark \
@@ -107,7 +107,7 @@ echo "=== JAX simulation finished ==="
 #SBATCH --job-name=test_as_a100
 #SBATCH --partition=dissSims
 #SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-gpu=2
 #SBATCH --mem=128G
 #SBATCH --time=00:30:00
 #SBATCH --output=test_a100.log
@@ -115,7 +115,7 @@ echo "=== JAX simulation finished ==="
 echo "=== Running Assembled Test on A100 ==="
 export JAX_ENABLE_X64=True
 
-pixi run -e cuda python3 src/loop.py cube \
+pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cuda python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
     --mesh cube_sorted.npz \
     --out-dir test_a100 \
     --benchmark \
@@ -136,18 +136,18 @@ echo "=== JAX simulation finished ==="
 #!/bin/bash
 #SBATCH --job-name=test_multi
 #SBATCH --partition=dissSims
-#SBATCH --gres=gpu:l40s:4
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=128G
+#SBATCH --nodelist=Sm
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-gpu=2
+#SBATCH --mem=80G
 #SBATCH --time=01:30:00
 #SBATCH --output=test_multi_gpu.log
 
 echo "=== Running Assembled Test on l40s multi-gpu ==="
 export JAX_ENABLE_X64=True
-export NCCL_DEBUG=INFO
-export NCCL_P2P_DISABLE=1
+export NCCL_IGNORE_CPU_AFFINITY=1
 
-pixi run -e cuda python3 src/loop.py cube \
+pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cuda python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
     --mesh cube_sorted.npz \
     --out-dir test_multi_gpu \
     --benchmark \
@@ -360,8 +360,6 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
-| `--chunk-elems` | Number of elements processed per chunk to control peak GPU memory. | `200000` |
-| `--geom-backend` | Strategy for providing shape gradients: `stored_JinvT`, `stored_grad_phi`, or `on_the_fly`. | `stored_JinvT` |
 
 ### Energy Minimizer Configuration
 | Parameter | Description | Default |
