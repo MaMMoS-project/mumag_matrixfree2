@@ -28,8 +28,6 @@ from io_utils import (
 from minimizers import make_minimizer
 from poisson_solve import make_solve_U
 
-GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
-
 
 @dataclass
 class LoopParams:
@@ -232,8 +230,6 @@ def run_hysteresis_loop(  # noqa: D417
     precond_type: str = "jacobi",
     order: int = 3,
     energy_assembly: str = "segment_sum",
-    grad_backend: GradBackend = "stored_grad_phi",
-    chunk_elems: int = 200_000,
     boundary_mask: jnp.ndarray | None = None,
     A_sparse: Any = None,
     A_diag: Any = None,
@@ -266,10 +262,7 @@ def run_hysteresis_loop(  # noqa: D417
         precond_type (str): Preconditioning strategy.
         order (int): Chebyshev preconditioner order.
         energy_assembly (str): Nodal assembly strategy.
-        grad_backend (GradBackend): shape function gradients source.
-        chunk_elems (int): Chunk size for loops.
         boundary_mask (Array | None): Boundary mask.
-        mode (str): Operator mode ('matrix_free' or 'assembled').
         A_sparse: Assembled stiffness matrix.
         Dx_sparse, Dy_sparse, Dz_sparse: Assembled divergence component matrices.
         Dz_sparse: Sparse difference matrix for z direction.
@@ -300,9 +293,7 @@ def run_hysteresis_loop(  # noqa: D417
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
         V_mag=V_mag,
         M_nodal=M_nodal,
-        chunk_elems=chunk_elems,
         assembly=energy_assembly,
-        grad_backend=grad_backend,
     )
 
     solve_U, hierarchy_jax = make_solve_U(
@@ -310,11 +301,9 @@ def run_hysteresis_loop(  # noqa: D417
         jnp.asarray(Js_lookup, dtype=jnp.float64),
         precond_type=precond_type,
         order=order,
-        chunk_elems=chunk_elems,
         cg_maxiter=params.cg_maxiter,
         cg_tol=params.cg_tol,
         poisson_reg=params.poisson_reg,
-        grad_backend=grad_backend,
         boundary_mask=boundary_mask,
         A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
@@ -342,9 +331,7 @@ def run_hysteresis_loop(  # noqa: D417
         cg_tol=params.cg_tol,
         method=params.method,
         B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
-        chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
-        grad_backend=grad_backend,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)

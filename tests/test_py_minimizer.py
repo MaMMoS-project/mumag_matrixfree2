@@ -67,12 +67,12 @@ def test():
     m = m / np.linalg.norm(m, axis=1, keepdims=True)
     m = jnp.asarray(m)
 
-    node_vols = compute_node_volumes(geom, chunk_elems=200_000)
+    node_vols = compute_node_volumes(geom)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
-    M_nodal = compute_node_volumes(geom_Js, chunk_elems=200_000)
+    M_nodal = compute_node_volumes(geom_Js)
 
     l_grad_phi = compute_grad_phi_from_JinvT(JinvT)
 
@@ -117,11 +117,9 @@ def test():
         jnp.asarray(Js_red, dtype=jnp.float64),
         precond_type="amgcl",
         order=1,
-        chunk_elems=200_000,
         cg_maxiter=2000,
         cg_tol=1e-8,
         poisson_reg=1e-12,
-        grad_backend="stored_JinvT",
         boundary_mask=None,
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
@@ -140,7 +138,6 @@ def test():
         solve_U=solve_U,
         cg_tol=1e-8,
         method="pcohen_hs",
-        grad_backend="stored_JinvT",
     )
 
     U = jnp.zeros(N, dtype=jnp.float64)

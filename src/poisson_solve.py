@@ -22,7 +22,6 @@ from fem_utils import TetGeom
 jax.config.update("jax_enable_x64", True)
 
 Array = jnp.ndarray
-GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 PrecondType = Literal["none", "jacobi", "chebyshev", "amg", "amgcl"]
 Assembly = Literal["scatter", "segment_sum"]
 
@@ -31,9 +30,7 @@ def make_poisson_ops(  # noqa: D417
     geom: TetGeom,
     Js_lookup: Array,
     *,
-    chunk_elems: int = 200_000,
     reg: float = 1e-12,
-    grad_backend: GradBackend = "stored_grad_phi",
     assembly: Assembly = "segment_sum",
     boundary_mask: Array | None = None,
     A_sparse: Any | None = None,  # noqa: F821
@@ -229,11 +226,9 @@ def make_solve_U(  # noqa: D417
     *,
     precond_type: PrecondType = "jacobi",
     order: int = 3,
-    chunk_elems: int = 200_000,
     cg_maxiter: int = 2000,
     cg_tol: float = 1e-8,
     poisson_reg: float = 1e-12,
-    grad_backend: GradBackend = "stored_grad_phi",
     enforce_zero_mean: bool | None = None,
     boundary_mask: Array | None = None,
     assembly: Assembly = "scatter",
@@ -277,9 +272,7 @@ def make_solve_U(  # noqa: D417
     apply_A, rhs_from_m, assemble_diag = make_poisson_ops(
         geom,
         Js_lookup,
-        chunk_elems=chunk_elems,
         reg=poisson_reg,
-        grad_backend=grad_backend,
         assembly=assembly,
         boundary_mask=boundary_mask,
         A_sparse=A_sparse,

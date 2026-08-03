@@ -69,7 +69,7 @@ def setup_geom():
     k_easy_lookup = jnp.array([k_easy, k_easy])
 
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
-    M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)), chunk_elems=200_000)
+    M_nodal = compute_node_volumes(replace(geom, volume=jnp.asarray(vol_Js)))
     V_mag_nm = np.sum(volume[mat_id == 1])
 
     import scipy.sparse as sp

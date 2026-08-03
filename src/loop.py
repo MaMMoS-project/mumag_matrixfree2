@@ -440,25 +440,7 @@ def main() -> None:
         help="Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.",
     )
 
-    # gradient backend selection
-
-    ap.add_argument(
-        "--geom-backend",
-        type=str,
-        default="stored_JinvT",
-        choices=["stored_JinvT", "stored_grad_phi", "on_the_fly"],
-        help="Strategy for providing gradient info: "
-        "stored_JinvT (efficient storage), stored_grad_phi (precomputed), "
-        "or on_the_fly (recompute from coordinates).",
-    )
-
     # solver settings
-    ap.add_argument(
-        "--chunk-elems",
-        type=int,
-        default=200_000,
-        help="Number of elements processed per loop iteration (chunking to control GPU memory).",
-    )
     ap.add_argument(
         "--cg-maxiter",
         type=int,
@@ -823,36 +805,16 @@ def main() -> None:
     K1_red = K1_lookup / Kd_ref
     Js_red = Js_lookup / Js_ref
 
-    # Build TetGeom depending on backend
-    grad_backend = args.geom_backend
-
-    if grad_backend == "on_the_fly":
-        geom = TetGeom(
-            conn=conn32.astype(np.int32),
-            volume=volume.astype(np.float64),
-            mat_id=mat_id.astype(np.int32),
-            x_nodes=knt.astype(np.float64),
-        )
-    else:
-        if grad_backend == "stored_grad_phi":
-            grad_phi = compute_grad_phi_from_JinvT(JinvT)
-            geom = TetGeom(
-                conn=conn32.astype(np.int32),
-                volume=volume.astype(np.float64),
-                mat_id=mat_id.astype(np.int32),
-                grad_phi=grad_phi.astype(np.float64),
-                JinvT=None,
-                x_nodes=None,
-            )
-        else:
-            geom = TetGeom(
-                conn=conn32.astype(np.int32),
-                volume=volume.astype(np.float64),
-                mat_id=mat_id.astype(np.int32),
-                JinvT=None,
-                grad_phi=None,
-                x_nodes=None,
-            )
+    # Build TetGeom (always with precomputed shape function gradients for assembly)
+    grad_phi = compute_grad_phi_from_JinvT(JinvT)
+    geom = TetGeom(
+        conn=conn32.astype(np.int32),
+        volume=volume.astype(np.float64),
+        mat_id=mat_id.astype(np.int32),
+        grad_phi=grad_phi.astype(np.float64),
+        JinvT=None,
+        x_nodes=None,
+    )
 
     # Initial magnetization
     # Priority: p2 override > CLI --m0-dir > CLI --h-dir
@@ -881,13 +843,13 @@ def main() -> None:
     from dataclasses import replace
 
     geom_Js = replace(geom, volume=vol_Js)
-    M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
+    M_nodal = compute_node_volumes(geom_Js)
 
     # Precompute pure magnetic nodal volumes (V_mag_i = sum_e (Js_red[e]>0) * Ve / 4)
     # This strictly excludes air elements for accurate mx, my, mz averaging
     vol_mag = volume * (Js_red[mat_id - 1] > 0).astype(np.float64)
     geom_mag = replace(geom, volume=vol_mag)
-    V_mag_nodal = compute_node_volumes(geom_mag, chunk_elems=int(args.chunk_elems))
+    V_mag_nodal = compute_node_volumes(geom_mag)
 
     # 1. Start with defaults and CLI values
     param_sources = {}
@@ -1157,8 +1119,6 @@ def main() -> None:
         V_mag_nodal=distribute_array(jnp.asarray(V_mag_nodal, dtype=jnp.float64), mesh),
         B_bias=distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None,
         precond_type=args.precond_type,
-        grad_backend=grad_backend,
-        chunk_elems=int(args.chunk_elems),
         boundary_mask=distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None,
         cpu_spmv_backend=cpu_spmv_backend,
         mesh=mesh,

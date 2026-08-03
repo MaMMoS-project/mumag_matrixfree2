@@ -56,7 +56,6 @@ jax.config.update("jax_enable_x64", True)
 MU0 = 4e-7 * jnp.pi
 Array = jnp.ndarray
 
-GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
 Assembly = Literal["scatter", "segment_sum"]
 
 
@@ -72,9 +71,7 @@ def make_energy_kernels(  # noqa: D417
     B_bias: Array | None = None,
     k1me: Array | None = None,
     k1me_p: Array | None = None,
-    chunk_elems: int = 200_000,
     assembly: Assembly = "segment_sum",
-    grad_backend: GradBackend = "stored_grad_phi",
     Kex_sparse: Any | None = None,
     Kan_sparse: Any | None = None,
     k_nodes: Array | None = None,

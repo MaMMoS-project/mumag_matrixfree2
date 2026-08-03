@@ -76,7 +76,6 @@ def test_micromagnetic_energies():
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     M_nodal = compute_node_volumes(
         TetGeom(conn=geom.conn, volume=jnp.asarray(vol_Js), mat_id=geom.mat_id),
-        chunk_elems=200_000,
     )
     V_mag_nm = np.sum(volume[mat_id == 1])
     V_mag_si = V_mag_nm * 1e-27
@@ -157,7 +156,6 @@ def test_micromagnetic_energies():
         k_easy_lookup,
         float(V_mag_nm),
         M_nodal,
-        chunk_elems=200_000,
     )
 
     # 5. Verification
