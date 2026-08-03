@@ -80,4 +80,4 @@ def test_stoner_wohlfarth_switching(loop_bin, mesh_bin, tmp_path, subtests, thet
         # extract Bc from loop
         hystloop = me.from_csv(tmp_path / f"hyst_{system_name}" / "mammos_hysteresis.csv")
         with subtests.test(msg=f"phi_deg={phi_deg}"):
-            assert np.all(hystloop.J_par_T.value >= 0.9 * Js)
+            assert np.all(hystloop.J_par_T.value >= 0.99 * Js)
