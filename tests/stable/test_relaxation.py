@@ -53,31 +53,30 @@ def _write_krn_file(filename, Js):
 
 
 @pytest.mark.parametrize("theta_deg", [15, 30, 45, 60, 75])
-def test_stoner_wohlfarth_switching(loop_bin, mesh_bin, tmp_path, subtests, theta_deg):
+@pytest.mark.parametrize("phi_deg", np.random.randint(0, 359, 5))
+def test_stoner_wohlfarth_switching(loop_bin, mesh_bin, tmp_path, subtests, theta_deg, phi_deg):
     """Test switch in Stoner-Wohlfarth model."""
-    for phi_deg in np.random.randint(0, 359, 5):
-        system_name = f"sw_{theta_deg}_{phi_deg}"
-        theta = np.deg2rad(theta_deg)
-        phi = np.deg2rad(phi_deg)
+    system_name = f"sw_{theta_deg}_{phi_deg}"
+    theta = np.deg2rad(theta_deg)
+    phi = np.deg2rad(phi_deg)
 
-        # generate mesh
-        L = 20.0
-        h = 4.0  # Coarse for speed
-        cmd = shlex.split(f"{mesh_bin} --geom box --extent {L},{L},{L} --h {h} --out-name {system_name}")
-        res = subprocess.run(cmd, cwd=tmp_path)
-        res.check_returncode()
+    # generate mesh
+    L = 20.0
+    h = 4.0  # Coarse for speed
+    cmd = shlex.split(f"{mesh_bin} --geom box --extent {L},{L},{L} --h {h} --out-name {system_name}")
+    res = subprocess.run(cmd, cwd=tmp_path)
+    res.check_returncode()
 
-        # write input files
-        Js = 1.6  # Tesla
-        _write_p2_file(tmp_path / system_name, theta, phi)
-        _write_krn_file(tmp_path / system_name, Js)
+    # write input files
+    Js = 1.6  # Tesla
+    _write_p2_file(tmp_path / system_name, theta, phi)
+    _write_krn_file(tmp_path / system_name, Js)
 
-        # run hysteresis loop without demag
-        cmd = shlex.split(f"{loop_bin} {system_name} --verbose")
-        res = subprocess.run(cmd, cwd=tmp_path)
-        res.check_returncode()
+    # run hysteresis loop without demag
+    cmd = shlex.split(f"{loop_bin} {system_name} --verbose")
+    res = subprocess.run(cmd, cwd=tmp_path)
+    res.check_returncode()
 
-        # extract Bc from loop
-        hystloop = me.from_csv(tmp_path / f"hyst_{system_name}" / "mammos_hysteresis.csv")
-        with subtests.test(msg=f"phi_deg={phi_deg}"):
-            assert np.all(hystloop.J_par_T.value >= 0.99 * Js)
+    # extract Bc from loop
+    hystloop = me.from_csv(tmp_path / f"hyst_{system_name}" / "mammos_hysteresis.csv")
+    assert np.all(hystloop.J_par_T.value >= 0.99 * Js)
