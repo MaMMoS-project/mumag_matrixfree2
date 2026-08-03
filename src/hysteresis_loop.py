@@ -17,7 +17,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jax_utils import distribute_array
 from energy_kernels import make_energy_kernels
 from fem_utils import TetGeom
 from io_utils import (
@@ -355,7 +354,7 @@ def run_hysteresis_loop(  # noqa: D417
         grad_backend=grad_backend,
     )
 
-    m = distribute_array(jnp.asarray(m0, dtype=jnp.float64), mesh)
+    m = jnp.asarray(m0, dtype=jnp.float64)
     norm = jnp.linalg.norm(m, axis=1, keepdims=True)
     m = m / jnp.where(norm > 0, norm, 1.0)
 
@@ -365,7 +364,7 @@ def run_hysteresis_loop(  # noqa: D417
     J_par_last_saved = None
     history = []
 
-    U = distribute_array(jnp.zeros(m.shape[0], dtype=m.dtype), mesh)
+    U = jnp.zeros(m.shape[0], dtype=m.dtype)
 
     warmup_sparse_ops = {
         "hierarchy_jax": hierarchy_jax,

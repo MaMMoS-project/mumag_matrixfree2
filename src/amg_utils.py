@@ -412,6 +412,7 @@ class DistributedCSR:
             indices_off_list.append(np.pad(ob.indices, (0, pad_off)))
             indptr_off_list.append(ob.indptr)
 
+
         # 4. Explicitly shard across the mesh
         P = jax.sharding.PartitionSpec("devices")
         sharding = jax.sharding.NamedSharding(mesh, P)
@@ -858,9 +859,7 @@ def make_jax_amg_vcycle(apply_A_fine: Callable) -> Callable:
             lvl = hierarchy[level_idx]
             # Base case: Coarsest level
             if level_idx == num_levels - 1:
-                if "A_inv_dense" in lvl:
-                    return lvl["A_inv_dense"] @ b_curr
-                elif "A_dense" in lvl:
+                if "A_dense" in lvl:
                     return jnp.linalg.solve(lvl["A_dense"], b_curr)
 
                 # Fallback
@@ -932,9 +931,7 @@ def make_jax_amgcl_vcycle(apply_A_fine: Callable) -> Callable:
 
             # Base case: Coarsest level
             if level_idx == num_levels - 1:
-                if "A_inv_dense" in lvl:
-                    return lvl["A_inv_dense"] @ b_curr
-                elif "A_dense" in lvl:
+                if "A_dense" in lvl:
                     return jnp.linalg.solve(lvl["A_dense"], b_curr)
 
                 def apply_A_coarse(v):

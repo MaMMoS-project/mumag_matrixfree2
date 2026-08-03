@@ -338,15 +338,14 @@ def make_solve_U(  # noqa: D417
             for i in range(len(ml.levels)):
                 level = ml.levels[i]
                 from amg_utils import compute_spai0_diagonal, make_sparse_operator, pad_scipy_csr
-                from jax_utils import distribute_array
 
                 csr_A = level.A.tocsr()
                 csr_A = pad_scipy_csr(csr_A, num_dev, pad_rows=True, pad_cols=True)
                 
                 level_dict = {
                     "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend, device=mesh),
-                    "Mdiag": distribute_array(jnp.asarray(csr_A.diagonal()), mesh),
-                    "Mdiag_spai0": distribute_array(jnp.asarray(compute_spai0_diagonal(csr_A)), mesh),
+                    "Mdiag": jnp.asarray(csr_A.diagonal()),
+                    "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
                 }
                 if i < len(ml.levels) - 1:
                     csr_P = pad_scipy_csr(level.P.tocsr(), num_dev, pad_rows=True, pad_cols=True)
@@ -357,10 +356,7 @@ def make_solve_U(  # noqa: D417
                         level_dict["R"] = make_sparse_operator(csr_R, cpu_spmv_backend=cpu_spmv_backend, device=mesh)
                 else:
                     if csr_A.shape[0] < 5000:
-                        import scipy.linalg
-                        A_inv = scipy.linalg.inv(csr_A.todense())
-                        level_dict["A_inv_dense"] = distribute_array(jnp.asarray(A_inv), mesh)
-                        level_dict["A_dense"] = distribute_array(jnp.asarray(csr_A.todense()), mesh)
+                        level_dict["A_dense"] = jnp.asarray(csr_A.todense())
                 levels_jax.append(level_dict)
 
             from amg_utils import AMGHierarchy
