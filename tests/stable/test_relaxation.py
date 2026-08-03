@@ -16,7 +16,7 @@ import pytest
 def _write_p2_file(filename, theta, phi):
     mx = np.sin(theta) * np.cos(phi)
     my = np.sin(theta) * np.sin(phi)
-    mz = np.cos(phi)
+    mz = np.cos(theta)
     Path(filename.with_suffix(".p2")).write_text(
         dedent(
             f"""\
