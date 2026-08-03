@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <cstdint>
+#include <limits>
 
 struct PardisoState {
     void* pt[64];
@@ -602,6 +603,12 @@ extern "C" {
         tangent_grad(N, m, g_raw, g_tan_ext);
         
         double gnorm_inf = std::abs(g_tan[cblas_idamax(3 * N, g_tan, 1)]);
+        
+        if (eps_a < 0.0) {
+            double eps_M = std::numeric_limits<double>::epsilon();
+            double eps_R = std::sqrt(3.0 * N) * eps_M;
+            eps_a = eps_R * (1.0 + std::abs(E));
+        }
         
         double pc_tol = 0.0;
         if (pc_auto) {

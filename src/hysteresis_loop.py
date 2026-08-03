@@ -81,8 +81,6 @@ class LoopParams:
     tau_f: float = 1e-8
     eps_a: float = 1e-12
     tau0: float = 1e-2
-    tau_min: float = 1e-6
-    tau_max: float = 1.0
 
     ls_eta1: float = 0.1
     ls_eta2: float = 0.1
@@ -113,14 +111,9 @@ class LoopParams:
     pc_force_eta: float = 0.5
     pc_force_alpha: float = 0.5
     pc_stagnation_nu: float = 0.01
-    memory: int = 5
     tn_iters: int = 5
-    lr: float = 0.1
-    mu: float = 0.9
     pc_reg: float = 0.0
     phi_extrapolate: bool = True
-    wg_gamma: int = 5
-    wg_threshold: float = 1e-6
     benchmark: bool = False
     L: int | None = None
     cpp_mkl: bool = True
@@ -396,8 +389,6 @@ def run_hysteresis_loop(  # noqa: D417
             tau_f=params.tau_f,
             eps_a=params.eps_a,
             tau0=params.tau0,
-            tau_min=params.tau_min,
-            tau_max=params.tau_max,
             ls_eta1=params.ls_eta1,
             ls_eta2=params.ls_eta2,
             ls_C=params.ls_C,
@@ -413,10 +404,7 @@ def run_hysteresis_loop(  # noqa: D417
             pc_force_eta=params.pc_force_eta,
             pc_force_alpha=params.pc_force_alpha,
             pc_stagnation_nu=params.pc_stagnation_nu,
-            memory=params.memory,
             tn_iters=params.tn_iters,
-            lr=params.lr,
-            mu=params.mu,
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
             L=params.L,
@@ -478,8 +466,6 @@ def run_hysteresis_loop(  # noqa: D417
                 tau_f=params.tau_f,
                 eps_a=params.eps_a,
                 tau0=params.tau0,
-                tau_min=params.tau_min,
-                tau_max=params.tau_max,
                 ls_eta1=params.ls_eta1,
                 ls_eta2=params.ls_eta2,
                 ls_C=params.ls_C,
@@ -495,10 +481,7 @@ def run_hysteresis_loop(  # noqa: D417
                 pc_force_eta=params.pc_force_eta,
                 pc_force_alpha=params.pc_force_alpha,
                 pc_stagnation_nu=params.pc_stagnation_nu,
-                memory=params.memory,
                 tn_iters=params.tn_iters,
-                lr=params.lr,
-                mu=params.mu,
                 pc_reg=params.pc_reg,
                 phi_extrapolate=params.phi_extrapolate,
                 L=params.L,

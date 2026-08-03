@@ -136,7 +136,7 @@ def cpp_minimize(m, B_ext, U0, params, sparse_ops, solve_U=None, **kwargs):
         N,
         getattr(params, "max_iter", 2000),
         getattr(params, "tau_f", 1e-8),
-        getattr(params, "eps_a", kwargs.get("eps_a", 1e-6)),
+        -1.0 if getattr(params, "eps_a", None) is None else getattr(params, "eps_a"),
         getattr(params, "ls_eta1", 1e-4),
         getattr(params, "ls_eta2", 0.9),
         getattr(params, "ls_C", 2.0),

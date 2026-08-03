@@ -242,16 +242,17 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["eps_a"] = "auto" if val == "auto" else float(val)
         if "max_iter" in m_min:
             overrides["max_iter"] = int(m_min["max_iter"])
-        if "tau_min" in m_min:
-            overrides["tau_min"] = float(m_min["tau_min"])
         if "tau0" in m_min:
             overrides["tau0"] = float(m_min["tau0"])
-        if "tau_max" in m_min:
-            overrides["tau_max"] = float(m_min["tau_max"])
         if "method" in m_min:
             overrides["method"] = str(m_min["method"])
+        elif "cg_method" in m_min:
+            if int(m_min["cg_method"]) == 1004:
+                overrides["method"] = "pcohen_hs"
         if "pc_iters" in m_min:
             overrides["pc_iters"] = int(m_min["pc_iters"])
+        elif "precond_iter" in m_min:
+            overrides["pc_iters"] = int(m_min["precond_iter"])
         if "pc_auto" in m_min:
             overrides["pc_auto"] = m_min.getboolean("pc_auto")
         if "pc_force_eta" in m_min:
@@ -260,20 +261,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["pc_force_alpha"] = float(m_min["pc_force_alpha"])
         if "pc_stagnation_nu" in m_min:
             overrides["pc_stagnation_nu"] = float(m_min["pc_stagnation_nu"])
-        if "memory" in m_min:
-            overrides["memory"] = int(m_min["memory"])
         if "tn_iters" in m_min:
             overrides["tn_iters"] = int(m_min["tn_iters"])
-        if "lr" in m_min:
-            overrides["lr"] = float(m_min["lr"])
-        if "mu" in m_min:
-            overrides["mu"] = float(m_min["mu"])
         if "pc_reg" in m_min:
             overrides["pc_reg"] = float(m_min["pc_reg"])
-        if "wg_gamma" in m_min:
-            overrides["wg_gamma"] = int(m_min["wg_gamma"])
-        if "wg_threshold" in m_min:
-            overrides["wg_threshold"] = float(m_min["wg_threshold"])
         if "phi_extrapolate" in m_min:
             overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
 
@@ -481,7 +472,8 @@ def main() -> None:
         help="Relative residual tolerance for the Poisson PCG solver.",
     )
     ap.add_argument(
-        "--poisson-reg",
+        "--poisson-reg", "--reg",
+        dest="poisson_reg",
         type=float,
         default=1e-12,
         help="Tikhonov regularization constant for the Poisson operator diagonal.",
@@ -502,6 +494,9 @@ def main() -> None:
     )
 
     # loop settings
+    ap.add_argument("--mfinal", type=float, default=None, help="Early stopping threshold.")
+    ap.add_argument("--mstep", type=float, default=None, help="Snapshot trigger threshold.")
+    ap.add_argument("--loop", action=argparse.BooleanOptionalAction, default=True, help="Full hysteresis loop.")
     ap.add_argument(
         "--h-dir",
         type=str,
@@ -509,18 +504,20 @@ def main() -> None:
         help='Applied field direction as unit vector "hx,hy,hz".',
     )
     ap.add_argument(
-        "--B-start",
+        "--B-start", "--hstart",
+        dest="B_start",
         type=float,
         default=-1.0,
         help="Starting magnitude of the applied field (Tesla).",
     )
     ap.add_argument(
-        "--B-end",
+        "--B-end", "--hfinal",
+        dest="B_end",
         type=float,
         default=1.0,
         help="Final magnitude of the applied field (Tesla).",
     )
-    ap.add_argument("--dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
+    ap.add_argument("--dB", "--hstep", dest="dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
     ap.add_argument(
         "--max-iter",
         type=int,
@@ -568,14 +565,16 @@ def main() -> None:
 
     # advanced minimizer options
     ap.add_argument(
-        "--method",
+        "--method", "--cg_method",
+        dest="method",
         type=str,
         default="pcohen_hs",
         choices=["pcohen_hs", "tr"],
         help="Energy minimizer algorithm (default: pcohen_hs).",
     )
     ap.add_argument(
-        "--pc-iters",
+        "--pc-iters", "--precond_iter",
+        dest="pc_iters",
         type=int,
         default=10,
         help="Inner iterations for preconditioning (default: 10).",

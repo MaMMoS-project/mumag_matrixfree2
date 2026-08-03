@@ -19,4 +19,3 @@ mfinal = -0.2
 [minimizer]
 method = pcohen_hs
 tol_fun = 1e-10
-eps_a = 1e-12
