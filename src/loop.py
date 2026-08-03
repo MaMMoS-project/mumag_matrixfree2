@@ -950,14 +950,19 @@ def main() -> None:
     import dataclasses
 
     loop_param_names = {f.name for f in dataclasses.fields(LoopParams)}
+    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
+    params = LoopParams(**params_dict)
 
-    # Save parameter log
+    # Save parameter log with true initialized values
     out_dir_path = Path(args.out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
 
-    log_dict = vars(args).copy()
-    log_dict.update(params_dict)
-
+    log_dict = dataclasses.asdict(params)
+    
+    # Inject orchestrator settings that govern the solver but aren't in LoopParams
+    log_dict["precond_type"] = args.precond_type
+    log_dict["cpu_spmv_backend"] = args.cpu_spmv_backend
+    
     with open(out_dir_path / "params.log", "w") as f:
         f.write("| Parameter | Value | Source |\n")
         f.write("| :--- | :--- | :--- |\n")
@@ -965,14 +970,15 @@ def main() -> None:
             if "extrapolate" in k:
                 continue
             source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
-            f.write(f"| {k} | {log_dict[k]} | {source} |\n")
+            
+            val = log_dict[k]
+            if isinstance(val, np.ndarray):
+                val = val.tolist()
+                
+            f.write(f"| {k} | {val} | {source} |\n")
             if k == "cg_tol":
                 phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.1))
                 f.write(f"| phi_tol | {phi_tol} | derived |\n")
-
-    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
-
-    params = LoopParams(**params_dict)
 
     # Compute per-node bias field
     B_bias = np.zeros((knt.shape[0], 3))

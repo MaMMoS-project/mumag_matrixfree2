@@ -43,7 +43,7 @@ class LoopParams:
         max_iter (int): Maximum minimizer iterations per field step.
         tau_f (float): Energy convergence tolerance.
         eps_a (float): Gradient norm convergence tolerance.
-        tau0, tau_min, tau_max (float): Step size control for the minimizer.
+        tau0 (float): Step size control for the minimizer.
         ls_eta1, ls_eta2, ls_C, ls_c, ls_s0, ls_max_evals: Line search parameters.
         out_dir (str): Directory for output files.
         csv_name (str): Filename for the hysteresis CSV data.
@@ -62,10 +62,7 @@ class LoopParams:
         pc_auto (bool): Enable adaptive preconditioning accuracy.
         pc_force_eta (float): Base constant for adaptive forcing sequence.
         pc_force_alpha (float): Exponent for adaptive forcing sequence.
-        memory (int): History size for L-BFGS and Anderson acceleration.
         tn_iters (int): Inner iterations for Newton-CG solvers.
-        lr (float): Learning rate for Nesterov acceleration.
-        mu (float): Momentum factor for Nesterov acceleration.
     """
 
     h_dir: np.ndarray
