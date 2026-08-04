@@ -240,6 +240,7 @@ def run_hysteresis_loop(  # noqa: D417
     A_scipy: Any = None,
     mesh: jax.sharding.Mesh | None = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    config_idx_offset: int = 0,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -337,7 +338,7 @@ def run_hysteresis_loop(  # noqa: D417
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
-    config_idx = 0
+    config_idx = config_idx_offset
     J_par_last_saved = None
     history = []
 

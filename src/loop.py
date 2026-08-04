@@ -225,6 +225,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
 
     if "initial state" in config:
         m_sec = config["initial state"]
+        if "ini" in m_sec:
+            overrides["ini"] = int(m_sec["ini"])
         if all(k in m_sec for k in ("mx", "my", "mz")):
             mx = float(m_sec["mx"])
             my = float(m_sec["my"])
@@ -817,15 +819,37 @@ def main() -> None:
     )
 
     # Initial magnetization
-    # Priority: p2 override > CLI --m0-dir > CLI --h-dir
+    # Priority: p2 ini > p2 override > CLI --m0-dir > CLI --h-dir
+    ini_val = p2_overrides.get("ini", None)
     m0_str = p2_overrides.get("m0_dir", args.m0_dir)
-    if m0_str:
-        m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
+    
+    if ini_val is not None:
+        import glob
+        import meshio
+        
+        pattern = f"state_cfg{ini_val:05d}_*.vtu"
+        matches = glob.glob(pattern) + glob.glob(str(Path(args.out_dir) / pattern))
+        if not matches:
+            raise FileNotFoundError(f"Initial state VTU file not found for ini={ini_val}. Looked for {pattern}")
+        vtu_path = matches[0]
+        print(f"[materials] Loading initial magnetization from {vtu_path}")
+        
+        mesh_data = meshio.read(vtu_path)
+        if "m" not in mesh_data.point_data:
+            raise ValueError(f"No 'm' vector found in point_data of {vtu_path}")
+        m0 = mesh_data.point_data["m"].astype(np.float64)
+        if m0.shape[0] != knt.shape[0]:
+            raise ValueError(f"Number of points in VTU ({m0.shape[0]}) does not match mesh ({knt.shape[0]}).")
+        config_idx_offset = ini_val + 1
     else:
-        m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
-
-    m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
-    m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
+        if m0_str:
+            m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
+        else:
+            m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
+    
+        m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
+        m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
+        config_idx_offset = 0
 
     h_dir = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
@@ -963,6 +987,25 @@ def main() -> None:
     log_dict["precond_type"] = args.precond_type
     log_dict["cpu_spmv_backend"] = args.cpu_spmv_backend
     
+    ini_val = p2_overrides.get("ini", None)
+    if ini_val is not None:
+        log_dict["ini"] = ini_val
+        param_sources["ini"] = ".p2"
+    elif "m0_dir" in p2_overrides:
+        log_dict["m0_dir"] = p2_overrides["m0_dir"]
+        param_sources["m0_dir"] = ".p2"
+    elif args.m0_dir:
+        log_dict["m0_dir"] = args.m0_dir
+        param_sources["m0_dir"] = "cli"
+    else:
+        log_dict["m0_dir"] = args.h_dir
+        param_sources["m0_dir"] = "default"
+        
+    # Re-scale external fields back to Tesla for human-readable logging
+    for field_key in ["B_start", "B_end", "dB", "mfinal", "mstep"]:
+        if field_key in log_dict and log_dict[field_key] is not None:
+            log_dict[field_key] *= Js_ref
+
     with open(out_dir_path / "params.log", "w") as f:
         f.write("| Parameter | Value | Source |\n")
         f.write("| :--- | :--- | :--- |\n")
@@ -1128,6 +1171,7 @@ def main() -> None:
         boundary_mask=distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None,
         cpu_spmv_backend=cpu_spmv_backend,
         mesh=mesh,
+        config_idx_offset=config_idx_offset,
         **assembled_kwargs,
     )
 

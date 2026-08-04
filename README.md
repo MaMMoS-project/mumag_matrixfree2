@@ -410,6 +410,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
 | `mx`, `my`, `mz` | Uniform initial magnetization vector components. | Field direction | `--m0-dir` |
+| `ini` | Restart index. Loads the initial magnetization from `state_cfg{ini:05d}_*.vtu` (searches locally or in `--out-dir`). Takes priority over uniform vectors. Future snapshots resume from `ini+1` to prevent overwrites. | `None` | N/A |
 
 #### `[field]`
 | Parameter | Description | Default | CLI Equivalent |
