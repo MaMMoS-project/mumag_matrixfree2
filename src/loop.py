@@ -1088,7 +1088,11 @@ def main() -> None:
     rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
     cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
     data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    del Dx_coo, Dy_coo, Dz_coo
+    import gc; gc.collect()
     D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    del rows, cols, data
+    gc.collect()
     D_scipy.sort_indices()
     if mesh is not None:
         p_rows = (num_dev - (Dx_scipy.shape[0] % num_dev)) % num_dev
@@ -1102,20 +1106,24 @@ def main() -> None:
     Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
     Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
     Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    Dx_shape_0 = Dx_scipy.shape[0]
+    del Dx_scipy, Dy_scipy, Dz_scipy
+    gc.collect()
     rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
     cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
     data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
     G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    del Gx_coo, Gy_coo, Gz_coo, rows_g, cols_g, data_g
+    gc.collect()
     G_scipy.sort_indices()
     if mesh is not None:
         if p_rows > 0:
             G_scipy = sp.bmat([
-                [G_scipy, sp.csr_matrix((3 * Dx_scipy.shape[0], p_rows))],
-                [sp.csr_matrix((3 * p_rows, Dx_scipy.shape[0])), sp.csr_matrix((3 * p_rows, p_rows))]
+                [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
+                [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))]
             ]).tocsr()
     G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
-    del Dx_scipy, Dy_scipy, Dz_scipy
     if not args.cpp_mkl:
         del D_scipy, G_scipy
         
