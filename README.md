@@ -279,6 +279,7 @@ If `--eps-a` is set to `auto` (or left undefined), the solver dynamically comput
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
+| `--ignore-mem-warning` | flag | Bypass the memory safety abort if estimated memory exceeds available RAM. |
 
 ### `src/mesh.py` (Meshing Tool)
 | Parameter | Type | Description |
@@ -324,6 +325,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | `--snapshot-every` | Save VTU snapshots of the vector state every N steps (0 to disable). | `1` |
 | `--verbose` | Print detailed inner minimizer iterations at each field step. | `False` |
 | `--benchmark` | Run a dummy warmup step before the main loop to compile JIT functions ahead of time. | `False` |
+| `--ignore-mem-warning`| Bypass the memory safety abort if estimated memory exceeds available RAM. | `False` |
 
 ### Field Sweep & Initialization
 | Parameter | Description | Default |
