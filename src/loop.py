@@ -1082,14 +1082,29 @@ def main() -> None:
 
     import scipy.sparse as sp
 
+    import gc
     Dx_coo = Dx_scipy.tocoo()
+    Dx_row, Dx_col, Dx_data = Dx_coo.row, Dx_coo.col * 3 + 0, Dx_coo.data
+    del Dx_coo
+    gc.collect()
+
     Dy_coo = Dy_scipy.tocoo()
+    Dy_row, Dy_col, Dy_data = Dy_coo.row, Dy_coo.col * 3 + 1, Dy_coo.data
+    del Dy_coo
+    gc.collect()
+
     Dz_coo = Dz_scipy.tocoo()
-    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
-    cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
-    data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
-    del Dx_coo, Dy_coo, Dz_coo
-    import gc; gc.collect()
+    Dz_row, Dz_col, Dz_data = Dz_coo.row, Dz_coo.col * 3 + 2, Dz_coo.data
+    del Dz_coo
+    gc.collect()
+
+    rows = np.concatenate([Dx_row, Dy_row, Dz_row])
+    del Dx_row, Dy_row, Dz_row
+    cols = np.concatenate([Dx_col, Dy_col, Dz_col])
+    del Dx_col, Dy_col, Dz_col
+    data = np.concatenate([Dx_data, Dy_data, Dz_data])
+    del Dx_data, Dy_data, Dz_data
+    gc.collect()
     D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
     del rows, cols, data
     gc.collect()
@@ -1103,17 +1118,36 @@ def main() -> None:
             ]).tocsr()
     D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
-    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
-    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
-    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
     Dx_shape_0 = Dx_scipy.shape[0]
-    del Dx_scipy, Dy_scipy, Dz_scipy
+    Dx_shape_1 = Dx_scipy.shape[1]
+    
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    del Dx_scipy
+    Gx_row, Gx_col, Gx_data = Gx_coo.row * 3 + 0, Gx_coo.col, Gx_coo.data
+    del Gx_coo
     gc.collect()
-    rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
-    cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
-    data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
-    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
-    del Gx_coo, Gy_coo, Gz_coo, rows_g, cols_g, data_g
+
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    del Dy_scipy
+    Gy_row, Gy_col, Gy_data = Gy_coo.row * 3 + 1, Gy_coo.col, Gy_coo.data
+    del Gy_coo
+    gc.collect()
+
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    del Dz_scipy
+    Gz_row, Gz_col, Gz_data = Gz_coo.row * 3 + 2, Gz_coo.col, Gz_coo.data
+    del Gz_coo
+    gc.collect()
+
+    rows_g = np.concatenate([Gx_row, Gy_row, Gz_row])
+    del Gx_row, Gy_row, Gz_row
+    cols_g = np.concatenate([Gx_col, Gy_col, Gz_col])
+    del Gx_col, Gy_col, Gz_col
+    data_g = np.concatenate([Gx_data, Gy_data, Gz_data])
+    del Gx_data, Gy_data, Gz_data
+    
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Dx_shape_1, Dx_shape_0))
+    del rows_g, cols_g, data_g
     gc.collect()
     G_scipy.sort_indices()
     if mesh is not None:
