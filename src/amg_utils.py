@@ -54,6 +54,10 @@ def assemble_poisson_matrix_cpu(
     # Create sparse matrix
     A = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     A.sum_duplicates()
+    
+    import gc
+    del data, rows, cols
+    gc.collect()
 
     if boundary_mask is not None:
         # For Dirichlet boundary nodes (mask == 0), we want A_ii = 1, A_ij = 0, A_ji = 0
@@ -1014,6 +1018,11 @@ def assemble_exchange_matrix_cpu(
 
     Kex = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     Kex.sum_duplicates()
+    
+    import gc
+    del data, rows, cols
+    gc.collect()
+    
     return Kex
 
 
@@ -1059,6 +1068,10 @@ def assemble_divergence_matrices_cpu(
     Dz = sp.coo_matrix((De_z.flatten(), (rows, cols)), shape=(N, N)).tocsr()
     Dz.sum_duplicates()
 
+    import gc
+    del De_x, De_y, De_z, rows, cols
+    gc.collect()
+
     return Dx, Dy, Dz
 
 
@@ -1095,6 +1108,11 @@ def assemble_anisotropy_matrix_cpu(
 
     Kan = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     Kan.sum_duplicates()
+    
+    import gc
+    del data, rows, cols
+    gc.collect()
+    
     return Kan
 
 

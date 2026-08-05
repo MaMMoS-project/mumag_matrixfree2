@@ -1196,24 +1196,43 @@ def main() -> None:
     }
     print("[ok] Finished assembly and GPU transfer.")
 
+    A_lookup_jax = jnp.asarray(A_red, dtype=jnp.float64)
+    K1_lookup_jax = jnp.asarray(K1_red, dtype=jnp.float64)
+    Js_lookup_jax = jnp.asarray(Js_red, dtype=jnp.float64)
+    k_easy_lookup_jax = jnp.asarray(k_easy_lookup, dtype=jnp.float64)
+    m0_jax = distribute_array(jnp.asarray(m0, dtype=jnp.float64), mesh)
+    M_nodal_jax = distribute_array(jnp.asarray(M_nodal, dtype=jnp.float64), mesh)
+    V_mag_nodal_jax = distribute_array(jnp.asarray(V_mag_nodal, dtype=jnp.float64), mesh)
+    B_bias_jax = distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None
+    boundary_mask_jax = distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None
+
+    if not args.cpp_mkl:
+        del A_red, K1_red, Js_red, k_easy_lookup
+        del m0, M_nodal, V_mag_nodal, B_bias, boundary_mask
+        import gc
+        gc.collect()
+
+    A_scipy_val = assembled_kwargs.pop("A_scipy", None)
+
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
-        A_lookup=jnp.asarray(A_red, dtype=jnp.float64),
-        K1_lookup=jnp.asarray(K1_red, dtype=jnp.float64),
-        Js_lookup=jnp.asarray(Js_red, dtype=jnp.float64),
-        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
-        m0=distribute_array(jnp.asarray(m0, dtype=jnp.float64), mesh),
+        A_lookup=A_lookup_jax,
+        K1_lookup=K1_lookup_jax,
+        Js_lookup=Js_lookup_jax,
+        k_easy_lookup=k_easy_lookup_jax,
+        m0=m0_jax,
         params=params,
         V_mag=float(V_mag),
-        M_nodal=distribute_array(jnp.asarray(M_nodal, dtype=jnp.float64), mesh),
-        V_mag_nodal=distribute_array(jnp.asarray(V_mag_nodal, dtype=jnp.float64), mesh),
-        B_bias=distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None,
+        M_nodal=M_nodal_jax,
+        V_mag_nodal=V_mag_nodal_jax,
+        B_bias=B_bias_jax,
         precond_type=args.precond_type,
-        boundary_mask=distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None,
+        boundary_mask=boundary_mask_jax,
         cpu_spmv_backend=cpu_spmv_backend,
         mesh=mesh,
         config_idx_offset=config_idx_offset,
+        A_scipy=A_scipy_val,
         **assembled_kwargs,
     )
 

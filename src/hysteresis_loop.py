@@ -309,6 +309,12 @@ def run_hysteresis_loop(  # noqa: D417
         mesh=mesh,
         A_scipy=A_scipy,
     )
+    
+    if params.poisson_solver != "pardiso":
+        if "A_scipy" in locals():
+            del A_scipy
+        import gc
+        gc.collect()
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 

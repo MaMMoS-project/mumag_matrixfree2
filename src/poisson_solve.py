@@ -367,6 +367,12 @@ def make_solve_U(  # noqa: D417
                 apply_Minv_amg = make_jax_amgcl_vcycle(apply_A_masked)
             else:
                 apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
+                
+            import gc
+            if "A_cpu" in locals(): del A_cpu
+            if "ml" in locals(): del ml
+            if "A_scipy" in locals(): del A_scipy
+            gc.collect()
 
     if poisson_solver == "pardiso":
         import numpy as np
