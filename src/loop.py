@@ -659,6 +659,13 @@ def main() -> None:
         help="Number of GPUs/devices to distribute across (defaults to 0, meaning all available).",
     )
 
+    ap.add_argument(
+        "--ignore-mem-warning", "--ignore-memory-warning",
+        action="store_true",
+        dest="ignore_mem_warning",
+        help="Bypass the memory safety abort if estimated memory exceeds available RAM.",
+    )
+
     args = ap.parse_args()
 
     # Dynamic defaults based on platform
@@ -766,6 +773,41 @@ def main() -> None:
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
+    
+    from memory_profiler import estimate_cpu_memory
+    import sys
+    
+    Nnodes = len(knt)
+    Nelements = len(conn)
+    peak_mb = estimate_cpu_memory(Nnodes, Nelements, args)
+    
+    try:
+        import psutil
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+    except Exception as e:
+        print(f"[WARNING] Could not check available memory with psutil: {e}")
+        available_mb = float('inf')
+    
+    num_dev = len(jax.devices())
+    platform = jax.devices()[0].platform.upper()
+    hardware_str = f"{platform} ({num_dev} device{'s' if num_dev > 1 else ''})"
+    
+    print("\n======================================================================")
+    print("=== HARDWARE & MEMORY ANALYSIS ===")
+    print(f"Hardware       : {hardware_str}")
+    print(f"Mesh Nodes     : {Nnodes:,}")
+    print(f"Mesh Elements  : {Nelements:,}")
+    print(f"Available RAM  : {available_mb:,.1f} MB")
+    print(f"Estimated Peak : {peak_mb:,.1f} MB")
+    print("======================================================================\n")
+
+    if peak_mb > available_mb:
+        if not args.ignore_mem_warning:
+            print("[CRITICAL WARNING] Not enough system RAM to complete the simulation!")
+            print("Aborting to prevent system crash. Use --ignore-mem-warning to bypass.")
+            sys.exit(1)
+        else:
+            print("[WARNING] Memory peak exceeds available RAM, but bypass flag is active. Proceeding at your own risk...")
 
     # Load .p2 overrides early to get mesh_unit
     p2_overrides = {}
