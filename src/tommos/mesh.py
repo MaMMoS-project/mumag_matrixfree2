@@ -10,6 +10,8 @@ from pathlib import Path
 
 import meshio
 import numpy as np
+from meshpy.tet import MeshInfo, Options
+from meshpy.tet import build as tet_build
 from scipy.spatial import Delaunay
 
 """
@@ -42,15 +44,6 @@ Dependencies:
 - For .vtu export: meshio -> pip install meshio
 - Grid backend works without meshpy; visualization still needs meshio.
 """
-
-# Optional: TetGen backend
-try:
-    from meshpy.tet import MeshInfo, Options
-    from meshpy.tet import build as tet_build
-
-    HAVE_meshpy = True
-except Exception:
-    HAVE_meshpy = False
 
 # ------------------------------- Utilities -------------------------------
 
@@ -779,9 +772,6 @@ def mesh_backend_meshpy_elliptic_cylinder(
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
     """
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
-
     # 1) Build boundary polygon (LOCAL XY) approximating the ellipse (CCW)
     polygon = build_ellipse_polygon(a=a, b=b, n=128)  # shape (N, 2)
 
@@ -1035,9 +1025,6 @@ def mesh_backend_meshpy_eye(
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
     """
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
-
     # 1) Build boundary polygon (LOCAL XY). build_eye_polygon returns CCW points
     polygon = build_eye_polygon(length=length, width=width)  # shape (N, 2)
 
@@ -1296,8 +1283,6 @@ def mesh_backend_meshpy_box(
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
     """
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
     Lx, Ly, Lz = extents
     half = (0.5 * Lx, 0.5 * Ly, 0.5 * Lz)
     points: list[tuple[float, float, float]] = []
@@ -1352,8 +1337,6 @@ def mesh_backend_meshpy_ellipsoid(
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
     """
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
     # Build LOCAL ellipsoid surface then orient to world using (ex,ey,ez)
     V_local, F = ellipsoid_surface(extents, subdiv=subdiv)
     V_world = np.ascontiguousarray(
@@ -1911,9 +1894,6 @@ def mesh_backend_meshpy_poly_gb(
     import subprocess
 
     from scipy.spatial import ConvexHull, HalfspaceIntersection
-
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
 
     opt_stop_parts = []
     val_to_use = neper_tol if neper_tol is not None else 1e-1
