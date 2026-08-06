@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import meshio
 import numpy as np
 from scipy.spatial import Delaunay
 
@@ -41,15 +42,6 @@ Dependencies:
 - For .vtu export: meshio -> pip install meshio
 - Grid backend works without meshpy; visualization still needs meshio.
 """
-
-
-# Optional: visualization
-try:
-    import meshio
-
-    HAVE_meshio = True
-except Exception:
-    HAVE_meshio = False
 
 # Optional: TetGen backend
 try:
@@ -1866,16 +1858,11 @@ def run_single_solid_mesher(  # noqa: D417
     out_vtu: str | None = None
     if not no_vis:
         out_vtu = with_ext(vis_name, ".vtu")
-        if not HAVE_meshio:
-            msg = "[warn] meshio not installed; skipping .vtu export. Install with: pip install meshio"
-            print(msg, file=sys.stderr)
-            out_vtu = None
-        else:
-            cells = [("tetra", ijk[:, :4].astype(np.int32))]
-            cell_data = {"mat_id": [ijk[:, 4].astype(np.int32)]}
-            m = meshio.Mesh(points=knt, cells=cells, cell_data=cell_data)
-            m.write(out_vtu)
-            print(f"[ok] Wrote visualization: {out_vtu} (cell_data: mat_id)")
+        cells = [("tetra", ijk[:, :4].astype(np.int32))]
+        cell_data = {"mat_id": [ijk[:, 4].astype(np.int32)]}
+        m = meshio.Mesh(points=knt, cells=cells, cell_data=cell_data)
+        m.write(out_vtu)
+        print(f"[ok] Wrote visualization: {out_vtu} (cell_data: mat_id)")
 
     if not return_arrays:
         # Drop large arrays now and return only paths
