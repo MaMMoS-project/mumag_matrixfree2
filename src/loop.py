@@ -356,9 +356,9 @@ def main() -> None:
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="hull",
-        choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+        default="box",
+        choices=["triangles", "hull", "box"],
+        help="Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default).",
     )
     ap.add_argument("--layers", type=int, default=None, help="Number of graded shell layers (>= 1).")
     ap.add_argument(

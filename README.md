@@ -277,7 +277,7 @@ If `--eps-a` is set to `auto` (or left undefined), the solver dynamically comput
 | `--KL` | float | Total outermost geometric scale relative to body (default: 10.0). |
 | `--K` | float | Geometric growth factor for shell layer thickness (default: 1.5). |
 | `--hmax` | float | Target edge length at the outermost shell boundary (default: auto scales with magnet size). |
-| `--shell-type`| choice | Outer boundary: `triangles` or `hull` (default: `hull`). |
+| `--shell-type`| choice | Outer boundary: `triangles`, `hull`, or `box` (default: `box`). |
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
 | `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
@@ -306,7 +306,7 @@ The airbox tool can be run independently to add a far-field vacuum region to an 
 | `--in` | string | **Required**. Input `.npz` mesh containing the core body. |
 | `--out-npz` | string | Optional path to save the merged mesh as an `.npz` file. |
 | `--out-vtu` | string | Optional path to save the merged mesh as a `.vtu` file for visualization. |
-| `--shell-type`| choice | Outer boundary geometry: `triangles` or `hull` (default: `hull`). The `hull` mode dramatically reduces element counts. |
+| `--shell-type`| choice | Outer boundary geometry: `triangles`, `hull`, or `box` (default: `box`). The `box` mode dramatically reduces element counts for highly anisotropic shapes. |
 | `--KL` | float | Total outermost expansion distance relative to the core body (default: `10.0`). |
 | `--K` | float | Geometric growth factor for the thickness of each subsequent shell layer (default: `1.5`). |
 | `--hmax` | float | Target edge length at the outermost boundary. Defaults to `None` (intelligently auto-scales to 20% of the expanded airbox bounds to prevent element explosions on large models). |
@@ -347,7 +347,7 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `--add-shell` | Automatically add a graded airbox shell around the core mesh. | `False` |
-| `--shell-type`| Outer shell boundary type: copy original 'triangles' or use convex 'hull'. | `hull` |
+| `--shell-type`| Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box'. | `box` |
 | `--KL` | Total outermost geometric scale relative to body ($> 1$). | `10.0` |
 | `--K` | Geometric growth factor for the shell layer thickness ($> 1$). | `1.5` |
 | `--layers` | Number of graded shell layers to generate (if omitted, auto derived from KL and K). | `None` |
