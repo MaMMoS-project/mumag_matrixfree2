@@ -1404,7 +1404,7 @@ def run_single_solid_mesher(  # noqa: D417
     shell_max_steiner: int | None = None,
     shell_no_exact: bool = False,
     shell_verbose: bool = False,
-    shell_type: str = "hull",
+    shell_type: str = "box",
     # Neper CVT parameters
     neper_tol: float | None = None,
     neper_timeout: float | None = None,
@@ -2161,9 +2161,9 @@ def main() -> None:
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="hull",
-        choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+        default="box",
+        choices=["triangles", "hull", "box"],
+        help="Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default).",
     )
     ap.add_argument(
         "--layers",

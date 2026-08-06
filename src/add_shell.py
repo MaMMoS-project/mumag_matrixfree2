@@ -357,13 +357,15 @@ def build_layer_nodes(
         sx = np.array([L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float)
         sv = (1 - t) * np.array([1.0, 1.0, 1.0]) + t * sx
 
-        r = sv.max() / max(sv.min(), 1e-12)
+        ext_layer = ext * sv
+        r = ext_layer.max() / max(ext_layer.min(), 1e-12)
         if r > max_anisotropy:
             # softly clamp: scale towards the geometric mean
-            g = np.exp(np.log(sv).mean())
+            g = np.exp(np.log(ext_layer).mean())
             # blend towards isotropy keeping product constant
             alpha = r / max_anisotropy  # >1
-            sv = g * (sv / g) ** (1.0 / alpha)
+            ext_layer = g * (ext_layer / g) ** (1.0 / alpha)
+            sv = ext_layer / ext
 
         # pts = c + s * v0
         print(f"{layer_idx:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
@@ -384,7 +386,7 @@ def make_shell_plc_from_surface(  # noqa: D417
     layers: int,
     K: float,
     center: tuple[float, float, float],
-    shell_type: str = "triangles",
+    shell_type: str = "box",
     target_h: float | None = None,
 ) -> tuple[np.ndarray, list[list[int]], np.ndarray, np.ndarray, dict, list]:
     """Build a TetGen PLC with nested homothetic surfaces for shell meshing.
@@ -395,7 +397,8 @@ def make_shell_plc_from_surface(  # noqa: D417
         layers: number of layers.
         K: per-layer scale.
         center: ray origin.
-        shell_type: 'triangles' or 'hull'.
+        shell_type: 'triangles', 'hull', or 'box'.
+        target_h: target mesh size.
 
     Returns:
         tuple: (All nodes, facets, seeds, surface vertex indices, node map,
@@ -405,14 +408,29 @@ def make_shell_plc_from_surface(  # noqa: D417
     tris0 = np.sort(tris0.astype(np.int64), axis=1)
     surf_verts = np.unique(tris0.reshape(-1))
 
-    if shell_type == "hull":
-        from scipy.spatial import ConvexHull
+    if shell_type in ("hull", "box"):
+        if shell_type == "hull":
+            from scipy.spatial import ConvexHull
 
-        hull = ConvexHull(knt0)
-        hull_verts_orig = np.unique(hull.simplices.reshape(-1))
-        hull_V = knt0[hull_verts_orig].copy()
-        old_to_new = {old: new for new, old in enumerate(hull_verts_orig)}
-        hull_F = np.array([[old_to_new[v] for v in tri] for tri in hull.simplices], dtype=np.int32)
+            hull = ConvexHull(knt0)
+            hull_verts_orig = np.unique(hull.simplices.reshape(-1))
+            hull_V = knt0[hull_verts_orig].copy()
+            old_to_new = {old: new for new, old in enumerate(hull_verts_orig)}
+            hull_F = np.array([[old_to_new[v] for v in tri] for tri in hull.simplices], dtype=np.int32)
+        else:  # box
+            vmin = np.min(knt0, axis=0)
+            vmax = np.max(knt0, axis=0)
+            hull_V = np.array([
+                [vmin[0], vmin[1], vmin[2]], [vmax[0], vmin[1], vmin[2]],
+                [vmax[0], vmax[1], vmin[2]], [vmin[0], vmax[1], vmin[2]],
+                [vmin[0], vmin[1], vmax[2]], [vmax[0], vmin[1], vmax[2]],
+                [vmax[0], vmax[1], vmax[2]], [vmin[0], vmax[1], vmax[2]],
+            ], dtype=np.float64)
+            hull_F = np.array([
+                [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+                [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6],
+                [1, 2, 6], [1, 6, 5], [3, 0, 4], [3, 4, 7],
+            ], dtype=np.int32)
 
         # Compute subdivision levels
         levels = 0
@@ -455,11 +473,13 @@ def make_shell_plc_from_surface(  # noqa: D417
             sx = np.array([L_target / ext[0], L_target / ext[1], L_target / ext[2]], dtype=float)
             sv = (1 - t) * np.array([1.0, 1.0, 1.0]) + t * sx
 
-            r = sv.max() / max(sv.min(), 1e-12)
+            ext_layer = ext * sv
+            r = ext_layer.max() / max(ext_layer.min(), 1e-12)
             if r > max_anisotropy:
-                g = np.exp(np.log(sv).mean())
+                g = np.exp(np.log(ext_layer).mean())
                 alpha = r / max_anisotropy
-                sv = g * (sv / g) ** (1.0 / alpha)
+                ext_layer = g * (ext_layer / g) ** (1.0 / alpha)
+                sv = ext_layer / ext
 
             print(f"{layer_idx:5d} | {sv[0]:10.6f} | {sv[1]:10.6f} | {sv[2]:10.6f}")
             pts = c + v0 * sv.reshape(1, 3)
@@ -552,7 +572,7 @@ def add_shell_with_meshpy(  # noqa: D417
     no_exact: bool,
     verbose: bool,
     same_scaling: bool,
-    shell_type: str = "triangles",
+    shell_type: str = "box",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Invoke TetGen to mesh exterior shell layers and merge with the body.
 
@@ -711,7 +731,7 @@ def run_add_shell_pipeline(  # noqa: D417
     max_steiner: int | None = None,
     no_exact: bool = False,
     verbose: bool = False,
-    shell_type: str = "hull",
+    shell_type: str = "box",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Programmatic entry point for adding graded shell layers.
 

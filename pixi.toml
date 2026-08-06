@@ -65,6 +65,7 @@ test = { depends-on = ["compile"], cmd = "JAX_ENABLE_X64=True pytest tests/ && b
 test-demag = "bash tests/test_demag_runs.sh"
 # Clean temporary mesh files
 clean-samples = "rm -rf samples/*.npz samples/bench_demag_curve samples/*.vtu samples/*.log"
+mesh-sensor = { cmd = "cd samples && bash mesh_sensor.sh" }
 
 
 [target.linux-64.tasks]

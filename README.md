@@ -218,18 +218,23 @@ pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cub
 pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
 ```
 
-**3. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
+**3. Create a High Aspect Ratio Eye Mesh with an Auto-Generated Airbox (using default bounding box method):**
+```bash
+pixi run python3 src/mesh.py --geom eye --extent 2000,100,10 --h 5.0 --add-shell --out-name eye_mesh_2000
+```
+
+**4. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
 ```bash
 pixi run python3 src/loop.py cube_20nm --add-shell
 ```
 
-**4. Run a Full Pipeline Example (Provided):**
+**5. Run a Full Pipeline Example (Provided):**
 ```bash
 pixi run sample
 ```
 *(This automatically meshes a cube, runs a full hysteresis loop, and outputs the results).*
 
-**5. Run the Pipeline on Mac (Apple Silicon / ARM64):**
+**6. Run the Pipeline on Mac (Apple Silicon / ARM64):**
 Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
 ```bash
 # Generate the mesh
