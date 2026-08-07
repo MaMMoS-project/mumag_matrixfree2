@@ -157,8 +157,11 @@ def approx_max_volume_from_edge(h: float) -> float:
     Returns:
         float: Maximum tetrahedron volume constraint.
     """
-    # Practical heuristic for TetGen's max volume from target edge length ~h
-    return 0.1 * (h**3)
+    # We use 0.2 * (h**3) instead of ~0.118 * (h**3) (the volume of an ideal 
+    # regular tetrahedron with edge h) because TetGen treats this as a maximum 
+    # volume constraint. Setting the max volume to 0.2 ensures the resulting 
+    # mean edge length of the tetrahedra closely matches the target h.
+    return 0.2 * (h**3)
 
 
 # ------------------------------- Geometry: BOX -------------------------------
