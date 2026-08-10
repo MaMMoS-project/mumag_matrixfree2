@@ -514,8 +514,9 @@ def run_hysteresis_loop(  # noqa: D417
 
         # Snapshot trigger logic
         should_save = False
-        if J_par_last_saved is None:
-            # Always save the very first step
+        is_last_step = (step_idx == len(B_vals) - 1)
+        if J_par_last_saved is None or is_last_step:
+            # Always save the very first and very last step
             should_save = True
         elif params.mstep is not None:
             if abs(Jpar - J_par_last_saved) >= params.mstep:
