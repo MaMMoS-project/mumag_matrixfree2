@@ -32,8 +32,7 @@ mstep = 10000
 
 [minimizer]
 method = pcohen_hs
-tol_fun = 1e-10
-eps_a = 1e-12
+tol_fun = 1e-8
 """
     with open(path, "w") as f:
         f.write(content)
