@@ -47,20 +47,20 @@ def generate_workspace(sensor_loop_dir: Path):
 
     configs = {
         "sensor_initial_state": {
-            "hstart": 0.035, "hfinal": 0.0, "hstep": -0.001,
-            "hx": 1.0, "hy": 0.0, "hz": 0.0, "ini": None
+            "hstart": 0.035, "hfinal": 0.0, "hstep": -0.0005,
+            "hx": 0.9998477, "hy": 0.0174524, "hz": 0.0, "ini": None
         },
         "sensor_case-a_precompute": {
             "hstart": 0.0, "hfinal": 0.0314159, "hstep": 0.0005,
-            "hx": 1.0, "hy": 0.0, "hz": 0.0, "ini": "00040"
+            "hx": 0.9998477, "hy": 0.0174524, "hz": 0.0, "ini": "00040"
         },
         "sensor_case-a_down": {
             "hstart": 0.0314159, "hfinal": -0.0314159, "hstep": -0.0005,
-            "hx": 1.0, "hy": 0.0, "hz": 0.0, "ini": "00040"
+            "hx": 0.9998477, "hy": 0.0174524, "hz": 0.0, "ini": "00040"
         },
         "sensor_case-a_up": {
             "hstart": -0.0314159, "hfinal": 0.0314159, "hstep": 0.0005,
-            "hx": 1.0, "hy": 0.0, "hz": 0.0, "ini": "00040"
+            "hx": 0.9998477, "hy": 0.0174524, "hz": 0.0, "ini": "00040"
         },
         "sensor_case-b_precompute": {
             "hstart": 0.0, "hfinal": 0.0314159, "hstep": 0.0005,
