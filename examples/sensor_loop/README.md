@@ -50,11 +50,11 @@ The following table summarizes the precise sequence of calculations executed by 
 | Phase / Directory | Field Direction (hx, hy, hz) | hstart (T) | hfinal (T) | hstep (T) | Initial State Column | Initial State Source |
 |-------------------|------------------------------|------------|------------|-----------|----------------------|----------------------|
 | **0. Initial State** | | | | | | |
-| `sensor_initial_state` | `(1.0, 0.0, 0.0)` | `0.035` | `0.0` | `-0.001` | *Uniform Saturation* | Handled internally by solver parameters (`mx=0, my=1, mz=0`) |
+| `sensor_initial_state` | `(0.9998, 0.0174, 0.0)`*| `0.035` | `0.0` | `-0.0005` | *Uniform Saturation* | Handled internally by solver parameters (`mx=0, my=1, mz=0`) |
 | **Case A (Easy Axis)** | | | | | | |
-| `sensor_case-a_precompute` | `(1.0, 0.0, 0.0)` | `0.0` | `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_initial_state`** (at Hext = 0) |
-| `sensor_case-a_down` | `(1.0, 0.0, 0.0)` | `0.0314159` | `-0.0314159` | `-0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-a_precompute`** (at +25 kA/m) |
-| `sensor_case-a_up` | `(1.0, 0.0, 0.0)` | `-0.0314159`| `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-a_down`** (at -25 kA/m) |
+| `sensor_case-a_precompute` | `(0.9998, 0.0174, 0.0)`*| `0.0` | `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_initial_state`** (at Hext = 0) |
+| `sensor_case-a_down` | `(0.9998, 0.0174, 0.0)`*| `0.0314159` | `-0.0314159` | `-0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-a_precompute`** (at +25 kA/m) |
+| `sensor_case-a_up` | `(0.9998, 0.0174, 0.0)`*| `-0.0314159`| `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-a_down`** (at -25 kA/m) |
 | **Case B (45-degree)** | | | | | | |
 | `sensor_case-b_precompute` | `(1.414, 1.414, 0.0)` | `0.0` | `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_initial_state`** (at Hext = 0) |
 | `sensor_case-b_down` | `(1.414, 1.414, 0.0)` | `0.0314159` | `-0.0314159` | `-0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-b_precompute`** (at +25 kA/m) |
@@ -63,6 +63,8 @@ The following table summarizes the precise sequence of calculations executed by 
 | `sensor_case-c_precompute` | `(0.0, 1.0, 0.0)` | `0.0` | `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_initial_state`** (at Hext = 0) |
 | `sensor_case-c_down` | `(0.0, 1.0, 0.0)` | `0.0314159` | `-0.0314159` | `-0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-c_precompute`** (at +25 kA/m) |
 | `sensor_case-c_up` | `(0.0, 1.0, 0.0)` | `-0.0314159`| `0.0314159` | `0.0005` | `state_cfgXXXX.vtu` | **Final state of `sensor_case-c_down`** (at -25 kA/m) |
+
+`*` **Note on symmetry breaking:** For fields applied along the easy axis (x-axis), the field vector is intentionally tilted by 1 degree ($h_x \approx 0.9998, h_y \approx 0.0174$) relative to the long axis. This matches the official OOMMF reference simulation methodology and prevents unphysical metastable states caused by perfect mathematical symmetry.
 
 #### Example Invocations
 

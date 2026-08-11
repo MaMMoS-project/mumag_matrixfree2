@@ -985,7 +985,7 @@ def make_minimizer(
             # Poisson precision needs to be roughly one order of magnitude better
             # than the target energy precision to ensure stable convergence.
             tau_f = params.get("tau_f", 1e-6)
-            params["phi_tol"] = float(min(cg_tol, tau_f * 0.1))
+            params["phi_tol"] = float(min(cg_tol, tau_f * 0.01))
 
         norm = jnp.linalg.norm(m0, axis=1, keepdims=True)
         m = m0 / jnp.where(norm > 0, norm, 1.0)

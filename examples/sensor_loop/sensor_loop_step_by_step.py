@@ -119,7 +119,7 @@ def generate_workspace(sensor_loop_dir: Path):
             "mstep = 3.0",
             "",
             "[minimizer]",
-            "tol_fun = 1e-12" if "case-c" in dname else "tol_fun = 1e-10"
+            "tol_fun = 1e-10"
         ])
         (dpath / "sensor.p2").write_text("\n".join(p2_lines) + "\n")
     print("[WORKSPACE] ✓ Workspace generation complete.")
@@ -464,9 +464,9 @@ Examples:
     parser.add_argument(
         "--mesh-size-fine",
         type=float,
-        default=5.0,
+        default=4.0,
         metavar="SIZE",
-        help="Fine mesh element size in mesh units (default: 5.0)",
+        help="Fine mesh element size in mesh units (default: 4.0)",
     )
     parser.add_argument(
         "--mesh-h",
