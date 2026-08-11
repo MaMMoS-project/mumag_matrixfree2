@@ -1062,7 +1062,7 @@ def main() -> None:
                 
             f.write(f"| {k} | {val} | {source} |\n")
             if k == "cg_tol":
-                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.1))
+                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.01))
                 f.write(f"| phi_tol | {phi_tol} | derived |\n")
 
     # Compute per-node bias field
