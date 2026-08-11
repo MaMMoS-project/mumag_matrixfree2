@@ -446,7 +446,7 @@ def main() -> None:
     ap.add_argument(
         "--cg-maxiter",
         type=int,
-        default=2000,
+        default=8000,
         help="Maximum iterations for the Poisson PCG solver.",
     )
     ap.add_argument(
@@ -505,7 +505,7 @@ def main() -> None:
     ap.add_argument(
         "--max-iter",
         type=int,
-        default=2000,
+        default=8000,
         help="Maximum iterations for the energy minimizer per field step.",
     )
     ap.add_argument(

@@ -134,7 +134,7 @@ def cpp_minimize(m, B_ext, U0, params, sparse_ops, solve_U=None, **kwargs):
 
     lib.run_cpp_pcohen_hs_minimization(
         N,
-        getattr(params, "max_iter", 2000),
+        getattr(params, "max_iter", 8000),
         getattr(params, "tau_f", 1e-8),
         -1.0 if getattr(params, "eps_a", None) is None else getattr(params, "eps_a"),
         getattr(params, "ls_eta1", 1e-4),

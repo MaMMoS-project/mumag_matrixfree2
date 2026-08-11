@@ -72,7 +72,7 @@ class LoopParams:
     loop: bool = True
 
     gamma: int = 5
-    max_iter: int = 2000
+    max_iter: int = 8000
     tau_f: float = 1e-8
     eps_a: float = 1e-12
     tau0: float = 1e-2
@@ -89,7 +89,7 @@ class LoopParams:
     snapshot_every: int = 1
     verbose: bool = False
     Js_ref: float = 1.0
-    cg_maxiter: int = 2000
+    cg_maxiter: int = 8000
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
     poisson_solver: str = "jax"
