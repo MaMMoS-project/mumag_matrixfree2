@@ -79,11 +79,11 @@ The following table summarizes the precise sequence of calculations executed by 
 Below are example commands for running the workflow. Each command demonstrates a typical use case, such as running all cases, selecting specific cases, using different mesh sizes, updating parameters, or working with precomputed initial states. Comments are provided to clarify the purpose of each command.
 
 ```sh
-# Run full example with all cases (a, b, c)
+# Run full example with all cases (a, b, c) using the default high-accuracy 4.0 nm mesh
 python examples/sensor_loop/sensor_loop_step_by_step.py  # Runs the complete workflow for all sensor cases
 
 # Run minimal example with all cases
-python examples/sensor_loop/sensor_loop_step_by_step.py --minimal  # Uses a coarse mesh for faster execution
+python examples/sensor_loop/sensor_loop_step_by_step.py --minimal  # Uses a fast, coarse 30.0 nm mesh for rapid execution
 
 # Run minimal example with only case a
 python examples/sensor_loop/sensor_loop_step_by_step.py --minimal --cases a  # Only simulates the easy-axis case
@@ -91,12 +91,12 @@ python examples/sensor_loop/sensor_loop_step_by_step.py --minimal --cases a  # O
 # Run full example with cases a and b
 python examples/sensor_loop/sensor_loop_step_by_step.py --cases a b  # Simulates only the easy-axis and 45-degree cases
 
-# Run with custom mesh sizes
-python examples/sensor_loop/sensor_loop_step_by_step.py --minimal --mesh-size-coarse 0.02  # Custom coarse mesh size
-python examples/sensor_loop/sensor_loop_step_by_step.py --mesh-size-fine 0.01  # Custom fine mesh size
+# Run with custom mesh sizes (in nanometers)
+python examples/sensor_loop/sensor_loop_step_by_step.py --minimal --mesh-size-coarse 20.0  # Custom coarse mesh size
+python examples/sensor_loop/sensor_loop_step_by_step.py --mesh-size-fine 2.5  # Custom fine mesh size
 
 # Directly specify mesh element size h (overrides coarse/fine) and update hstep in all sensor_case-*_* folders
-python examples/sensor_loop/sensor_loop_step_by_step.py --mesh-h 0.0125 --hstep 0.003  # Custom mesh and hstep for all cases
+python examples/sensor_loop/sensor_loop_step_by_step.py --mesh-h 3.0 --hstep 0.003  # Custom mesh and hstep for all cases
 
 # Load a specific initial state file by name
 python examples/sensor_loop/sensor_loop_step_by_step.py --initial-state-file sensor.0050.state.npz  # Use a precomputed initial state
