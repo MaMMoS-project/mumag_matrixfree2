@@ -119,7 +119,8 @@ def generate_workspace(sensor_loop_dir: Path):
             "mstep = 3.0",
             "",
             "[minimizer]",
-            "tol_fun = 1e-10"
+            "tol_fun = 1e-10",
+            "pc_iters = 20"
         ])
         (dpath / "sensor.p2").write_text("\n".join(p2_lines) + "\n")
     print("[WORKSPACE] ✓ Workspace generation complete.")
