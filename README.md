@@ -4,7 +4,9 @@ MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **J
 
 ## 1. Prerequisites and Installation
 
-The project uses **Pixi** for cross-platform dependency management, environment isolation, and automated C++ compilation.
+The project uses **Pixi** for cross-platform dependency management and
+development tasks. Linux x86-64 installs the native oneMKL backend; macOS uses
+portable paths.
 
 ### Prerequisites
 1. **Pixi**: Install Pixi if you haven't already:
@@ -14,47 +16,70 @@ The project uses **Pixi** for cross-platform dependency management, environment 
 2. **GPU Drivers** (Optional): If running on an NVIDIA GPU, ensure you have appropriate NVIDIA drivers installed. The CUDA toolkit is managed directly by Pixi.
 
 ### Installation
-Clone the repository and let Pixi handle everything. The environments will automatically build themselves upon first execution.
+Clone the repository and install the development environments:
+
 ```bash
 git clone git@github.com:MaMMoS-project/mumag_matrixfree2.git
 cd mumag_matrixfree2
+pixi install
 ```
-*Note: For Linux users running on CPU, Pixi will automatically compile the highly optimized `libcpp_mkl_minimizer.so` shared libraries using the Intel MKL in the background when the environment activates.*
 
-*Note for Mac Users (Apple Silicon / ARM64): Intel MKL is not available on Mac. You must bypass the MKL backends by appending `--cpu-spmv-backend scipy --no-cpp-mkl` to your `loop.py` simulation commands.*
+Run the development tasks with:
+
+```bash
+pixi run -e test test
+pixi run -e lint lint
+pixi run -e build build-package
+```
+
+After C++, CMake, dependency-metadata, or package-file changes, reinstall the
+editable package in the test environment:
+
+```bash
+pixi reinstall -e test tommos
+```
 
 ## 2. How to Run the Software Locally
 
-
-
-All operations are executed through `pixi run`. The default environment is `cpu`.
+Commands are run through `pixi run`; use `-e` to select an environment explicitly.
 
 ### Running Locally on CPU
 To run simulations or meshes on the CPU (uses Intel MKL and C++ backend by default on Linux):
 ```bash
-pixi run python3 src/loop.py <modelname> [options]
+pixi run tommos loop <modelname> [options]
 # Or explicitly targeting the CPU environment:
-pixi run -e cpu python3 src/loop.py <modelname> [options]
+pixi run -e cpu tommos loop <modelname> [options]
 ```
 
 ### Running Locally on GPU
 To run purely on the GPU (bypasses C++ MKL in favor of JAX XLA compilation):
 ```bash
-pixi run -e cuda python3 src/loop.py <modelname> [options]
+pixi run -e cuda tommos loop <modelname> [options]
 ```
 
 ## 3. How to Submit Jobs with Slurm
+
+Prepare or rebuild the CPU environment before submitting jobs:
+
+```bash
+pixi install -e cpu
+pixi reinstall -e cpu tommos
+```
+
+Jobs that share this environment should treat it as read-only and run the
+installed package; they should not reinstall it concurrently. See the
+[Slurm transition guide](docs/slurm.md) for the former per-job native build
+behavior and optional JAX compilation-cache configuration.
 
 ### Slurm Pipeline Examples
 
 Below are complete end-to-end Slurm pipeline examples. These scripts automatically handle the execution and performance environment tuning for different hardware profiles. You can save these as `.slurm` files in your simulation directory and submit them using `sbatch`.
 
 **1. `test_cpu.slurm`** (High-Performance CPU)
-- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node). Sets critical thread pinning (OpenMP) environment variables to guarantee optimal bare-metal CPU performance (MKL variables are now securely handled automatically in Python).
-- **Workflow**: 
-  - Triggers a secure, isolated local compilation of the C++ MKL backend directly into `/tmp/` to avoid network filesystem race conditions.
-  - Runs the demagnetization simulation using the generated cubic mesh.
-  - Safely deletes the `/tmp/` build artifacts upon completion to leave the node clean.
+- **Hardware**: Reserves CPUs on the `dissSims` partition (e.g., `Gd` node)
+  and configures OpenMP thread placement.
+- **Workflow**: Runs the demagnetization simulation with the native backend
+  already installed in the shared Pixi environment.
 
 ```bash
 #!/bin/bash
@@ -79,20 +104,14 @@ export OMP_PLACES=cores
 # Keep threads awake between rapid matrix multiplications to avoid sleep/wake latency
 export OMP_WAIT_POLICY=ACTIVE
 
-# compile the C++ library
-pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml compile
-
 echo "========================="
 echo "=== Running minimizer ==="
 echo "========================="
-pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cpu python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
+pixi run -e cpu tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_cpu \
     --benchmark \
     --verbose || echo "=== WARNING: minimizer failed! ==="
-
-# clean tmp
-rm -rf /tmp/mumag_build_${SLURM_JOB_ID}
 
 echo "=== JAX simulation finished ==="
 ```
@@ -115,7 +134,7 @@ echo "=== JAX simulation finished ==="
 echo "=== Running Assembled Test on A100 ==="
 export JAX_ENABLE_X64=True
 
-pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cuda python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
+pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_a100 \
     --benchmark \
@@ -125,7 +144,7 @@ echo "=== JAX simulation finished ==="
 ```
 
 **3. `test_multi_gpu.slurm`** (Multi-GPU)
-- **Hardware**: Reserves 4 L40s GPUs. 
+- **Hardware**: Reserves 4 L40s GPUs.
 - **Workflow**:
   - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them using distributed CSR matrices (`DistributedCSR`). Halo exchange is performed asynchronously via `jax.lax.all_to_all` within `shard_map`.
 - **Troubleshooting**:
@@ -147,7 +166,7 @@ echo "=== Running Assembled Test on l40s multi-gpu ==="
 export JAX_ENABLE_X64=True
 export NCCL_IGNORE_CPU_AFFINITY=1
 
-pixi run --manifest-path /ceph/home/schrefl/jax_dev/mumag_matrixfree2/pixi.toml -e cuda python3 /ceph/home/schrefl/jax_dev/mumag_matrixfree2/src/loop.py cube \
+pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
     --out-dir test_multi_gpu \
     --benchmark \
@@ -165,9 +184,9 @@ sbatch test_cpu.slurm
 
 A simulation requires three primary input files, usually sharing the same `<modelname>` prefix:
 
-1. **Mesh File (`<modelname>.npz`)**: A numpy archive containing the tetrahedral mesh nodes (`knt`) and elements (`ijk`). It can be generated using `src/mesh.py`. Alternatively, you can convert existing meshes using provided scripts:
-   - `src/mesh_convert.py`: Converts a VTK UnstructuredGrid (`.vtu`) mesh into the required `.npz` format (and vice versa).
-   - `src/salomeMeshToNpz.py`: Converts FEMME input files (`.knt` for nodes, `.ijk` for connectivity) into the `.npz` format.
+1. **Mesh File (`<modelname>.npz`)**: A numpy archive containing the tetrahedral mesh nodes (`knt`) and elements (`ijk`). It can be generated using `tommos mesh`. Alternatively, you can convert existing meshes using provided scripts:
+   - `python -m tommos.mesh_convert`: Converts a VTK UnstructuredGrid (`.vtu`) mesh into the required `.npz` format (and vice versa).
+   - `python -m tommos.salomeMeshToNpz`: Converts FEMME input files (`.knt` for nodes, `.ijk` for connectivity) into the `.npz` format.
 2. **Parameters File (`<modelname>.p2`)**: An INI-formatted configuration file defining the physical environment, field sweeps, and solver tolerances.
 3. **Materials File (`<modelname>.krn`)**: A 6-column space-separated text file mapping material IDs to their intrinsic magnetic properties (theta, phi, K1, -, Js, A).
 
@@ -210,22 +229,22 @@ The simulation saves results into the directory specified by `--out-dir` (defaul
 
 **1. Create a 20nm Cube Mesh:**
 ```bash
-pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
 ```
 
 **2. Create a 20nm Cube Mesh with an Auto-Generated Airbox:**
 ```bash
-pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
 ```
 
 **3. Create a High Aspect Ratio Eye Mesh with an Auto-Generated Airbox (using default bounding box method):**
 ```bash
-pixi run python3 src/mesh.py --geom eye --extent 2000,100,10 --h 5.0 --add-shell --out-name eye_mesh_2000
+pixi run tommos mesh --geom eye --extent 2000,100,10 --h 5.0 --add-shell --out-name eye_mesh_2000
 ```
 
 **4. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
 ```bash
-pixi run python3 src/loop.py cube_20nm --add-shell
+pixi run tommos loop cube_20nm --add-shell
 ```
 
 **5. Run a Full Pipeline Example (Provided):**
@@ -238,9 +257,9 @@ pixi run sample
 Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
 ```bash
 # Generate the mesh
-pixi run python3 src/mesh.py --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
+pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --backend grid --out-name cube_20nm --no-vis
 # Run the simulation without MKL
-pixi run python3 src/loop.py cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
+pixi run tommos loop cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
 ```
 
 ## 7. Numerical Methods & Algorithms
@@ -257,18 +276,18 @@ The solver employs a multi-tiered convergence criterion to decide when to stop t
 3. **Torque Bound**: The maximum norm of the tangent gradient (the torque $|m \times h_{eff}|$) is smaller than $\tau_f^{1/3}$ (scaled by absolute energy).
 
 Alternatively, the solver will instantly terminate if the **absolute** torque bound is reached:
-- **Absolute Torque Threshold**: The maximum norm of the tangent gradient strictly falls below the `--eps-a` parameter. 
+- **Absolute Torque Threshold**: The maximum norm of the tangent gradient strictly falls below the `--eps-a` parameter.
 
 If `--eps-a` is set to `auto` (or left undefined), the solver dynamically computes a "noise floor" by taking the maximum of your Poisson tolerance and the theoretical machine precision accumulation limit, scaled by the initial energy.
 
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
 - **`pardiso`**: Direct sparse solver utilizing the C++ Intel MKL backend. Vastly superior for CPU nodes.
-- **`jax`**: Iterative Preconditioned Conjugate Gradient (PCG) matrix-free solver. It uses an algebraic multigrid method for preconditioning the conjugate gradient. Highly parallelized for massive GPU execution.
+- **`jax`**: Iterative preconditioned conjugate-gradient solver using assembled sparse operators. It uses an algebraic multigrid method to precondition the conjugate-gradient iteration and supports parallel GPU execution.
 
 ## 8. CLI Features & Arguments
 
-### `src/loop.py` (Main Driver)
+### `tommos loop` (Main Driver)
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `modelname` | string | **Positional**. Base name. Looks for `<modelname>.npz`, `.krn`, and `.p2`. |
@@ -279,14 +298,15 @@ If `--eps-a` is set to `auto` (or left undefined), the solver dynamically comput
 | `--hmax` | float | Target edge length at the outermost shell boundary (default: auto scales with magnet size). |
 | `--shell-type`| choice | Outer boundary: `triangles`, `hull`, or `box` (default: `box`). |
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
-| `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
+| `--poisson-solver` | choice | `auto` (default), `jax`, `jax_mkl`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
 | `--ignore-mem-warning` | flag | Bypass the memory safety abort if estimated memory exceeds available RAM. |
+| `--num-devices` | int | Number of accelerator devices to use (default: `0`, meaning all available devices). |
 
-### `src/mesh.py` (Meshing Tool)
+### `tommos mesh` (Meshing Tool)
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `--geom` | choice | Geometry type: `box` (default), `ellipsoid`, `eye`, `poly`, `poly_gb`, etc. |
@@ -299,7 +319,7 @@ If `--eps-a` is set to `auto` (or left undefined), the solver dynamically comput
 | `--out-name` | string | Base name for output files. |
 | `--no-vis` | flag | Skip writing the `.vtu` file for the mesh geometry. |
 
-### `src/add_shell.py` (Standalone Airbox Tool)
+### `tommos add-shell` (Standalone Airbox Tool)
 The airbox tool can be run independently to add a far-field vacuum region to an existing mesh. It is highly optimized to minimize the number of tetrahedrons using a convex hull.
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -312,9 +332,9 @@ The airbox tool can be run independently to add a far-field vacuum region to an 
 | `--hmax` | float | Target edge length at the outermost boundary. Defaults to `None` (intelligently auto-scales to 20% of the expanded airbox bounds to prevent element explosions on large models). |
 | `--auto-layers`| flag | Automatically compute the number of layers required to reach `KL` using growth rate `K`. This is intrinsically enabled if `--layers` is omitted. |
 
-## 9. Appendix: Complete CLI Parameters for `src/loop.py`
+## 9. Appendix: Complete CLI Parameters for `tommos loop`
 
-Below is an exhaustive list of all command-line arguments accepted by the main driver script `src/loop.py`, categorized by function.
+Below is an exhaustive list of all command-line arguments accepted by the `tommos loop` main driver, categorized by function.
 
 ### Positional Arguments
 | Parameter | Description | Default |
@@ -364,17 +384,18 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 ### Solver Backend & Parallelization
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
+| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `jax_mkl`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
+| `--num-devices` | Number of accelerator devices to use; `0` selects all available devices. | `0` |
 
 ### Energy Minimizer Configuration
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `tr`). | `pcohen_hs` |
-| `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `2000` |
+| `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `8000` |
 | `--tau-f` | Relative energy convergence tolerance for the minimizer. | `1e-8` |
-| `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `1e-12` |
+| `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `auto` |
 | `--tau0` | Initial step size guess for the minimizer line search. | `0.01` |
 | `--L` | Restart frequency for conjugate gradient methods. | Number of nodes |
 | `--tn-iters` | Maximum inner iterations for Truncated Newton-CG solvers. | `5` |
@@ -389,14 +410,14 @@ Below is an exhaustive list of all command-line arguments accepted by the main d
 | `--pc-force-alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` |
 | `--pc-stagnation-nu`| Relative threshold for detecting quadratic model stagnation. | `0.01` |
 | `--pc-reg` | Diagonal regularization shift for the preconditioner matrix. | `0.0` |
-| `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `2000` |
+| `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `8000` |
 | `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least two orders of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.01)`). | `1e-8` |
 | `--poisson-reg` | Tikhonov regularization constant for the Poisson operator diagonal. | `1e-12` |
 | `--phi-extrapolate` / `--no-phi-extrapolate` | Use linear extrapolation of scalar potential for faster iterative Poisson solves. | `True` |
 
 ## 10. Appendix: `.p2` Configuration Parameters and Overrides
 
-In addition to CLI arguments, you can define simulation parameters permanently using a `<modelname>.p2` INI file. 
+In addition to CLI arguments, you can define simulation parameters permanently using a `<modelname>.p2` INI file.
 
 ### Parameter Resolution Priority
 The code dynamically merges parameters with the following strict priority:
@@ -404,7 +425,7 @@ The code dynamically merges parameters with the following strict priority:
 2. **`.p2` Parameter File** (Overwrites built-in defaults)
 3. **Built-in Defaults** (Lowest priority)
 
-This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run python3 src/loop.py my_model --method lbfgs`).
+This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run tommos loop my_model --method tr`).
 
 ### Supported `.p2` Parameters
 
@@ -434,9 +455,9 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
 | `method` | Energy minimization algorithm. | `pcohen_hs` | `--method` |
-| `max_iter` | Maximum inner iterations per field step. | `2000` | `--max-iter` |
+| `max_iter` | Maximum inner iterations per field step. | `8000` | `--max-iter` |
 | `tol_fun` | Relative energy convergence tolerance. | `1e-8` | `--tau-f` |
-| `eps_a` | Absolute tangent gradient norm tolerance. | `1e-12` | `--eps-a` |
+| `eps_a` | Absolute tangent gradient norm tolerance. | `auto` | `--eps-a` |
 | `tau0` | Initial step size guess. | `0.01` | `--tau0` |
 | `pc_iters` | Inner iteration limit for preconditioning solvers. | `10` | `--pc-iters` |
 | `pc_auto` | Enable automated tuning of preconditioning. | `True` | `--pc-auto` |
@@ -448,7 +469,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 #### `[poisson]`
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
-| `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
+| `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `8000` | `--cg-maxiter` |
 | `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least two orders of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.01)`). | `1e-8` | `--cg-tol` |
 | `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
 
@@ -470,7 +491,7 @@ pixi run -e cuda python evaluate_properties.py --K1 700000 --Js 0.8 --A 7.6e-11
 ```
 *(Alternatively, submit `sbatch run_evaluate_properties.slurm` to a cluster).*
 This wrapper script orchestrates two distinct phases for the specified intrinsic properties across all 10 structures:
-- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `loop.py` sequentially for each structure.
+- **Compute Phase:** Overwrites `K1`, `Js`, and `A` while preserving the fixed easy-axes, and runs `tommos loop` sequentially for each structure.
 - **Analyze Phase:** Analyzes the simulation outputs, automatically handling demagnetization field shearing and detecting overskewed coercivities.
 
 Results are written to the `evaluations/` directory, including a visual plot (`*_demag_curves.png`) and three strictly typed, ontology-mapped CSV files:

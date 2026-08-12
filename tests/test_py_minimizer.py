@@ -4,21 +4,20 @@ import sys
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-
-from amg_utils import (
+from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
     assemble_poisson_matrix_cpu,
     make_sparse_operator,
 )
-from fem_utils import TetGeom, compute_node_volumes
-from hysteresis_loop import LoopParams
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
-from minimizers import make_minimizer
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.hysteresis_loop import LoopParams
+from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+from tommos.minimizers import make_minimizer
 
 
-def test():
+def test() -> None:
+    """Run the assembled Python minimizer on a small mesh."""
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -67,7 +66,6 @@ def test():
     m = m / np.linalg.norm(m, axis=1, keepdims=True)
     m = jnp.asarray(m)
 
-    node_vols = compute_node_volumes(geom)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
@@ -88,16 +86,27 @@ def test():
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
-    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data_D = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data_D, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
     D_sparse = make_sparse_operator(
         D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
 
     N = knt.shape[0]
-    Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-    Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-    Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_G = np.concatenate([Gx_coo.row * 3, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_G = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_G = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_G, (rows_G, cols_G)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
     G_sparse = make_sparse_operator(
         G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
@@ -110,7 +119,7 @@ def test():
     )
 
     # Setup Solve_U
-    from poisson_solve import make_solve_U
+    from tommos.poisson_solve import make_solve_U
 
     solve_U, hierarchy_jax = make_solve_U(
         geom,
@@ -143,7 +152,6 @@ def test():
     U = jnp.zeros(N, dtype=jnp.float64)
     B_ext = jnp.array([0.0, 0.0, -0.5], dtype=jnp.float64)
 
-    print("Running JAX minimize...")
     params = LoopParams(
         h_dir="0,0,1",
         B_start=0.0,

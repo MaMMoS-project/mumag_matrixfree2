@@ -1,5 +1,7 @@
 # C++ build artifacts
 build/
+dist/
+*.egg-info/
 deps/
 bin/
 

@@ -13,21 +13,17 @@ Usage: pixi run python benchmarking/compare_minimizers.py --mesh samples/sphere_
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import replace
 from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
-
-sys.path.append("src")
-
 from curvilinear_bb_minimizer import make_minimizer as make_bb_minimizer
 
-import add_shell
-from fem_utils import TetGeom, compute_node_volumes
-from minimizers import make_minimizer as make_new_minimizer
-from poisson_solve import make_solve_U
+from tommos import add_shell
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.minimizers import make_minimizer as make_new_minimizer
+from tommos.poisson_solve import make_solve_U
 
 
 def load_mesh(mesh_path):
@@ -114,7 +110,7 @@ def main():
     Js_red = Js_lookup / Js_ref
 
     # Geometry
-    from loop import compute_volume_JinvT
+    from tommos.loop import compute_volume_JinvT
 
     conn32, volume, JinvT = compute_volume_JinvT(knt, conn)
     geom = TetGeom(

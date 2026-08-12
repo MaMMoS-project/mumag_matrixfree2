@@ -858,7 +858,7 @@ def make_minimizer(
     **kwargs,
 ):
     """Factory function to create various micromagnetic energy minimizers."""
-    from energy_kernels import make_energy_kernels
+    from .energy_kernels import make_energy_kernels
 
     if "energy_assembly" in kwargs:
         kwargs["assembly"] = kwargs.pop("energy_assembly")
@@ -941,21 +941,21 @@ def make_minimizer(
         g_tan = tangent_grad(m, g_raw * sparse_ops["inv_M_rel"])
         g_tan_ext = tangent_grad(m, g_raw)
         gnorm_init = jnp.max(jnp.abs(g_tan))
-        
+
         # --- NEW LOGIC FOR eps_a ---
         if params_dict.get("eps_a") is None:
             phi_tol_actual = params_dict["phi_tol"]
-            
+
             eps_M = jnp.finfo(E.dtype).eps
             N_nodes = m0.shape[0]
-            
+
             # Relative noise floor: max of Poisson tolerance and round-off accumulation
             eps_R = jnp.maximum(phi_tol_actual, jnp.sqrt(3 * N_nodes) * eps_M)
-            
+
             # Scale by the initial energy (E0) to get the absolute tolerance
             params_dict["eps_a"] = eps_R * (1.0 + jnp.abs(E))
         # ---------------------------
-        
+
         state = init_state_fn(
             m,
             U,

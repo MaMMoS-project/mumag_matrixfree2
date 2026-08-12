@@ -16,12 +16,8 @@ def main():
     args = parser.parse_args()
 
     run_dir = Path(__file__).resolve().parent
-    base_dir = run_dir.parent.parent.resolve()
     base_structures_dir = run_dir / "base_structures"
     base_structures_dir.mkdir(parents=True, exist_ok=True)
-
-    mesh_script = base_dir / "src" / "mesh.py"
-    make_krn_script = base_dir / "src" / "make_krn.py"
 
     # Save metadata so evaluate_properties.py can record it in CSVs
     with open(base_structures_dir / "metadata.txt", "w") as f:
@@ -38,8 +34,8 @@ def main():
 
         # 1. Generate Mesh
         mesh_cmd = [
-            sys.executable,
-            str(mesh_script),
+            "tommos",
+            "mesh",
             "--geom",
             "poly",
             "--n",
@@ -56,7 +52,8 @@ def main():
         # 2. Generate KRN with defaults just to set the fixed easy axes
         krn_cmd = [
             sys.executable,
-            str(make_krn_script),
+            "-m",
+            "tommos.make_krn",
             "--mesh",
             "isotrop.npz",
             "--out",

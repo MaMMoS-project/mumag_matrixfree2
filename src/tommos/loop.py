@@ -21,7 +21,11 @@ License: MIT
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
+import sys
+from collections.abc import Sequence
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +38,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-import add_shell
-from fem_utils import TetGeom
-from hysteresis_loop import LoopParams, run_hysteresis_loop
-from io_utils import write_mh
+from . import add_shell
+from .fem_utils import TetGeom
+from .hysteresis_loop import LoopParams, run_hysteresis_loop
+from .io_utils import write_mh
 
 jax.config.update("jax_enable_x64", True)
 
@@ -51,6 +55,16 @@ _GRAD_HAT = np.array(
     ],
     dtype=np.float64,
 )
+
+
+def _native_mkl_available() -> bool:
+    """Return whether the packaged MKL-dependent native backend can be loaded."""
+    native_library = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+    try:
+        ctypes.CDLL(str(native_library))
+    except OSError:
+        return False
+    return True
 
 
 def compute_volume_JinvT(knt: np.ndarray, conn: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -329,7 +343,7 @@ def load_materials(
     return A, K1, Js, k_easy
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """Main CLI entry point for the micromagnetics hysteresis driver.
 
     Orchestrates the entire simulation pipeline:
@@ -338,8 +352,15 @@ def main() -> None:
     - Precomputing geometry.
     - Running the hysteresis loop.
     - Exporting results.
+
+    Args:
+        argv: Command arguments. Uses `sys.argv` when omitted.
     """
-    ap = argparse.ArgumentParser(description="Micromagnetics hysteresis driver with shell + preprocessing.")
+    cli_arguments = sys.argv[1:] if argv is None else argv
+    ap = argparse.ArgumentParser(
+        prog="tommos loop",
+        description="Micromagnetics hysteresis driver with shell + preprocessing.",
+    )
     ap.add_argument(
         "modelname",
         nargs="?",
@@ -666,7 +687,7 @@ def main() -> None:
         help="Bypass the memory safety abort if estimated memory exceeds available RAM.",
     )
 
-    args = ap.parse_args()
+    args = ap.parse_args(cli_arguments)
 
     # Dynamic defaults based on platform
     try:
@@ -674,13 +695,7 @@ def main() -> None:
     except Exception:
         has_gpu = False
 
-    try:
-        import ctypes
-
-        ctypes.CDLL("libmkl_rt.so")
-        has_mkl = True
-    except OSError:
-        has_mkl = False
+    has_mkl = _native_mkl_available()
 
     if args.cpp_mkl is None:
         args.cpp_mkl = not has_gpu and has_mkl
@@ -690,7 +705,7 @@ def main() -> None:
 
     num_devices = args.num_devices if args.num_devices > 0 else len(jax.devices())
     print(f"[config] JAX initialized with {len(jax.devices())} total devices.")
-    
+
     if num_devices > 1:
         devices = jax.devices()[:num_devices]
         print(f"[config] Distributing arrays across {num_devices} active devices: {devices}")
@@ -773,25 +788,24 @@ def main() -> None:
         mat_id = ijk_shell[:, 4].astype(np.int32)
 
     G = int(mat_id.max())
-    
-    from memory_profiler import estimate_cpu_memory
-    import sys
-    
+
+    from .memory_profiler import estimate_cpu_memory
+
     Nnodes = len(knt)
     Nelements = len(conn)
     peak_mb = estimate_cpu_memory(Nnodes, Nelements, args)
-    
+
     try:
         import psutil
         available_mb = psutil.virtual_memory().available / (1024 * 1024)
     except Exception as e:
         print(f"[WARNING] Could not check available memory with psutil: {e}")
         available_mb = float('inf')
-    
+
     num_dev = len(jax.devices())
     platform = jax.devices()[0].platform.upper()
     hardware_str = f"{platform} ({num_dev} device{'s' if num_dev > 1 else ''})"
-    
+
     print("\n======================================================================")
     print("=== HARDWARE & MEMORY ANALYSIS ===")
     print(f"Hardware       : {hardware_str}")
@@ -864,18 +878,18 @@ def main() -> None:
     # Priority: p2 ini > p2 override > CLI --m0-dir > CLI --h-dir
     ini_val = p2_overrides.get("ini", None)
     m0_str = p2_overrides.get("m0_dir", args.m0_dir)
-    
+
     if ini_val is not None:
         import glob
         import meshio
-        
+
         pattern = f"state_cfg{ini_val:05d}_*.vtu"
         matches = glob.glob(pattern) + glob.glob(str(Path(args.out_dir) / pattern))
         if not matches:
             raise FileNotFoundError(f"Initial state VTU file not found for ini={ini_val}. Looked for {pattern}")
         vtu_path = matches[0]
         print(f"[materials] Loading initial magnetization from {vtu_path}")
-        
+
         mesh_data = meshio.read(vtu_path)
         if "m" not in mesh_data.point_data:
             raise ValueError(f"No 'm' vector found in point_data of {vtu_path}")
@@ -888,7 +902,7 @@ def main() -> None:
             m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
         else:
             m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
-    
+
         m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
         m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
         config_idx_offset = 0
@@ -901,7 +915,7 @@ def main() -> None:
     boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
 
     # Preconditioning: compute lumped node volumes and magnetic moments M_nodal
-    from fem_utils import compute_node_volumes
+    from .fem_utils import compute_node_volumes
 
     # Precompute nodal moments M (M_i = sum_e Js_red[e] * Ve / 4)
     # This is used for Zeeman energy/gradient and as a physical preconditioner
@@ -979,8 +993,7 @@ def main() -> None:
 
     # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
     # it should win over BOTH defaults and p2.
-    # We check if the arg flag is actually present in sys.argv.
-    import sys
+    # We check if the arg flag is actually present in cli_arguments.
 
     # Map destination variable names to the flags that can set them
     dest_to_flags = {}
@@ -991,9 +1004,9 @@ def main() -> None:
     explicit_cli_args = set()
     for dest, flags in dest_to_flags.items():
         for flag in flags:
-            # Check if any flag matching this dest is in sys.argv
+            # Check if any flag matching this dest is in cli_arguments
             # (handles both --flag value and --flag=value)
-            if any(arg.startswith(flag) for arg in sys.argv):
+            if any(argument.startswith(flag) for argument in cli_arguments):
                 explicit_cli_args.add(dest)
                 break
 
@@ -1024,11 +1037,11 @@ def main() -> None:
     out_dir_path.mkdir(parents=True, exist_ok=True)
 
     log_dict = dataclasses.asdict(params)
-    
+
     # Inject orchestrator settings that govern the solver but aren't in LoopParams
     log_dict["precond_type"] = args.precond_type
     log_dict["cpu_spmv_backend"] = args.cpu_spmv_backend
-    
+
     ini_val = p2_overrides.get("ini", None)
     if ini_val is not None:
         log_dict["ini"] = ini_val
@@ -1042,7 +1055,7 @@ def main() -> None:
     else:
         log_dict["m0_dir"] = args.h_dir
         param_sources["m0_dir"] = "default"
-        
+
     # Re-scale external fields back to Tesla for human-readable logging
     for field_key in ["B_start", "B_end", "dB", "mfinal", "mstep"]:
         if field_key in log_dict and log_dict[field_key] is not None:
@@ -1055,11 +1068,11 @@ def main() -> None:
             if "extrapolate" in k:
                 continue
             source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
-            
+
             val = log_dict[k]
             if isinstance(val, np.ndarray):
                 val = val.tolist()
-                
+
             f.write(f"| {k} | {val} | {source} |\n")
             if k == "cg_tol":
                 phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.01))
@@ -1090,7 +1103,7 @@ def main() -> None:
     cpu_spmv_backend = args.cpu_spmv_backend
 
     print("Assembling global sparse operators on CPU...")
-    from amg_utils import (
+    from .amg_utils import (
         assemble_divergence_matrices_cpu,
         assemble_poisson_matrix_cpu,
         make_sparse_operator,
@@ -1108,7 +1121,7 @@ def main() -> None:
         conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
     )
 
-    from amg_utils import pad_scipy_csr
+    from .amg_utils import pad_scipy_csr
     if mesh is not None:
         num_dev = mesh.shape["devices"]
         A_scipy = pad_scipy_csr(A_scipy, num_dev)
@@ -1162,7 +1175,7 @@ def main() -> None:
 
     Dx_shape_0 = Dx_scipy.shape[0]
     Dx_shape_1 = Dx_scipy.shape[1]
-    
+
     Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
     del Dx_scipy
     Gx_row, Gx_col, Gx_data = Gx_coo.row * 3 + 0, Gx_coo.col, Gx_coo.data
@@ -1187,7 +1200,7 @@ def main() -> None:
     del Gx_col, Gy_col, Gz_col
     data_g = np.concatenate([Gx_data, Gy_data, Gz_data])
     del Gx_data, Gy_data, Gz_data
-    
+
     G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Dx_shape_1, Dx_shape_0))
     del rows_g, cols_g, data_g
     gc.collect()
@@ -1202,8 +1215,8 @@ def main() -> None:
 
     if not args.cpp_mkl:
         del D_scipy, G_scipy
-        
-    from amg_utils import assemble_exchange_anisotropy_matrix_cpu
+
+    from .amg_utils import assemble_exchange_anisotropy_matrix_cpu
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
@@ -1222,7 +1235,7 @@ def main() -> None:
     if not args.cpp_mkl:
         del K_eff_scipy
 
-    from jax_utils import distribute_array
+    from .jax_utils import distribute_array
 
     assembled_kwargs = {
         "A_sparse": A_sparse,
@@ -1284,7 +1297,7 @@ def main() -> None:
     print(f"[ok] Wrote mammos-mumag compatibility file: {Path(args.out_dir) / mh_name}.mh")
 
     # Convert the raw simulation CSV to mammos_entity format
-    from io_utils import convert_sim_csv_to_mammos
+    from .io_utils import convert_sim_csv_to_mammos
 
     csv_name = params_dict.get("csv_name", "hysteresis.csv")
     csv_path = Path(args.out_dir) / csv_name

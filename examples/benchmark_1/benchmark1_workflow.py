@@ -107,10 +107,9 @@ def step1_generate_mesh(
         print(f"[CONFIG] Mesh extent: {extent}")
         print(f"[CONFIG] Grain count: {grains}")
 
-        mesh_script = (base / "src/mesh.py").resolve()
         mesh_cmd = [
-            sys.executable,
-            str(mesh_script),
+            "tommos",
+            "mesh",
             "--geom",
             "poly",
             "--n",
@@ -179,10 +178,10 @@ def step2_build_krn(base: Path, benchmark_dir: Path, tol: float = 0.01) -> None:
         print("\n[CONFIG] Material: Isotropic (K1 = 700 kJ/m³, Js = 0.8 T)")
         print(f"[CONFIG] Tolerance: {tol}")
 
-        make_krn_script = (base / "src/make_krn.py").resolve()
         krn_cmd = [
             sys.executable,
-            str(make_krn_script),
+            "-m",
+            "tommos.make_krn",
             "--tol",
             str(tol),
             "--K1",
@@ -309,13 +308,11 @@ def step3_run_loop(base: Path, benchmark_dir: Path, num_loops: int = 1) -> None:
         print("  Direction: Hz (along z-axis)")
         print(f"  Number of runs: {num_loops}")
 
-        loop_script = (base / "src/loop.py").resolve()
-
         for loop_idx in range(1, num_loops + 1):
             if num_loops > 1:
                 print(f"\n[LOOP] Run {loop_idx}/{num_loops}")
 
-            loop_cmd = [sys.executable, str(loop_script), "isotrop", "--mesh", str(mesh_path), "--add-shell"]
+            loop_cmd = ["tommos", "loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
 
             print(f"\n[COMMAND] {' '.join(loop_cmd)}")
             print("[SIMULATION] Running micromagnetic hysteresis loop...")
@@ -375,13 +372,11 @@ def step3b_run_loop_up(base: Path, benchmark_dir: Path, num_loops: int = 1) -> N
         print("  Direction: Hz (along z-axis)")
         print(f"  Number of runs: {num_loops}")
 
-        loop_script = (base / "src/loop.py").resolve()
-
         for loop_idx in range(1, num_loops + 1):
             if num_loops > 1:
                 print(f"\n[LOOP] Run {loop_idx}/{num_loops}")
 
-            loop_cmd = [sys.executable, str(loop_script), "isotrop", "--mesh", str(mesh_path), "--add-shell"]
+            loop_cmd = ["tommos", "loop", "isotrop", "--mesh", str(mesh_path), "--add-shell"]
 
             print(f"\n[COMMAND] {' '.join(loop_cmd)}")
             print("[SIMULATION] Running micromagnetic hysteresis loop...")

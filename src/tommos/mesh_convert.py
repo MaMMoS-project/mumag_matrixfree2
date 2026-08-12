@@ -75,7 +75,7 @@ def npz_to_vtu(npz_path: str, vtu_path: str) -> None:
         m.write(vtu_path)
         return
 
-    from io_utils import write_vtu_tetra
+    from .io_utils import write_vtu_tetra
 
     write_vtu_tetra(vtu_path, knt, conn, cell_data=cell_data)
 

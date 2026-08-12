@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -923,12 +924,18 @@ def run_add_shell_pipeline(  # noqa: D417
 # ------------------------------ CLI (optional) ----------------------------------
 
 
-def main():
+def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for adding graded shell layers.
 
     Parses command line arguments and invokes run_add_shell_pipeline.
+
+    Args:
+        argv: Command arguments. Uses `sys.argv` when omitted.
     """
-    ap = argparse.ArgumentParser(description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).")
+    ap = argparse.ArgumentParser(
+        prog="tommos add-shell",
+        description="Add graded exterior tetrahedral layers using MeshPy/TetGen (in-memory).",
+    )
     ap.add_argument(
         "--in",
         dest="in_npz",
@@ -1034,7 +1041,7 @@ def main():
         help="Optional path to save the merged mesh as a VTU file for visualization.",
     )
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     knt, ijk = run_add_shell_pipeline(
         in_npz=args.in_npz,

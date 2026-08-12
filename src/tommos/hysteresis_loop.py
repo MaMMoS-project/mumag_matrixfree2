@@ -11,22 +11,22 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from energy_kernels import make_energy_kernels
-from fem_utils import TetGeom
-from io_utils import (
+from .energy_kernels import make_energy_kernels
+from .fem_utils import TetGeom
+from .io_utils import (
     append_hysteresis_row,
     ensure_dir,
     write_hysteresis_header,
     write_vtu_tetra,
 )
-from minimizers import make_minimizer
-from poisson_solve import make_solve_U
+from .minimizers import make_minimizer
+from .poisson_solve import make_solve_U
 
 
 @dataclass
@@ -309,7 +309,7 @@ def run_hysteresis_loop(  # noqa: D417
         mesh=mesh,
         A_scipy=A_scipy,
     )
-    
+
     if params.poisson_solver != "pardiso":
         if "A_scipy" in locals():
             del A_scipy
@@ -318,8 +318,9 @@ def run_hysteresis_loop(  # noqa: D417
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    if Kex_diag is not None:
-        d_diag = Kex_diag * (1.0 / V_mag)
+    if Kex_diag is None:
+        raise ValueError("Kex_diag is required in assembled mode.")
+    d_diag = Kex_diag * (1.0 / V_mag)
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
 
@@ -419,14 +420,12 @@ def run_hysteresis_loop(  # noqa: D417
         start_step = time.time()
 
         if params.cpp_mkl:
-            from cpp_minimizer import cpp_minimize
+            from .cpp_minimizer import cpp_minimize
 
             # Add parameters needed by C++ wrapper
             params.M_nodal = M_nodal
             params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
             params.V_mag = V_mag
-            if Kex_diag is not None:
-                d_diag = Kex_diag * (1.0 / V_mag)
             params.inv_M_prec = 1.0 / (d_diag + 1e-30)
             m, U, info = cpp_minimize(
                 m,
@@ -494,7 +493,7 @@ def run_hysteresis_loop(  # noqa: D417
         # Compute volume averages instantly on GPU (JAX)
         J_avg_gpu = jnp.sum(m * M_nodal[:, None], axis=0) / V_mag
         J_avg = np.array(J_avg_gpu)
-        
+
         h_dir = np.asarray(h)
         h_unit = h_dir / (np.linalg.norm(h_dir) + 1e-30)
         Jpar = float(np.dot(J_avg, h_unit))

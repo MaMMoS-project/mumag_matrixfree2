@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -1819,7 +1820,7 @@ def run_single_solid_mesher(  # noqa: D417
         import os
         import tempfile
 
-        import add_shell
+        from . import add_shell
 
         fd, tmp_npz_path = tempfile.mkstemp(suffix=".tmp_body.npz")
         try:
@@ -2269,13 +2270,17 @@ def mesh_backend_neper_poly(
 # ------------------------------- CLI -------------------------------
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for the single solid mesher.
 
     Parses command line arguments and invokes run_single_solid_mesher.
+
+    Args:
+        argv: Command arguments. Uses `sys.argv` when omitted.
     """
     ap = argparse.ArgumentParser(
-        description="Single solid mesher (box or ellipsoid) centered at origin with meshpy or grid backend."
+        prog="tommos mesh",
+        description="Single solid mesher (box or ellipsoid) centered at origin with meshpy or grid backend.",
     )
     ap.add_argument(
         "--geom",
@@ -2516,7 +2521,7 @@ def main() -> None:
         help="Enable verbose logging during the meshing process.",
     )
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     # Delegate to the programmatic entry point; map CLI types directly.
     try:

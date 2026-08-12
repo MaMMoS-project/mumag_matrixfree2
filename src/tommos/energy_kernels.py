@@ -49,7 +49,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 
-from fem_utils import TetGeom
+from .fem_utils import TetGeom
 
 jax.config.update("jax_enable_x64", True)
 
@@ -81,7 +81,7 @@ def make_energy_kernels(  # noqa: D417
     Callable[[Array, Array, Array], Array],
     Callable[[Array], Array],
 ]:
-    """Create JIT-compiled micromagnetic energy and gradient functions in matrix-free or matrix-assembled mode.
+    """Create JIT-compiled energy and gradient functions for assembled sparse operators.
 
     Returns a quartet of functions (energy_and_grad, energy_only, grad_only, local_grad_only).
     All calculations use dimensionless scaling.
@@ -97,13 +97,8 @@ def make_energy_kernels(  # noqa: D417
         B_bias (Array | None, optional): Per-node bias field for mode initialization.
         k1me (Array | None, optional): Per-element magnetoelastic constant Kx.
         k1me_p (Array | None, optional): Per-element magnetoelastic constant Ky.
-        chunk_elems (int, optional): Elements processed per loop iteration.
-            Defaults to 200_000.
         assembly (Assembly, optional): Nodal assembly method
             ('scatter' or 'segment_sum'). Defaults to 'scatter'.
-        grad_backend (GradBackend, optional): Strategy for shape function gradients.
-            'stored_grad_phi', 'stored_JinvT', or 'on_the_fly'.
-            Defaults to 'stored_grad_phi'.
         Kex_sparse (Any | None): Assembled exchange matrix in JAX BCOO format.
         Kan_sparse (Any | None): Assembled anisotropy matrix in JAX BCOO format.
         k_nodes (Array | None): Precomputed easy axis per node (N, 3).
@@ -113,7 +108,6 @@ def make_energy_kernels(  # noqa: D417
             Each function takes (m, U, B_ext) as input, except local_grad_only which takes only v.
     """
     inv_Vmag = 1.0 / V_mag
-
 
     def energy_and_grad(m: Array, U: Array, B_ext: Array, sparse_ops: dict = None) -> tuple[Array, Array]:
         N = m.shape[0]
@@ -160,5 +154,3 @@ def make_energy_kernels(  # noqa: D417
         return g_ex_an * inv_Vmag
 
     return jax.jit(energy_and_grad), jax.jit(energy_only), jax.jit(grad_only), jax.jit(local_grad_only)
-
-

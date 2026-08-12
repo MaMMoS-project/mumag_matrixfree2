@@ -1,6 +1,8 @@
 # ruff: noqa: E402
+import ctypes
 import os
 import sys
+from importlib.resources import files
 
 import jax.numpy as jnp
 import numpy as np
@@ -10,21 +12,33 @@ pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="C++ MKL minimizer is only supported on Linux"
 )
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-
-from amg_utils import (
+from tommos.amg_utils import (
     assemble_divergence_matrices_cpu,
     assemble_exchange_anisotropy_matrix_cpu,
     assemble_poisson_matrix_cpu,
     make_sparse_operator,
 )
-from cpp_minimizer import cpp_minimize
-from fem_utils import TetGeom, compute_node_volumes
-from hysteresis_loop import LoopParams
-from loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
+from tommos.cpp_minimizer import cpp_minimize
+from tommos.fem_utils import TetGeom, compute_node_volumes
+from tommos.hysteresis_loop import LoopParams
+from tommos.loop import _native_mkl_available, compute_grad_phi_from_JinvT, compute_volume_JinvT, load_materials
 
 
-def test():
+def test_native_library_is_installed_as_package_resource() -> None:
+    """Load the installed native library through the package resource."""
+    native_library = files("tommos").joinpath("_native", "libcpp_mkl_minimizer.so")
+
+    assert native_library.is_file()
+    ctypes.CDLL(str(native_library))
+
+
+def test_native_mkl_is_available_for_dynamic_defaults() -> None:
+    """Recognize the installed native backend without assuming an MKL SONAME."""
+    assert _native_mkl_available()
+
+
+def test() -> None:
+    """Run the assembled C++ minimizer on a small mesh."""
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -73,7 +87,6 @@ def test():
     m = m / np.linalg.norm(m, axis=1, keepdims=True)
     m = jnp.asarray(m)
 
-    compute_node_volumes(geom)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
@@ -94,21 +107,27 @@ def test():
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
-    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data_D = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data_D, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
 
     N = knt.shape[0]
-    Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-    Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-    Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_G = np.concatenate([Gx_coo.row * 3, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_G = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_G = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_G, (rows_G, cols_G)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
-    )
-    make_sparse_operator(
-        K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
 
     # Preconditioning setup
@@ -134,7 +153,7 @@ def test():
     params.inv_M_prec = inv_M_prec
 
     # Setup Solve_U
-    from poisson_solve import make_solve_U
+    from tommos.poisson_solve import make_solve_U
 
     solve_U, _ = make_solve_U(
         geom,
