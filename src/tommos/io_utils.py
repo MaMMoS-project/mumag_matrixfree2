@@ -268,6 +268,98 @@ def write_vtu_tetra(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def read_vtu_magnetization(
+    path: str | Path,
+    expected_points: np.ndarray,
+    *,
+    coordinate_rtol: float = 1e-6,
+    coordinate_atol: float = 1e-8,
+) -> np.ndarray:
+    """Read and validate nodal magnetization from a VTU snapshot.
+
+    Args:
+        path: VTU snapshot path.
+        expected_points: Simulation mesh coordinates in their required ordering.
+        coordinate_rtol: Relative tolerance for coordinate comparison.
+        coordinate_atol: Absolute tolerance for coordinate comparison.
+
+    Returns:
+        Normalized nodal magnetization with shape ``(N, 3)``.
+
+    Raises:
+        FileNotFoundError: If the VTU path does not exist.
+        ValueError: If the VTU mesh or magnetization field is incompatible.
+    """
+    import meshio
+
+    vtu_path = Path(path)
+    if not vtu_path.is_file():
+        raise FileNotFoundError(f"Initial-state VTU file not found: {vtu_path}")
+
+    expected = np.asarray(expected_points, dtype=np.float64)
+    if expected.ndim != 2 or expected.shape[1] != 3:
+        raise ValueError(f"Expected simulation coordinates with shape (N, 3); found {expected.shape}.")
+    if not np.all(np.isfinite(expected)):
+        raise ValueError("Expected simulation coordinates contain non-finite values.")
+
+    try:
+        mesh = meshio.read(vtu_path)
+    except Exception as exc:
+        raise ValueError(f"Could not read initial-state VTU file {vtu_path}: {exc}") from exc
+
+    found_points = np.asarray(mesh.points, dtype=np.float64)
+    expected_count = expected.shape[0]
+    found_count = found_points.shape[0] if found_points.ndim >= 1 else 0
+    if found_count != expected_count:
+        raise ValueError(
+            f"Initial-state VTU node count mismatch for {vtu_path}: expected {expected_count}, found {found_count}."
+        )
+    if found_points.shape != expected.shape:
+        raise ValueError(
+            f"Initial-state VTU coordinate shape mismatch for {vtu_path}: expected {expected.shape}, "
+            f"found {found_points.shape}."
+        )
+    if not np.all(np.isfinite(found_points)):
+        raise ValueError(f"Initial-state VTU coordinates in {vtu_path} contain non-finite values.")
+    if not np.allclose(found_points, expected, rtol=coordinate_rtol, atol=coordinate_atol):
+        max_difference = float(np.max(np.abs(found_points - expected)))
+        mismatched_nodes = int(
+            np.count_nonzero(
+                np.any(~np.isclose(found_points, expected, rtol=coordinate_rtol, atol=coordinate_atol), axis=1)
+            )
+        )
+        raise ValueError(
+            f"Initial-state VTU coordinates or node ordering do not match the simulation mesh for {vtu_path}: "
+            f"expected {expected_count} coordinates in identical order, found {mismatched_nodes} mismatched nodes "
+            f"with maximum absolute difference {max_difference:.6e}."
+        )
+
+    if "m" not in mesh.point_data:
+        available = ", ".join(sorted(mesh.point_data)) or "none"
+        raise ValueError(
+            f"Initial-state VTU file {vtu_path} must contain point data named 'm'; found point data: {available}."
+        )
+    magnetization = np.asarray(mesh.point_data["m"], dtype=np.float64)
+    expected_shape = (expected_count, 3)
+    if magnetization.shape != expected_shape:
+        raise ValueError(
+            f"Initial-state VTU point data 'm' has the wrong shape in {vtu_path}: expected {expected_shape}, "
+            f"found {magnetization.shape}."
+        )
+    if not np.all(np.isfinite(magnetization)):
+        bad_count = int(np.size(magnetization) - np.count_nonzero(np.isfinite(magnetization)))
+        raise ValueError(f"Initial-state VTU point data 'm' in {vtu_path} contains {bad_count} non-finite value(s).")
+
+    norms = np.linalg.norm(magnetization, axis=1)
+    zero_indices = np.flatnonzero(norms == 0.0)
+    if zero_indices.size:
+        preview = zero_indices[:5].tolist()
+        raise ValueError(
+            f"Initial-state VTU point data 'm' in {vtu_path} contains zero-length vectors at node indices {preview}."
+        )
+    return magnetization / norms[:, None]
+
+
 def convert_sim_csv_to_mammos(csv_path: str | Path, out_path: str | Path | None = None, Js_ref: float = 1.0) -> None:
     """Convert the raw hysteresis.csv into a mammos_entity.EntityCollection CSV.
 

@@ -220,6 +220,65 @@ tol_fun = 1e-8      ; Relative energy convergence tolerance
 eps_a = 1e-12       ; Absolute gradient tolerance
 ```
 
+### Initial Magnetization
+
+Uniform initialization remains available through the `[initial state]` components:
+
+```ini
+[initial state]
+mx = 0
+my = 0
+mz = 1
+```
+
+The direction is normalized before use and must be non-zero. A named non-uniform state can instead be selected in
+the `.p2` file:
+
+```ini
+[initial state]
+state = vortex
+```
+
+Supported names are `uniform`, `flower`, `vortex`, `twisted`, and `random`. The random state uses a fixed seed so
+that repeated runs are reproducible. The legacy numeric identifiers `0` through `4` map to those states in the same
+order. An unknown name is rejected rather than treated as uniform.
+
+The command line accepts `--ini` and `--initial-state` as aliases:
+
+```bash
+pixi run python -m tommos.loop cube --ini vortex
+pixi run python -m tommos.loop cube --initial-state flower
+```
+
+A Tommos snapshot can restore its nodal point-data field named `m`:
+
+```ini
+[initial state]
+state = hyst_cube/state_cfg00003_B-1.0000e+00T.vtu
+```
+
+```bash
+pixi run tommos loop cube --ini hyst_cube/state_cfg00003_B-1.0000e+00T.vtu
+```
+
+Relative VTU paths in `.p2` files are resolved relative to the `.p2` file. The snapshot must contain exactly the same
+mesh coordinates and node ordering as the simulation mesh; this implementation does not interpolate between meshes.
+With `--add-shell`, the VTU must therefore describe the final shell-augmented mesh, including shell nodes. A body-only
+snapshot cannot initialize the larger generated mesh.
+
+The initial-state priority is:
+
+1. Explicit CLI `--ini` or `--initial-state`
+2. Explicit CLI `--m0-dir`
+3. `.p2` `state`
+4. `.p2` `mx`, `my`, and `mz`
+5. Applied field direction
+
+When `uniform` is explicitly selected, `--m0-dir` supplies its direction when present, followed by the `.p2`
+components and then the applied field direction. Loading a VTU restores only the normalized nodal magnetization `m`;
+it does not restore the scalar potential, minimizer history, line-search state, or preconditioner state and is not a
+complete numerical restart.
+
 ## 5. Output
 
 The simulation saves results into the directory specified by `--out-dir` (default: `hyst_<modelname>`).
@@ -435,6 +494,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 #### `[initial state]`
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
+| `state` | Named state (`uniform`, `flower`, `vortex`, `twisted`, or `random`), legacy identifier `0`-`4`, or a Tommos VTU snapshot path. | Not set | `--ini` / `--initial-state` |
 | `mx`, `my`, `mz` | Uniform initial magnetization vector components. | Field direction | `--m0-dir` |
 
 #### `[field]`

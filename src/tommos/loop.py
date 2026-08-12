@@ -41,6 +41,7 @@ import numpy as np
 from . import add_shell
 from .fem_utils import TetGeom
 from .hysteresis_loop import LoopParams, run_hysteresis_loop
+from .initial_state import resolve_initial_state
 from .io_utils import write_mh
 
 jax.config.update("jax_enable_x64", True)
@@ -239,13 +240,13 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
 
     if "initial state" in config:
         m_sec = config["initial state"]
+        if "state" in m_sec:
+            overrides["initial_state"] = str(m_sec["state"]).strip()
         if all(k in m_sec for k in ("mx", "my", "mz")):
             mx = float(m_sec["mx"])
             my = float(m_sec["my"])
             mz = float(m_sec["mz"])
-            m0_vec = np.array([mx, my, mz])
-            m0_vec /= np.linalg.norm(m0_vec) + 1e-30
-            overrides["m0_dir"] = f"{m0_vec[0]},{m0_vec[1]},{m0_vec[2]}"
+            overrides["m0_dir"] = f"{mx},{my},{mz}"
 
     if "minimizer" in config:
         m_min = config["minimizer"]
@@ -347,6 +348,45 @@ def load_materials(
     k_easy = np.zeros((G, 3), dtype=np.float64)
     k_easy[:, 2] = 1.0
     return A, K1, Js, k_easy
+
+
+def add_initial_state_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add non-uniform initial-state selectors to a CLI parser.
+
+    Args:
+        parser: Argument parser receiving the initial-state aliases.
+    """
+    parser.add_argument(
+        "--ini",
+        "--initial-state",
+        dest="initial_state",
+        default=None,
+        help="Initial state name or path to a Tommos VTU snapshot.",
+    )
+
+
+def explicit_cli_arguments(
+    parser: argparse.ArgumentParser,
+    arguments: Sequence[str],
+) -> set[str]:
+    """Return parser destinations explicitly present in command-line arguments.
+
+    Args:
+        parser: Argument parser used to interpret the command line.
+        arguments: Command-line arguments excluding the executable name.
+
+    Returns:
+        Destination names explicitly supplied with an option flag.
+    """
+    explicit_destinations = set()
+    for action in parser._actions:
+        if any(
+            argument == flag or argument.startswith(f"{flag}=")
+            for flag in action.option_strings
+            for argument in arguments
+        ):
+            explicit_destinations.add(action.dest)
+    return explicit_destinations
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -744,6 +784,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=1,
         help="Save VTU snapshots every N steps (0 to disable).",
     )
+    add_initial_state_arguments(ap)
     ap.add_argument(
         "--m0-dir",
         type=str,
@@ -762,6 +803,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     args = ap.parse_args(cli_arguments)
+    explicit_cli_args = explicit_cli_arguments(ap, cli_arguments)
 
     # Dynamic defaults based on platform
     try:
@@ -853,6 +895,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     # Load .p2 overrides early to get mesh_unit
     p2_overrides = {}
+    p2_path: Path | None = None
     if modelname:
         p2_path = Path(modelname).with_suffix(".p2")
         if p2_path.exists():
@@ -922,19 +965,27 @@ def main(argv: Sequence[str] | None = None) -> None:
                 x_nodes=None,
             )
 
-    # Initial magnetization
-    # Priority: p2 override > CLI --m0-dir > CLI --h-dir
-    m0_str = p2_overrides.get("m0_dir", args.m0_dir)
-    if m0_str:
-        m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
+    # Resolve the applied field before using it as the final initial-state fallback.
+    h_dir_value = p2_overrides["h_dir"] if "h_dir" in p2_overrides and "h_dir" not in explicit_cli_args else args.h_dir
+    if isinstance(h_dir_value, str):
+        h_dir = np.array([float(x) for x in h_dir_value.split(",")], dtype=np.float64)
     else:
-        m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
-
-    m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
-    m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
-
-    h_dir = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
+        h_dir = np.asarray(h_dir_value, dtype=np.float64)
+    if h_dir.shape != (3,):
+        raise ValueError(f"Applied field direction must have shape (3,); found {h_dir.shape}.")
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
+
+    # Initial-state priority: CLI state, CLI direction, .p2 state, .p2 direction, field direction.
+    resolved_initial_state = resolve_initial_state(
+        knt,
+        cli_state=args.initial_state,
+        cli_m0_dir=args.m0_dir,
+        p2_state=p2_overrides.get("initial_state"),
+        p2_m0_dir=p2_overrides.get("m0_dir"),
+        applied_field_dir=h_dir,
+        p2_path=p2_path,
+    )
+    m0 = resolved_initial_state.magnetization
 
     # Dirichlet boundary mask (U=0 at outer boundary)
     mask_np = add_shell.find_outer_boundary_mask(conn, knt.shape[0])
@@ -1014,34 +1065,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         # Remove parameters handled separately
         p2_overrides.pop("mesh_unit", None)
         p2_overrides.pop("m0_dir", None)
+        p2_overrides.pop("initial_state", None)
 
         # Merge p2 into defaults
         for k, v in p2_overrides.items():
             params_dict[k] = v
             param_sources[k] = ".p2"
 
-    # 3. Final CLI Override: If the user explicitly provided an argument on CLI,
-    # it should win over BOTH defaults and p2.
-    # We check if the arg flag is actually present in cli_arguments.
-
-    # Map destination variable names to the flags that can set them
-    dest_to_flags = {}
-    for action in ap._actions:
-        dest_to_flags[action.dest] = action.option_strings
-
-    # Identify which variables were explicitly set on the CLI
-    explicit_cli_args = set()
-    for dest, flags in dest_to_flags.items():
-        for flag in flags:
-            # Check if any flag matching this dest is in cli_arguments
-            # (handles both --flag value and --flag=value)
-            if any(argument.startswith(flag) for argument in cli_arguments):
-                explicit_cli_args.add(dest)
-                break
-
+    # 3. Final CLI Override: explicitly supplied arguments win over .p2 and defaults.
     for dest in explicit_cli_args:
         if dest in params_dict:
-            params_dict[dest] = getattr(args, dest)
+            params_dict[dest] = h_dir if dest == "h_dir" else getattr(args, dest)
             param_sources[dest] = "cli"
             # Re-scale field units if they came from CLI
             if dest in ["B_start", "B_end", "dB", "mfinal", "mstep"] and params_dict[dest] is not None:
@@ -1058,6 +1092,13 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     log_dict = vars(args).copy()
     log_dict.update(params_dict)
+    log_dict["initial_state"] = resolved_initial_state.value
+    param_sources["initial_state"] = resolved_initial_state.source
+    if resolved_initial_state.direction is not None:
+        log_dict["initial_state_direction"] = ",".join(
+            f"{component:.16g}" for component in resolved_initial_state.direction
+        )
+        param_sources["initial_state_direction"] = resolved_initial_state.direction_source or "derived"
 
     with open(out_dir_path / "params.log", "w") as f:
         f.write("| Parameter | Value | Source |\n")
