@@ -99,7 +99,8 @@ def test_micromagnetic_energies():
 
     # 4. Assembled sparse operators setup
     import scipy.sparse as sp
-    from amg_utils import (
+
+    from tommos.amg_utils import (
         assemble_divergence_matrices_cpu,
         assemble_exchange_anisotropy_matrix_cpu,
         assemble_poisson_matrix_cpu,
