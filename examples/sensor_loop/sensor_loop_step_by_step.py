@@ -128,10 +128,10 @@ def generate_workspace(sensor_loop_dir: Path):
 
 def run_loop(loop_cmd: list[str], cwd: Path) -> None:
     """
-    Run the loop.py script in the specified working directory.
+    Run the packaged ``tommos loop`` command in the specified working directory.
 
     Args:
-        loop_cmd: Base command list containing python, script path, and --mesh flag
+        loop_cmd: Base command list containing the packaged CLI and loop subcommand.
         cwd: Working directory where the simulation will run
 
     Raises:
@@ -697,9 +697,7 @@ Examples:
         # This will be handled in Step 2 along with the state file
         print("[MESH DISTRIBUTION] Initial directory will use backup mesh; case directories will be populated after Step 1")
 
-    loop_script = (base / "src/loop.py").resolve()
-
-    loop_cmd_in_main: list[str] = [sys.executable, str(loop_script)]
+    loop_cmd_in_main: list[str] = ["tommos", "loop"]
     # Step0.2: remove previous output files like sensor.*.state.npz and sensor.mh in all case directories
     print("\n" + "-" * 80)
     print("SENSOR-EXAMPLE, STEP 0.2: Cleanup Previous Output Files")
@@ -726,7 +724,7 @@ Examples:
                 removed_count += 1
     print(f"[CLEANUP] ✓ Removed {removed_count} previous output file(s)")
 
-    # Step1: run "python ./../../../src/loop.py --mesh sensor" in subfolder "sensor_initial_state"
+    # Step1: run "tommos loop sensor --mesh sensor.npz" in subfolder "sensor_initial_state"
     # -> handled directly via run_loop with the initial-state directory
     print("\n" + "=" * 80)
     print("SENSOR-EXAMPLE, STEP 1: Initial Equilibrium Computation")
