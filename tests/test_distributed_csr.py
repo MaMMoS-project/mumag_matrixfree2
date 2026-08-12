@@ -1,16 +1,12 @@
-import os
-import sys
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
 from jax.sharding import Mesh
 
-jax.config.update("jax_enable_x64", True)
+from tommos.amg_utils import DistributedCSR
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
-from amg_utils import DistributedCSR
+jax.config.update("jax_enable_x64", True)
 
 
 def test_distributed_csr_single_device():

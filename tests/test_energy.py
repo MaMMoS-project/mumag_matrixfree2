@@ -121,7 +121,6 @@ def test_micromagnetic_energies():
     D_scipy.sort_indices()
     D_sparse = make_sparse_operator(D_scipy)
 
-    N_nodes = knt.shape[0]
     Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
     Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
     Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()

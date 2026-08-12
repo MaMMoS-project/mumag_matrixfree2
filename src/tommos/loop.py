@@ -262,9 +262,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["tau0"] = float(m_min["tau0"])
         if "method" in m_min:
             overrides["method"] = str(m_min["method"])
-        elif "cg_method" in m_min:
-            if int(m_min["cg_method"]) == 1004:
-                overrides["method"] = "pcohen_hs"
+        elif "cg_method" in m_min and int(m_min["cg_method"]) == 1004:
+            overrides["method"] = "pcohen_hs"
         if "pc_iters" in m_min:
             overrides["pc_iters"] = int(m_min["pc_iters"])
         elif "precond_iter" in m_min:
@@ -379,7 +378,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=str,
         default="box",
         choices=["triangles", "hull", "box"],
-        help="Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default).",
+        help=(
+            "Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default)."
+        ),
     )
     ap.add_argument("--layers", type=int, default=None, help="Number of graded shell layers (>= 1).")
     ap.add_argument(
@@ -1221,14 +1222,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     del rows_g, cols_g, data_g
     gc.collect()
     G_scipy.sort_indices()
-    if mesh is not None:
-        if p_rows > 0:
-            G_scipy = sp.bmat(
-                [
-                    [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
-                    [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))],
-                ]
-            ).tocsr()
+    if mesh is not None and p_rows > 0:
+        G_scipy = sp.bmat(
+            [
+                [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
+                [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))],
+            ]
+        ).tocsr()
     G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     if not args.cpp_mkl:

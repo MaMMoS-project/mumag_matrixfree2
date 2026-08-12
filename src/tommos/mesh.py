@@ -2407,7 +2407,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=str,
         default="box",
         choices=["triangles", "hull", "box"],
-        help="Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default).",
+        help=(
+            "Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default)."
+        ),
     )
     ap.add_argument(
         "--layers",

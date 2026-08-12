@@ -145,9 +145,8 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
             d["R"] = level.R.tocsr()
 
         # Store dense A for the coarsest level for exact solve
-        if i == len(ml.levels) - 1:
-            if csr_A.shape[0] < 5000:
-                d["A_dense"] = csr_A.todense()
+        if i == len(ml.levels) - 1 and csr_A.shape[0] < 5000:
+            d["A_dense"] = csr_A.todense()
 
         hierarchy.append(d)
 
@@ -173,9 +172,7 @@ def pad_scipy_csr(mat: sp.csr_matrix, num_devices: int, pad_rows: bool = True, p
     if p_rows == 0 and p_cols == 0:
         return mat
 
-    bottom_right = (
-        sp.eye(p_rows, format="csr") if (p_rows == p_cols and p_rows > 0) else sp.csr_matrix((p_rows, p_cols))
-    )
+    bottom_right = sp.eye(p_rows, format="csr") if p_rows == p_cols and p_rows > 0 else sp.csr_matrix((p_rows, p_cols))
     return sp.bmat([[mat, sp.csr_matrix((n_rows, p_cols))], [sp.csr_matrix((p_rows, n_cols)), bottom_right]]).tocsr()
 
 
