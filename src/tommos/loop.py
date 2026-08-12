@@ -477,7 +477,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Relative residual tolerance for the Poisson PCG solver.",
     )
     ap.add_argument(
-        "--poisson-reg", "--reg",
+        "--poisson-reg",
+        "--reg",
         dest="poisson_reg",
         type=float,
         default=1e-12,
@@ -509,14 +510,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         help='Applied field direction as unit vector "hx,hy,hz".',
     )
     ap.add_argument(
-        "--B-start", "--hstart",
+        "--B-start",
+        "--hstart",
         dest="B_start",
         type=float,
         default=-1.0,
         help="Starting magnitude of the applied field (Tesla).",
     )
     ap.add_argument(
-        "--B-end", "--hfinal",
+        "--B-end",
+        "--hfinal",
         dest="B_end",
         type=float,
         default=1.0,
@@ -536,7 +539,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Restart frequency for conjugate gradient methods (default: number of nodes).",
     )
     ap.add_argument(
-        "--tau-f", "--tol_fun", "--tol-fun",
+        "--tau-f",
+        "--tol_fun",
+        "--tol-fun",
         dest="tau_f",
         type=float,
         default=1e-8,
@@ -570,7 +575,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     # advanced minimizer options
     ap.add_argument(
-        "--method", "--cg_method",
+        "--method",
+        "--cg_method",
         dest="method",
         type=str,
         default="pcohen_hs",
@@ -578,7 +584,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Energy minimizer algorithm (default: pcohen_hs).",
     )
     ap.add_argument(
-        "--pc-iters", "--precond_iter",
+        "--pc-iters",
+        "--precond_iter",
         dest="pc_iters",
         type=int,
         default=10,
@@ -681,7 +688,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     ap.add_argument(
-        "--ignore-mem-warning", "--ignore-memory-warning",
+        "--ignore-mem-warning",
+        "--ignore-memory-warning",
         action="store_true",
         dest="ignore_mem_warning",
         help="Bypass the memory safety abort if estimated memory exceeds available RAM.",
@@ -797,10 +805,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     try:
         import psutil
+
         available_mb = psutil.virtual_memory().available / (1024 * 1024)
     except Exception as e:
         print(f"[WARNING] Could not check available memory with psutil: {e}")
-        available_mb = float('inf')
+        available_mb = float("inf")
 
     num_dev = len(jax.devices())
     platform = jax.devices()[0].platform.upper()
@@ -821,7 +830,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             print("Aborting to prevent system crash. Use --ignore-mem-warning to bypass.")
             sys.exit(1)
         else:
-            print("[WARNING] Memory peak exceeds available RAM, but bypass flag is active. Proceeding at your own risk...")
+            print(
+                "[WARNING] Memory peak exceeds available RAM, but bypass flag is active. Proceeding at your own risk..."
+            )
 
     # Load .p2 overrides early to get mesh_unit
     p2_overrides = {}
@@ -881,6 +892,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if ini_val is not None:
         import glob
+
         import meshio
 
         pattern = f"state_cfg{ini_val:05d}_*.vtu"
@@ -1122,6 +1134,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     from .amg_utils import pad_scipy_csr
+
     if mesh is not None:
         num_dev = mesh.shape["devices"]
         A_scipy = pad_scipy_csr(A_scipy, num_dev)
@@ -1135,9 +1148,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
 
+    import gc
+
     import scipy.sparse as sp
 
-    import gc
     Dx_coo = Dx_scipy.tocoo()
     Dx_row, Dx_col, Dx_data = Dx_coo.row, Dx_coo.col * 3 + 0, Dx_coo.data
     del Dx_coo
@@ -1167,10 +1181,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     if mesh is not None:
         p_rows = (num_dev - (Dx_scipy.shape[0] % num_dev)) % num_dev
         if p_rows > 0:
-            D_scipy = sp.bmat([
-                [D_scipy, sp.csr_matrix((Dx_scipy.shape[0], 3 * p_rows))],
-                [sp.csr_matrix((p_rows, 3 * Dx_scipy.shape[0])), sp.csr_matrix((p_rows, 3 * p_rows))]
-            ]).tocsr()
+            D_scipy = sp.bmat(
+                [
+                    [D_scipy, sp.csr_matrix((Dx_scipy.shape[0], 3 * p_rows))],
+                    [sp.csr_matrix((p_rows, 3 * Dx_scipy.shape[0])), sp.csr_matrix((p_rows, 3 * p_rows))],
+                ]
+            ).tocsr()
     D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     Dx_shape_0 = Dx_scipy.shape[0]
@@ -1207,10 +1223,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     G_scipy.sort_indices()
     if mesh is not None:
         if p_rows > 0:
-            G_scipy = sp.bmat([
-                [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
-                [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))]
-            ]).tocsr()
+            G_scipy = sp.bmat(
+                [
+                    [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
+                    [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))],
+                ]
+            ).tocsr()
     G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     if not args.cpp_mkl:
@@ -1226,10 +1244,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         N = knt.shape[0]
         p_rows = (num_dev - (N % num_dev)) % num_dev
         if p_rows > 0:
-            K_eff_scipy = sp.bmat([
-                [K_eff_scipy, sp.csr_matrix((3 * N, 3 * p_rows))],
-                [sp.csr_matrix((3 * p_rows, 3 * N)), sp.csr_matrix((3 * p_rows, 3 * p_rows))]
-            ]).tocsr()
+            K_eff_scipy = sp.bmat(
+                [
+                    [K_eff_scipy, sp.csr_matrix((3 * N, 3 * p_rows))],
+                    [sp.csr_matrix((3 * p_rows, 3 * N)), sp.csr_matrix((3 * p_rows, 3 * p_rows))],
+                ]
+            ).tocsr()
     K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
     if not args.cpp_mkl:
@@ -1259,12 +1279,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     M_nodal_jax = distribute_array(jnp.asarray(M_nodal, dtype=jnp.float64), mesh)
     V_mag_nodal_jax = distribute_array(jnp.asarray(V_mag_nodal, dtype=jnp.float64), mesh)
     B_bias_jax = distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None
-    boundary_mask_jax = distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None
+    boundary_mask_jax = (
+        distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None
+    )
 
     if not args.cpp_mkl:
         del A_red, K1_red, Js_red, k_easy_lookup
         del m0, M_nodal, V_mag_nodal, B_bias, boundary_mask
         import gc
+
         gc.collect()
 
     A_scipy_val = assembled_kwargs.pop("A_scipy", None)

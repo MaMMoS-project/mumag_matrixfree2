@@ -77,7 +77,9 @@ def setup_geom():
 
     A_scipy = assemble_poisson_matrix_cpu(conn32, volume, grad_phi, boundary_mask=np.array(boundary_mask), reg=1e-12)
     A_sparse = make_sparse_operator(A_scipy)
-    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, grad_phi, np.array(Js_lookup), mat_id)
+    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(
+        conn32, volume, grad_phi, np.array(Js_lookup), mat_id
+    )
     D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
     D_sparse = make_sparse_operator(D_scipy)
 

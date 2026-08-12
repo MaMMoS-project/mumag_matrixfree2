@@ -314,6 +314,7 @@ def run_hysteresis_loop(  # noqa: D417
         if "A_scipy" in locals():
             del A_scipy
         import gc
+
         gc.collect()
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
@@ -513,7 +514,7 @@ def run_hysteresis_loop(  # noqa: D417
 
         # Snapshot trigger logic
         should_save = False
-        is_last_step = (step_idx == len(B_vals) - 1)
+        is_last_step = step_idx == len(B_vals) - 1
         if J_par_last_saved is None or is_last_step:
             # Always save the very first and very last step
             should_save = True
@@ -535,8 +536,8 @@ def run_hysteresis_loop(  # noqa: D417
                     points,
                     np.array(geom.conn),
                     point_data={
-                        "m": np.array(m[:len(points)]).astype(np.float32),
-                        "U": np.array(U[:len(points)]).astype(np.float32),
+                        "m": np.array(m[: len(points)]).astype(np.float32),
+                        "U": np.array(U[: len(points)]).astype(np.float32),
                     },
                     cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
                 )

@@ -53,15 +53,15 @@ def compute_node_volumes(geom: TetGeom) -> Array:
         Array: Lumped volume at each node (N,).
     """
     import numpy as np
-    
+
     N = geom.x_nodes.shape[0] if geom.x_nodes is not None else int(np.max(geom.conn)) + 1
-        
+
     conn_np = np.asarray(geom.conn)
     vol_np = np.asarray(geom.volume)
-    
+
     weights = np.repeat(vol_np / 4.0, 4)
     vols = np.bincount(conn_np.flatten(), weights=weights, minlength=N)
-    
+
     return vols
 
 

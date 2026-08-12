@@ -424,17 +424,36 @@ def make_shell_plc_from_surface(  # noqa: D417
         else:  # box
             vmin = np.min(knt0, axis=0)
             vmax = np.max(knt0, axis=0)
-            hull_V = np.array([
-                [vmin[0], vmin[1], vmin[2]], [vmax[0], vmin[1], vmin[2]],
-                [vmax[0], vmax[1], vmin[2]], [vmin[0], vmax[1], vmin[2]],
-                [vmin[0], vmin[1], vmax[2]], [vmax[0], vmin[1], vmax[2]],
-                [vmax[0], vmax[1], vmax[2]], [vmin[0], vmax[1], vmax[2]],
-            ], dtype=np.float64)
-            hull_F = np.array([
-                [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-                [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6],
-                [1, 2, 6], [1, 6, 5], [3, 0, 4], [3, 4, 7],
-            ], dtype=np.int32)
+            hull_V = np.array(
+                [
+                    [vmin[0], vmin[1], vmin[2]],
+                    [vmax[0], vmin[1], vmin[2]],
+                    [vmax[0], vmax[1], vmin[2]],
+                    [vmin[0], vmax[1], vmin[2]],
+                    [vmin[0], vmin[1], vmax[2]],
+                    [vmax[0], vmin[1], vmax[2]],
+                    [vmax[0], vmax[1], vmax[2]],
+                    [vmin[0], vmax[1], vmax[2]],
+                ],
+                dtype=np.float64,
+            )
+            hull_F = np.array(
+                [
+                    [0, 2, 1],
+                    [0, 3, 2],
+                    [4, 5, 6],
+                    [4, 6, 7],
+                    [0, 1, 5],
+                    [0, 5, 4],
+                    [2, 3, 7],
+                    [2, 7, 6],
+                    [1, 2, 6],
+                    [1, 6, 5],
+                    [3, 0, 4],
+                    [3, 4, 7],
+                ],
+                dtype=np.int32,
+            )
 
         # Compute subdivision levels
         levels = 0

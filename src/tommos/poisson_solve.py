@@ -279,8 +279,6 @@ def make_solve_U(  # noqa: D417
         A_diag=A_diag,
     )
 
-
-
     Mdiag = None
     l_max = 2.0
     apply_Minv_amg = None
@@ -336,7 +334,9 @@ def make_solve_U(  # noqa: D417
                 csr_A = pad_scipy_csr(csr_A, num_dev, pad_rows=True, pad_cols=True)
 
                 level_dict = {
-                    "A_sparse": None if i == 0 else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend, device=mesh),
+                    "A_sparse": None
+                    if i == 0
+                    else make_sparse_operator(csr_A, cpu_spmv_backend=cpu_spmv_backend, device=mesh),
                     "Mdiag": jnp.asarray(csr_A.diagonal()),
                     "Mdiag_spai0": jnp.asarray(compute_spai0_diagonal(csr_A)),
                 }
@@ -369,9 +369,13 @@ def make_solve_U(  # noqa: D417
                 apply_Minv_amg = make_jax_amg_vcycle(apply_A_masked)
 
             import gc
-            if "A_cpu" in locals(): del A_cpu
-            if "ml" in locals(): del ml
-            if "A_scipy" in locals(): del A_scipy
+
+            if "A_cpu" in locals():
+                del A_cpu
+            if "ml" in locals():
+                del ml
+            if "A_scipy" in locals():
+                del A_scipy
             gc.collect()
 
     if poisson_solver == "pardiso":

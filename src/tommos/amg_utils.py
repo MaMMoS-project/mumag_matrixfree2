@@ -54,8 +54,9 @@ def assemble_poisson_matrix_cpu(
     # Create sparse matrix
     A = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     A.sum_duplicates()
-    
+
     import gc
+
     del data, rows, cols
     gc.collect()
 
@@ -155,28 +156,27 @@ def setup_amg_hierarchy(A_cpu: sp.csr_matrix, max_levels: int = 10) -> list[dict
 
 def pad_scipy_csr(mat: sp.csr_matrix, num_devices: int, pad_rows: bool = True, pad_cols: bool = True) -> sp.csr_matrix:
     """Pad a SciPy CSR matrix so its dimensions are divisible by num_devices.
-    
+
     Args:
         mat: The SciPy CSR matrix.
         num_devices: Target divisibility.
         pad_rows: Whether to pad rows.
         pad_cols: Whether to pad columns.
-        
+
     Returns:
         The padded SciPy CSR matrix.
     """
     n_rows, n_cols = mat.shape
     p_rows = (num_devices - (n_rows % num_devices)) % num_devices if pad_rows else 0
     p_cols = (num_devices - (n_cols % num_devices)) % num_devices if pad_cols else 0
-    
+
     if p_rows == 0 and p_cols == 0:
         return mat
-        
-    bottom_right = sp.eye(p_rows, format='csr') if (p_rows == p_cols and p_rows > 0) else sp.csr_matrix((p_rows, p_cols))
-    return sp.bmat([
-        [mat, sp.csr_matrix((n_rows, p_cols))],
-        [sp.csr_matrix((p_rows, n_cols)), bottom_right]
-    ]).tocsr()
+
+    bottom_right = (
+        sp.eye(p_rows, format="csr") if (p_rows == p_cols and p_rows > 0) else sp.csr_matrix((p_rows, p_cols))
+    )
+    return sp.bmat([[mat, sp.csr_matrix((n_rows, p_cols))], [sp.csr_matrix((p_rows, n_cols)), bottom_right]]).tocsr()
 
 
 @jax.tree_util.register_pytree_node_class
@@ -237,9 +237,17 @@ class DistributedCSR:
     def tree_flatten(self):
         """Flatten the DistributedCSR for JAX."""
         return (
-            (self.data_diag, self.indices_diag, self.indptr_diag,
-             self.data_off, self.indices_off, self.indptr_off,
-             self.send_indices, self.unpack_src, self.unpack_k),
+            (
+                self.data_diag,
+                self.indices_diag,
+                self.indptr_diag,
+                self.data_off,
+                self.indices_off,
+                self.indptr_off,
+                self.send_indices,
+                self.unpack_src,
+                self.unpack_k,
+            ),
             (self.shape, self.mesh, self.max_ghosts_per_pair, self.max_total_ghosts),
         )
 
@@ -247,16 +255,29 @@ class DistributedCSR:
     def tree_unflatten(cls, aux_data, children):
         """Unflatten the DistributedCSR for JAX."""
         shape, mesh, max_ghosts_per_pair, max_total_ghosts = aux_data
-        data_diag, indices_diag, indptr_diag, data_off, indices_off, indptr_off, send_indices, unpack_src, unpack_k = children
+        data_diag, indices_diag, indptr_diag, data_off, indices_off, indptr_off, send_indices, unpack_src, unpack_k = (
+            children
+        )
         return cls(
-            data_diag, indices_diag, indptr_diag, shape, mesh,
-            data_off, indices_off, indptr_off,
-            send_indices, unpack_src, unpack_k,
-            max_ghosts_per_pair, max_total_ghosts
+            data_diag,
+            indices_diag,
+            indptr_diag,
+            shape,
+            mesh,
+            data_off,
+            indices_off,
+            indptr_off,
+            send_indices,
+            unpack_src,
+            unpack_k,
+            max_ghosts_per_pair,
+            max_total_ghosts,
         )
 
     @classmethod
-    def from_scipy(cls, scipy_mat: sp.csr_matrix, mesh: jax.sharding.Mesh | None = None, device=None) -> "DistributedCSR":
+    def from_scipy(
+        cls, scipy_mat: sp.csr_matrix, mesh: jax.sharding.Mesh | None = None, device=None
+    ) -> "DistributedCSR":
         """Create a DistributedCSR from a SciPy CSR matrix.
 
         Args:
@@ -268,6 +289,7 @@ class DistributedCSR:
             DistributedCSR: The JAX distributed sparse matrix.
         """
         import logging
+
         CUSPARSE_NNZ_LIMIT = 2147483647
 
         if mesh is None:
@@ -297,7 +319,7 @@ class DistributedCSR:
             raise ValueError(f"Rows ({n_rows}) must be divisible by number of devices ({num_devices})")
         if n_cols % num_devices != 0:
             raise ValueError(f"Cols ({n_cols}) must be divisible by number of devices ({num_devices})")
-            
+
         rows_per_block = n_rows // num_devices
         cols_per_block = n_cols // num_devices
 
@@ -355,34 +377,38 @@ class DistributedCSR:
         for i, block in enumerate(blocks):
             cols = block.indices
             is_local = (cols >= i * cols_per_block) & (cols < (i + 1) * cols_per_block)
-            
+
             # Diag block
             diag_cols = cols[is_local] - i * cols_per_block
             diag_data = block.data[is_local]
-            
+
             # Offdiag block
             ghost_mask = ~is_local
             ghost_cols = cols[ghost_mask]
-            
+
             offdiag_cols = np.empty_like(ghost_cols)
             if len(ghost_cols) > 0:
                 pos_in_unique = np.searchsorted(unique_ghosts_list[i], ghost_cols)
                 offdiag_cols[:] = pos_in_unique
             offdiag_data = block.data[ghost_mask]
-            
+
             # Vectorized indptr construction
             row_indices = np.repeat(np.arange(block.shape[0]), np.diff(block.indptr))
             local_count = np.bincount(row_indices[is_local], minlength=block.shape[0])
             ghost_count = np.bincount(row_indices[ghost_mask], minlength=block.shape[0])
-            
+
             diag_indptr = np.zeros(block.shape[0] + 1, dtype=block.indptr.dtype)
             diag_indptr[1:] = np.cumsum(local_count)
-            
+
             offdiag_indptr = np.zeros(block.shape[0] + 1, dtype=block.indptr.dtype)
             offdiag_indptr[1:] = np.cumsum(ghost_count)
 
-            diag_blocks.append(sp.csr_matrix((diag_data, diag_cols, diag_indptr), shape=(block.shape[0], cols_per_block)))
-            offdiag_blocks.append(sp.csr_matrix((offdiag_data, offdiag_cols, offdiag_indptr), shape=(block.shape[0], max_total_ghosts)))
+            diag_blocks.append(
+                sp.csr_matrix((diag_data, diag_cols, diag_indptr), shape=(block.shape[0], cols_per_block))
+            )
+            offdiag_blocks.append(
+                sp.csr_matrix((offdiag_data, offdiag_cols, offdiag_indptr), shape=(block.shape[0], max_total_ghosts))
+            )
 
         max_nnz_diag = max(db.nnz for db in diag_blocks)
         max_nnz_off = max(ob.nnz for ob in offdiag_blocks)
@@ -401,21 +427,20 @@ class DistributedCSR:
         # Pad and gather arrays
         data_diag_list, indices_diag_list, indptr_diag_list = [], [], []
         data_off_list, indices_off_list, indptr_off_list = [], [], []
-        
+
         for i in range(num_devices):
             db = diag_blocks[i]
             ob = offdiag_blocks[i]
-            
+
             pad_diag = max_nnz_diag - db.nnz
             data_diag_list.append(np.pad(db.data, (0, pad_diag)))
             indices_diag_list.append(np.pad(db.indices, (0, pad_diag)))
             indptr_diag_list.append(db.indptr)
-            
+
             pad_off = max_nnz_off - ob.nnz
             data_off_list.append(np.pad(ob.data, (0, pad_off)))
             indices_off_list.append(np.pad(ob.indices, (0, pad_off)))
             indptr_off_list.append(ob.indptr)
-
 
         # 4. Explicitly shard across the mesh
         P = jax.sharding.PartitionSpec("devices")
@@ -424,7 +449,7 @@ class DistributedCSR:
         data_diag_sharded = jax.device_put(np.concatenate(data_diag_list), sharding)
         indices_diag_sharded = jax.device_put(np.concatenate(indices_diag_list), sharding)
         indptr_diag_sharded = jax.device_put(np.concatenate(indptr_diag_list), sharding)
-        
+
         data_off_sharded = jax.device_put(np.concatenate(data_off_list), sharding)
         indices_off_sharded = jax.device_put(np.concatenate(indices_off_list), sharding)
         indptr_off_sharded = jax.device_put(np.concatenate(indptr_off_list), sharding)
@@ -436,8 +461,14 @@ class DistributedCSR:
         unpack_k_sharded = jax.device_put(unpack_k_all, sharding)
 
         return cls(
-            data_diag_sharded, indices_diag_sharded, indptr_diag_sharded, scipy_mat.shape, mesh,
-            data_off=data_off_sharded, indices_off=indices_off_sharded, indptr_off=indptr_off_sharded,
+            data_diag_sharded,
+            indices_diag_sharded,
+            indptr_diag_sharded,
+            scipy_mat.shape,
+            mesh,
+            data_off=data_off_sharded,
+            indices_off=indices_off_sharded,
+            indptr_off=indptr_off_sharded,
             send_indices=send_indices_sharded,
             unpack_src=unpack_src_sharded,
             unpack_k=unpack_k_sharded,
@@ -482,26 +513,39 @@ class DistributedCSR:
         max_ghosts_per_pair = self.max_ghosts_per_pair
         max_total_ghosts = self.max_total_ghosts
 
-        def _dot(data_diag_loc, indices_diag_loc, indptr_diag_loc, 
-                 data_off_loc, indices_off_loc, indptr_off_loc, 
-                 send_indices_loc, unpack_src_loc, unpack_k_loc, x_loc):
-            
+        def _dot(
+            data_diag_loc,
+            indices_diag_loc,
+            indptr_diag_loc,
+            data_off_loc,
+            indices_off_loc,
+            indptr_off_loc,
+            send_indices_loc,
+            unpack_src_loc,
+            unpack_k_loc,
+            x_loc,
+        ):
+
             # 1. Start Network Request immediately
             send_indices_2d = send_indices_loc.reshape((num_devices, max_ghosts_per_pair))
             send_buffer = x_loc[send_indices_2d]
             recv_buffer = jax.lax.all_to_all(send_buffer, split_axis=0, concat_axis=0, axis_name="devices")
-            
+
             # 2. Asynchronous Overlap: Compute Local Math
-            csr_diag = sparse.CSR((data_diag_loc, indices_diag_loc, indptr_diag_loc), shape=(rows_per_block, cols_per_block))
+            csr_diag = sparse.CSR(
+                (data_diag_loc, indices_diag_loc, indptr_diag_loc), shape=(rows_per_block, cols_per_block)
+            )
             y_local = csr_diag @ x_loc
-            
+
             # 3. Synchronize Network and Unpack
             x_ghosts = recv_buffer[unpack_src_loc.reshape(-1), unpack_k_loc.reshape(-1)]
-            
+
             # 4. Compute Boundary Math
-            csr_offdiag = sparse.CSR((data_off_loc, indices_off_loc, indptr_off_loc), shape=(rows_per_block, max_total_ghosts))
+            csr_offdiag = sparse.CSR(
+                (data_off_loc, indices_off_loc, indptr_off_loc), shape=(rows_per_block, max_total_ghosts)
+            )
             y_ghosts = csr_offdiag @ x_ghosts
-            
+
             # 5. Combine Output
             return y_local + y_ghosts
 
@@ -539,6 +583,7 @@ class DistributedCSR:
             csr = sparse.CSR((self.data_diag, self.indices_diag, self.indptr_diag), shape=self.shape)
             return csr.T
         raise NotImplementedError("Distributed transpose is not yet implemented.")
+
 
 def csr_to_jax_CSR(mat: sp.csr_matrix, device=None) -> Any:
     """Convert a SciPy CSR matrix to JAX DistributedCSR format.
@@ -685,7 +730,6 @@ def make_cpu_csr_op(scipy_csr_mat: sp.csr_matrix, cpu_spmv_backend: str = "persi
         return jax.pure_callback(spmv_callback, result_shape_dtype, x_val, vectorized=False)
 
     return fast_cpu_spmv
-
 
 
 def make_sparse_operator(
@@ -1015,11 +1059,12 @@ def assemble_exchange_matrix_cpu(
 
     Kex = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     Kex.sum_duplicates()
-    
+
     import gc
+
     del data, rows, cols
     gc.collect()
-    
+
     return Kex
 
 
@@ -1066,6 +1111,7 @@ def assemble_divergence_matrices_cpu(
     Dz.sum_duplicates()
 
     import gc
+
     del De_x, De_y, De_z, rows, cols
     gc.collect()
 
@@ -1105,11 +1151,12 @@ def assemble_anisotropy_matrix_cpu(
 
     Kan = sp.coo_matrix((data, (rows, cols)), shape=(N, N)).tocsr()
     Kan.sum_duplicates()
-    
+
     import gc
+
     del data, rows, cols
     gc.collect()
-    
+
     return Kan
 
 
@@ -1147,13 +1194,12 @@ def assemble_exchange_anisotropy_matrix_cpu(
             data_ij = Kan_e * (k_elem[:, i] * k_elem[:, j])[:, None, None]
             if i == j:
                 data_ij += Kex_e
-            
+
             # create CSR for this block and add it to the total matrix
             mat_ij = sp.coo_matrix((data_ij.flatten(), (3 * rows + i, 3 * cols + j)), shape=(3 * N, 3 * N)).tocsr()
             K_eff = K_eff + mat_ij
 
     return K_eff
-
 
 
 def make_pardiso_solve_linear(scipy_csr_mat: sp.csr_matrix) -> Callable:

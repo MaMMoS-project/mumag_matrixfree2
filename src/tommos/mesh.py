@@ -158,9 +158,9 @@ def approx_max_volume_from_edge(h: float) -> float:
     Returns:
         float: Maximum tetrahedron volume constraint.
     """
-    # We use 0.2 * (h**3) instead of ~0.118 * (h**3) (the volume of an ideal 
-    # regular tetrahedron with edge h) because TetGen treats this as a maximum 
-    # volume constraint. Setting the max volume to 0.2 ensures the resulting 
+    # We use 0.2 * (h**3) instead of ~0.118 * (h**3) (the volume of an ideal
+    # regular tetrahedron with edge h) because TetGen treats this as a maximum
+    # volume constraint. Setting the max volume to 0.2 ensures the resulting
     # mean edge length of the tetrahedra closely matches the target h.
     return 0.2 * (h**3)
 
@@ -714,7 +714,7 @@ def mesh_backend_grid_polygon(
                 knt[nidx(i, j, k), :] = p
 
     tets: list[tuple] = []
-    
+
     def to_local(pw: np.ndarray) -> np.ndarray:
         return np.array([np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64)
 
@@ -2296,8 +2296,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--extent",
         type=str,
         default="60.0,60.0,60.0",
-        help="Full dimensions Lx,Ly,Lz of the core mesh (mesh units, e.g., nm, "
-        "ignored for polygon).",
+        help="Full dimensions Lx,Ly,Lz of the core mesh (mesh units, e.g., nm, ignored for polygon).",
     )
     ap.add_argument(
         "--polygon-thickness",

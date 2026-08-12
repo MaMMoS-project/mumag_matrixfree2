@@ -1,9 +1,10 @@
 import os
 import sys
-import numpy as np
-import scipy.sparse as sp
+
 import jax
 import jax.numpy as jnp
+import numpy as np
+import scipy.sparse as sp
 from jax.sharding import Mesh
 
 jax.config.update("jax_enable_x64", True)
@@ -11,12 +12,13 @@ jax.config.update("jax_enable_x64", True)
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 from amg_utils import DistributedCSR
 
+
 def test_distributed_csr_single_device():
     # Construct a random SciPy CSR matrix
     np.random.seed(42)
     N = 100
     density = 0.1
-    mat_coo = sp.random(N, N, density=density, format='coo', dtype=np.float64)
+    mat_coo = sp.random(N, N, density=density, format="coo", dtype=np.float64)
     scipy_mat = mat_coo.tocsr()
 
     x_np = np.random.randn(N)
@@ -50,7 +52,7 @@ def test_distributed_csr_multi_device_halo_exchange():
     # Construct a matrix with cross-domain (ghost) dependencies
     N = 100
     np.random.seed(123)
-    mat_coo = sp.random(N, N, density=0.15, format='coo', dtype=np.float64)
+    mat_coo = sp.random(N, N, density=0.15, format="coo", dtype=np.float64)
     scipy_mat = mat_coo.tocsr()
 
     x_np = np.random.randn(N)
