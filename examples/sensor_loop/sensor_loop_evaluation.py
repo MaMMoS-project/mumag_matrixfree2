@@ -1113,10 +1113,7 @@ Note: auto-concatenation only happens in the full pipeline (no --plot-* flags).
             return 1
         
         # Determine output directory
-        if args.output_dir:
-            output_dir = args.output_dir.resolve()
-        else:
-            output_dir = data_file.parent
+        output_dir = args.output_dir.resolve() if args.output_dir else data_file.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up logging
@@ -1187,10 +1184,7 @@ Note: auto-concatenation only happens in the full pipeline (no --plot-* flags).
             return 1
         
         # Determine output directory
-        if args.output_dir:
-            output_dir = args.output_dir.resolve()
-        else:
-            output_dir = data_file.parent
+        output_dir = args.output_dir.resolve() if args.output_dir else data_file.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up logging
@@ -1264,10 +1258,7 @@ Note: auto-concatenation only happens in the full pipeline (no --plot-* flags).
             return 1
         
         # Determine output directory
-        if args.output_dir:
-            output_dir = args.output_dir.resolve()
-        else:
-            output_dir = data_file.parent
+        output_dir = args.output_dir.resolve() if args.output_dir else data_file.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Set up logging

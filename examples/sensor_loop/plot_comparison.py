@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -11,8 +12,6 @@ matplotlib.use('Agg')
 
 def mT_to_kAm(B_mT):
     return B_mT * 10.0 / (4.0 * np.pi)
-
-import argparse
 
 
 def main():

@@ -186,10 +186,11 @@ def compute_saturation_field(H_values, M_norm_values, saturation_threshold=0.99)
     # Final fallback: earliest point hitting saturation anywhere,
     # or the absolute maximum |M/Ms| if threshold never reached.
     saturated_indices = np.where(np.abs(M) >= saturation_threshold)[0]
-    if saturated_indices.size > 0:
-        idx_hs = int(saturated_indices[0])
-    else:
-        idx_hs = int(np.argmax(np.abs(M)))
+    idx_hs = (
+        int(saturated_indices[0])
+        if saturated_indices.size > 0
+        else int(np.argmax(np.abs(M)))
+    )
 
     return {
         'Hs': float(H[idx_hs]),
@@ -240,10 +241,11 @@ def compute_coercivity_45deg(H_values, M_norm_values):
     if crossings:
         # Take the crossing closest to zero or first positive crossing
         positive_crossings = [h for h in crossings if h > 0]
-        if positive_crossings:
-            Hc_45 = min(positive_crossings, key=abs)
-        else:
-            Hc_45 = min(crossings, key=abs)
+        Hc_45 = (
+            min(positive_crossings, key=abs)
+            if positive_crossings
+            else min(crossings, key=abs)
+        )
     
     return {
         'Hc_45': abs(float(Hc_45)) if Hc_45 is not None else None,
@@ -834,7 +836,7 @@ def main():
     
     # Open log file for writing (use OOMMF-style naming)
     log_path = Path(out_dir) / "oommf_sweeps_parameters.log"
-    log_file = open(log_path, 'w')
+    log_file = open(log_path, 'w')  # noqa: SIM115
     
     def log_print(msg):
         """Print to console and write to log file"""
