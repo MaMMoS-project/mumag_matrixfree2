@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sensor Loop Evaluation for MaMMoS Deliverable 6.2 Benchmark
+"""Sensor Loop Evaluation for MaMMoS Deliverable 6.2 Benchmark.
 
 This script post-processes hysteresis loop simulations for magnetic field sensors
 and computes benchmark metrics according to MaMMoS D6.2, Chapter 3.
@@ -768,6 +768,8 @@ def plot_sensor_data_c(
         min_window_points: Minimum points required for linear fit (default: 5)
         logger: Optional logger instance for output
         filename_suffix: Optional suffix to append to output filename (e.g., '_hstep0.003')
+        upward_only_fit: Whether to restrict sensitivity fitting to samples from the minimum field onward.
+        reference_oommf_csv: Optional OOMMF reference CSV to overlay on the primary axis.
     """
     if logger is None:
         logger = logging.getLogger("sensor_loop_evaluation")

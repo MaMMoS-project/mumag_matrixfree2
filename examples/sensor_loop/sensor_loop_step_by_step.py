@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Run the step-by-step MaMMoS sensor-loop example workflow."""
 
 # NOTE: This script must be run from the main 'mammos-mumag-matrixfree' folder!
 # Example:

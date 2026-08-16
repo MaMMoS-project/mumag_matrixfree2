@@ -1,3 +1,5 @@
+"""Post-process OOMMF sensor sweeps into benchmark data, metadata, and plots."""
+
 import argparse
 import csv
 import math
@@ -43,6 +45,17 @@ def _get(obj, key: str):
 
 
 def read_and_split(csv_path):
+    """Read OOMMF sweep rows and group them by axis.
+
+    Args:
+        csv_path: CSV file containing axis, field, and magnetization columns.
+
+    Returns:
+        Mapping of axis names to parsed numeric row tuples.
+
+    Raises:
+        KeyError: If a recognized row lacks a required field or magnetization value.
+    """
     sets = {"diagonal": [], "easy": [], "hard": []}
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
@@ -70,6 +83,15 @@ def read_and_split(csv_path):
 
 
 def convert_and_prepare(sets, ms_apm=800000.0):
+    """Convert grouped sweep data into values used by the output routines.
+
+    Args:
+        sets: Mapping of axis names to parsed sweep rows.
+        ms_apm: Saturation magnetization value used for normalization.
+
+    Returns:
+        Mapping of axis names to prepared field and magnetization values.
+    """
     mu0 = 4.0 * math.pi * 1e-7
     prepared = {}
     for name, rows in sets.items():
@@ -367,7 +389,7 @@ def compute_G_slonczewski_hard_axis(
 
 
 def augment_with_G_over_Ms(prepared):
-    """Add G(H)/Ms to prepared data where available per MaMMoS D6.2.
+    r"""Add G(H)/Ms to prepared data where available per MaMMoS D6.2.
 
     G(H) = M_x / (\mu_0 M_s) ⇒ normalized G(H) = M_x / M_s.
 
@@ -477,6 +499,14 @@ def compute_non_linearity_from_fit(H_values, M_values, H_range_limit_kA_per_m=2.
 
 
 def write_csvs(prepared, out_dir, source_path, ms_apm):
+    """Write one processed sweep CSV for each available axis.
+
+    Args:
+        prepared: Mapping of axis names to prepared sweep values.
+        out_dir: Directory in which to create the CSV files.
+        source_path: Source CSV path recorded in generated descriptions.
+        ms_apm: Saturation magnetization value recorded in descriptions.
+    """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for name, data in prepared.items():
         csv_path = Path(out_dir) / f"oommf_sweeps_{name}_H_M_MoverMs.csv"
@@ -517,6 +547,15 @@ def write_csvs(prepared, out_dir, source_path, ms_apm):
 
 
 def write_metadata(prepared, out_dir, source_path, ms_apm, benchmark_params=None):
+    """Write JSON metadata for each prepared sweep axis.
+
+    Args:
+        prepared: Mapping of axis names to prepared sweep values.
+        out_dir: Directory in which to create the metadata files.
+        source_path: Source CSV path recorded in the metadata.
+        ms_apm: Saturation magnetization value recorded in the metadata.
+        benchmark_params: Optional benchmark results to include in the metadata.
+    """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     mu0 = 4.0 * math.pi * 1e-7
 
@@ -654,6 +693,15 @@ def plot_dual_axis_with_components(prepared, out_dir, ms_apm):
 
 
 def plot_sets(prepared, out_dir, output=None, benchmark_params=None, ms_apm=None):
+    """Plot prepared sweeps and optional benchmark annotations.
+
+    Args:
+        prepared: Mapping of axis names to prepared sweep values.
+        out_dir: Directory in which to save the standard plot files.
+        output: Optional additional output path for the combined plot.
+        benchmark_params: Optional benchmark results to annotate.
+        ms_apm: Optional saturation magnetization value used for fit normalization.
+    """
     fig, ax = plt.subplots(figsize=(15/2.54, 12/2.54))  # size in inches
     fontsize = 8
     matplotlib.rcParams.update({'font.size': fontsize})
@@ -794,6 +842,7 @@ def plot_sets(prepared, out_dir, output=None, benchmark_params=None, ms_apm=None
 
 
 def main():
+    """Run the OOMMF sweep post-processing command."""
     # Default to the CSV next to this script
     default_csv = Path(__file__).parent / "MaMMoS_benchmark_OOMMF_sweeps.csv"
     parser = argparse.ArgumentParser(
@@ -839,7 +888,7 @@ def main():
     log_file = open(log_path, 'w')  # noqa: SIM115
     
     def log_print(msg):
-        """Print to console and write to log file"""
+        """Print to console and write to log file."""
         print(msg)
         log_file.write(msg + '\n')
     

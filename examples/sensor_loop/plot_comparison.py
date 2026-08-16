@@ -1,3 +1,5 @@
+"""Compare OOMMF reference sweeps with sensor-loop simulation results."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -11,10 +13,19 @@ plt.rcParams.update({'font.size': 14})
 matplotlib.use('Agg')
 
 def mT_to_kAm(B_mT):
+    """Apply the script's millitesla-to-kiloampere-per-meter conversion.
+
+    Args:
+        B_mT: Scalar or array-like values expressed in millitesla.
+
+    Returns:
+        Converted scalar or array-like values.
+    """
     return B_mT * 10.0 / (4.0 * np.pi)
 
 
 def main():
+    """Run the comparison plotting command."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=str, default=".", help="Workspace dir")
     args = parser.parse_args()
