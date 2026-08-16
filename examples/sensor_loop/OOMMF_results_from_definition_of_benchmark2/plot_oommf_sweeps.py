@@ -505,7 +505,12 @@ def write_csvs(prepared, out_dir, source_path, ms_apm):
                     f"{_get(M_entity, 'symbol')} ({_get(M_entity, 'unit')})",
                     f"{_get(Mn_entity, 'symbol')} ({_get(Mn_entity, 'unit')})",
                 ])
-                for H, M, Mn in zip(_get(H_entity, 'values'), _get(M_entity, 'values'), _get(Mn_entity, 'values')):
+                for H, M, Mn in zip(
+                    _get(H_entity, 'values'),
+                    _get(M_entity, 'values'),
+                    _get(Mn_entity, 'values'),
+                    strict=False,
+                ):
                     writer.writerow([H, M, Mn])
 
 
@@ -627,7 +632,7 @@ def plot_dual_axis_with_components(prepared, out_dir, ms_apm):
         ax2.set_ylim(y1_min * ms_apm, y1_max * ms_apm)
         
         # Combined legend
-        labels = [l.get_label() for l in lines]
+        labels = [line.get_label() for line in lines]
         ax1.legend(lines, labels, loc='best', fontsize=fontsize, framealpha=0.9)
         
         # Add title
@@ -748,9 +753,13 @@ def plot_sets(prepared, out_dir, output=None, benchmark_params=None, ms_apm=None
                 lines2, labels2 = ax2.get_legend_handles_labels()
                 # Remove the hard-axis fit from the upper-left legend (we'll show it lower-right)
                 if fit_line_handle is not None:
-                    filtered = [(h, l) for h, l in zip(lines1, labels1) if h is not fit_line_handle]
+                    filtered = [
+                        (handle, label)
+                        for handle, label in zip(lines1, labels1, strict=False)
+                        if handle is not fit_line_handle
+                    ]
                     if filtered:
-                        lines1, labels1 = zip(*filtered)
+                        lines1, labels1 = zip(*filtered, strict=False)
                     else:
                         lines1, labels1 = [], []
                 leg1 = ax.legend(lines1, labels1, loc='upper left', fontsize=fontsize)

@@ -945,8 +945,8 @@ def plot_sensor_data_c(
     ax3 = ax.twinx()
     ax3.spines["right"].set_position(("outward", 60))  # Offset third axis to the right
     ax3_color = "C2"
-    ax3_curve = ax3.plot(Hext_kA_per_m_full, G_H_full * 1000.0, color=ax3_color, linestyle=":", linewidth=3, alpha=0.5,
-                         label="Conductance G(H)", zorder=1)
+    ax3.plot(Hext_kA_per_m_full, G_H_full * 1000.0, color=ax3_color, linestyle=":", linewidth=3, alpha=0.5,
+             label="Conductance G(H)", zorder=1)
     ax3.set_ylabel("G(H) (mS)", fontsize=11, color=ax3_color)
     ax3.tick_params(axis="y", labelcolor=ax3_color)
     # Scale far-right axis symmetrically around G0 to visually align with the M/Ms swing

@@ -857,7 +857,7 @@ Examples:
     print(f"[COPY] ✓ Initial state distributed to {len(cases)} precompute-case(s)")
 
     # Steps 3-11: run precompute, copy to down, run down, copy to up, run up for each case
-    for idx, s in enumerate(cases, 1):
+    for _idx, s in enumerate(cases, 1):
         pdir = precompute_dirs[s]
         ddir = down_dirs[s]
         udir = up_dirs[s]

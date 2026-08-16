@@ -162,7 +162,7 @@ def plot_corridor(
     )
 
     # Annotate point index numbers
-    for idx, (x_val, y_val) in enumerate(zip(k1_pairs, js_pairs)):
+    for idx, (x_val, y_val) in enumerate(zip(k1_pairs, js_pairs, strict=False)):
         ax.annotate(
             str(idx),
             (x_val, y_val),

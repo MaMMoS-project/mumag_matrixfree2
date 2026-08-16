@@ -36,7 +36,7 @@ def main():
 
     plt.figure(figsize=(18, 6))
 
-    for i, (key, (oommf_axis, title, mh_file)) in enumerate(cases.items()):
+    for i, (_key, (oommf_axis, title, mh_file)) in enumerate(cases.items()):
         plt.subplot(1, 3, i + 1)
         
         # Plot OOMMF Reference
