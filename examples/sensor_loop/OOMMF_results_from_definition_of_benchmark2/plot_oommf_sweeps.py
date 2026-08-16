@@ -111,8 +111,9 @@ def convert_and_prepare(sets, ms_apm=800000.0):
 
 
 def compute_saturation_field(H_values, M_norm_values, saturation_threshold=0.99):
-    """Compute the reset saturation field Hs on the increasing-H branch
-    starting from negative saturation (M/Ms ≈ -1).
+    """Compute the reset saturation field Hs on the increasing-H branch.
+
+    The branch starts from negative saturation (M/Ms ≈ -1).
 
     Hs is defined as the first field value at which magnetization
     reaches positive saturation (M/Ms ≥ threshold) while H is
@@ -364,7 +365,8 @@ def compute_G_slonczewski_hard_axis(
 
 
 def augment_with_G_over_Ms(prepared):
-    """Add G(H)/Ms to prepared data where available per MaMMoS D6.2:
+    """Add G(H)/Ms to prepared data where available per MaMMoS D6.2.
+
     G(H) = M_x / (\mu_0 M_s) ⇒ normalized G(H) = M_x / M_s.
 
     With the pinned layer along +x (easy axis), the easy-axis sweep's
@@ -383,8 +385,10 @@ def augment_with_G_over_Ms(prepared):
 
 
 def _linear_fit_slope_and_residuals(H_values, Y_values, H_limit_A_per_m=2500.0):
-    """Perform a linear least-squares fit Y(H) = a*H + b within
-    the symmetric field window [-H_limit_A_per_m, +H_limit_A_per_m].
+    """Perform a linear least-squares fit in a symmetric field window.
+
+    The model is Y(H) = a*H + b within
+    [-H_limit_A_per_m, +H_limit_A_per_m].
 
     Returns a dict with keys:
       - 'slope': a
@@ -431,8 +435,9 @@ def _linear_fit_slope_and_residuals(H_values, Y_values, H_limit_A_per_m=2500.0):
 
 
 def compute_magnetic_sensitivity(H_values, M_values, H_range_limit_kA_per_m=2.5):
-    """Magnetic sensitivity (sweep c): slope of linear fit to M(H)
-    within -2.5 kA/m < H < 2.5 kA/m.
+    """Compute magnetic sensitivity from the slope of a linear fit to M(H).
+
+    The fit uses the range -2.5 kA/m < H < 2.5 kA/m.
 
     Inputs should be in SI units: H in A/m, M in same units as provided.
 
@@ -443,8 +448,9 @@ def compute_magnetic_sensitivity(H_values, M_values, H_range_limit_kA_per_m=2.5)
 
 
 def compute_electrical_sensitivity(H_values, G_values, H_range_limit_kA_per_m=2.5):
-    """Electrical sensitivity (sweep c): slope of linear fit to G(H)
-    within -2.5 kA/m < H < 2.5 kA/m.
+    """Compute electrical sensitivity from the slope of a linear fit to G(H).
+
+    The fit uses the range -2.5 kA/m < H < 2.5 kA/m.
 
     Inputs should be in SI units: H in A/m, G in the appropriate electrical unit.
 
@@ -455,8 +461,9 @@ def compute_electrical_sensitivity(H_values, G_values, H_range_limit_kA_per_m=2.
 
 
 def compute_non_linearity_from_fit(H_values, M_values, H_range_limit_kA_per_m=2.5):
-    """Non-linearity (sweep c): maximum residual from the linear fit to M(H)
-    within -2.5 kA/m < H < 2.5 kA/m.
+    """Compute non-linearity as the maximum residual from the M(H) fit.
+
+    The fit uses the range -2.5 kA/m < H < 2.5 kA/m.
 
     Returns a dict with 'max_abs_residual' and the full fit result.
     """
@@ -567,6 +574,7 @@ def write_metadata(prepared, out_dir, source_path, ms_apm, benchmark_params=None
 
 def plot_dual_axis_with_components(prepared, out_dir, ms_apm):
     """Create 3 separate plots (one for each dataset: easy, diagonal, hard).
+
     Each plot shows:
     - Left y-axis: M/Ms (normalized magnetization)
     - Right y-axis: M total and all components (Mx, My, Mz) in A/m
@@ -698,7 +706,11 @@ def plot_sets(prepared, out_dir, output=None, benchmark_params=None, ms_apm=None
                         linestyle='--',
                         color='black',
                         linewidth=1.5,
-                        label=f"hard-axis fit \n(±{window_kApm:.4g} kA/m):\n slope (dM/dH)=\n{a:.4g} \n (A/m)/(A/m)"  #  (dM/dH): in (A/m)/(A/m)
+                        label=(
+                            f"hard-axis fit \n(±{window_kApm:.4g} kA/m):\n"
+                            f" slope (dM/dH)=\n{a:.4g} \n"
+                            " (A/m)/(A/m)"
+                        ),  # dM/dH in (A/m)/(A/m)
                     )
 
         # Plot G(H) for hard axis on a twin y-axis if available
@@ -706,7 +718,15 @@ def plot_sets(prepared, out_dir, output=None, benchmark_params=None, ms_apm=None
             elec = benchmark_params['hard_axis'].get('electrical_model')
             if elec and elec.get('G_S'):
                 ax2 = ax.twinx()
-                ax2.plot(elec['H_A_per_m'], elec['G_S'], color='green', linestyle=':', linewidth=1.5, marker='+', label='G(H) hard-axis\n (right y-axis)')
+                ax2.plot(
+                    elec['H_A_per_m'],
+                    elec['G_S'],
+                    color='green',
+                    linestyle=':',
+                    linewidth=1.5,
+                    marker='+',
+                    label='G(H) hard-axis\n (right y-axis)',
+                )
                 ax2.set_ylabel('G (S)')
                 # Align the twin y-axis so G(H) overlays M/Ms perfectly
                 y1_min, y1_max = ax.get_ylim()
@@ -785,7 +805,8 @@ def main():
             input_path = fallback
         else:
             raise FileNotFoundError(
-                f"CSV not found at {args.input}. Provide a valid path via --input or place MaMMoS_benchmark_OOMMF_sweeps.csv next to the script."
+                f"CSV not found at {args.input}. Provide a valid path via --input or place "
+                "MaMMoS_benchmark_OOMMF_sweeps.csv next to the script."
             )
 
     sets = read_and_split(input_path)

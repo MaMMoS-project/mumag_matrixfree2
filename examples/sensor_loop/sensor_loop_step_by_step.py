@@ -156,7 +156,8 @@ def standardize_state_file_names(directory: Path, backup_name: str, simulation_n
       sensor_backup.0050.state.npz → sensor.0050.state.npz
       other_prefix.0050.state.npz → sensor.0050.state.npz
 
-    This ensures that state files loaded from external sources or backups have consistent naming for workflow compatibility.
+    This ensures that state files loaded from external sources or backups have
+    consistent naming for workflow compatibility.
 
     Args:
         directory: Directory containing state files
@@ -195,7 +196,10 @@ def standardize_state_file_names(directory: Path, backup_name: str, simulation_n
             renamed_count += 1
     
     if renamed_count > 0:
-        print(f"[COPY] ✓ Standardized {renamed_count} state file(s) to '{simulation_name}' prefix (originals preserved)")
+        print(
+            f"[COPY] ✓ Standardized {renamed_count} state file(s) to "
+            f"'{simulation_name}' prefix (originals preserved)"
+        )
 
 
 def standardize_mesh_file_name(directory: Path, backup_mesh_name: str = None, simulation_name: str = "sensor") -> None:
@@ -426,7 +430,8 @@ Examples:
     python sensor_loop_step_by_step.py --only-compute-initial-state
   
   # Load initial state with backup mesh file
-  python sensor_loop_step_by_step.py --initial-state-file backup_sensor.0050.state.npz --initial-mesh-file sensor_backup.npz
+  python sensor_loop_step_by_step.py --initial-state-file backup_sensor.0050.state.npz \
+--initial-mesh-file sensor_backup.npz
         """,
     )
     parser.add_argument(
@@ -493,7 +498,10 @@ Examples:
         "--initial-state-file",
         type=str,
         metavar="FILENAME",
-        help="Specific initial state file to load (e.g., sensor.0050.state.npz); automatically enables --load-initial-state",
+        help=(
+            "Specific initial state file to load (e.g., sensor.0050.state.npz); "
+            "automatically enables --load-initial-state"
+        ),
     )
     parser.add_argument(
         "--initial-mesh-file",
@@ -687,7 +695,10 @@ Examples:
         print("\n[MESH DISTRIBUTION] Copying mesh to case directories (excluding initial_dir)...")
         # For down and up dirs, we still need to copy from initial_dir after the backup mesh is standardized
         # This will be handled in Step 2 along with the state file
-        print("[MESH DISTRIBUTION] Initial directory will use backup mesh; case directories will be populated after Step 1")
+        print(
+            "[MESH DISTRIBUTION] Initial directory will use backup mesh; case "
+            "directories will be populated after Step 1"
+        )
 
     loop_cmd_in_main: list[str] = ["tommos", "loop"]
     # Step0.2: remove previous output files like sensor.*.state.npz and sensor.mh in all case directories
@@ -726,8 +737,14 @@ Examples:
         print("[SIMULATION] Loading pre-computed initial state (--load-initial-state)...")
         if args.initial_state_file and not args.initial_mesh_file:
             print("[WARNING] ⚠️  MESH COMPATIBILITY CHECK REQUIRED:")
-            print("[WARNING]     The mesh from the loaded initial state must EXACTLY match the current simulation mesh.")
-            print("[WARNING]     If meshes differ (different resolution, geometry, etc.), the simulation will produce incorrect results.")
+            print(
+                "[WARNING]     The mesh from the loaded initial state must EXACTLY "
+                "match the current simulation mesh."
+            )
+            print(
+                "[WARNING]     If meshes differ (different resolution, geometry, etc.), "
+                "the simulation will produce incorrect results."
+            )
             print("[WARNING]     Provide --initial-mesh-file to copy the matching mesh alongside the state.")
         
         # Handle backup mesh file if provided
@@ -737,7 +754,11 @@ Examples:
                 print(f"  [MESH] Found backup mesh file: {args.initial_mesh_file}")
                 print(f"  [MESH] Location searched: {backup_mesh_path}")
                 print("[STANDARDIZE] Renaming backup mesh file...")
-                standardize_mesh_file_name(initial_dir, backup_mesh_name=args.initial_mesh_file, simulation_name="sensor")
+                standardize_mesh_file_name(
+                    initial_dir,
+                    backup_mesh_name=args.initial_mesh_file,
+                    simulation_name="sensor",
+                )
             else:
                 print(f"[ERROR] Specified backup mesh file not found: {backup_mesh_path}")
                 return 1
@@ -751,7 +772,11 @@ Examples:
                     print(f"  [STATE] Found specified file: {args.initial_state_file}")
                     # Standardize the file if needed
                     print("[STANDARDIZE] Checking for backup state files...")
-                    standardize_state_file_names(initial_dir, backup_name=args.initial_state_file, simulation_name="sensor")
+                    standardize_state_file_names(
+                        initial_dir,
+                        backup_name=args.initial_state_file,
+                        simulation_name="sensor",
+                    )
                     # After standardization, determine the actual filename to use
                     # Extract step number from original filename and construct standardized name
                     import re

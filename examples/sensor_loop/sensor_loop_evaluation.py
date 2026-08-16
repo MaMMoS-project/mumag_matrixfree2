@@ -196,7 +196,10 @@ def load_oommf_reference(csv_path: Path) -> tuple[np.ndarray, np.ndarray]:
         
         # Success message
         print(f"[INFO] Successfully loaded OOMMF reference data from {csv_path.name}")
-        print(f"       Data points: {len(Hext_kA_per_m)}, H range: [{Hext_kA_per_m.min():.2f}, {Hext_kA_per_m.max():.2f}] kA/m")
+        print(
+            f"       Data points: {len(Hext_kA_per_m)}, H range: "
+            f"[{Hext_kA_per_m.min():.2f}, {Hext_kA_per_m.max():.2f}] kA/m"
+        )
         
         return Hext_kA_per_m, M_over_Ms
         
@@ -881,8 +884,10 @@ def plot_sensor_data_c(
 
         # Format output according to template
         window_A_per_m = window_half_width * 1000.0
-        mag_sens_per_A_per_m = mag_sens / 1000.0  # Convert from (dimensionless)/(kA/m) to (dimensionless)/(A/m)
-        dM_dH = Ms * mag_sens_per_A_per_m  # Slope of M(H): M_s [A/m] × (dimensionless)/(A/m) = dimensionless = (A/m)/(A/m)
+        # Convert from (dimensionless)/(kA/m) to (dimensionless)/(A/m).
+        mag_sens_per_A_per_m = mag_sens / 1000.0
+        # Slope of M(H): M_s [A/m] × (dimensionless)/(A/m) = (A/m)/(A/m).
+        dM_dH = Ms * mag_sens_per_A_per_m
         mag_int_A_per_m = mag_int * Ms  # Convert from M/Ms to A/m
         nonlin_A_per_m = linear_metrics['non_linearity'] * Ms  # Convert from M/Ms to A/m
         
@@ -891,7 +896,9 @@ def plot_sensor_data_c(
         logger.info(f"    Fit window: H ∈ [{-window_A_per_m:.4g}, {window_A_per_m:.4g}] A/m")
         logger.info(f"    Slope (dM/dH): {dM_dH:.4g} (A/m)/(A/m)")
         logger.info(f"    Intercept: {mag_int_A_per_m:.4g} A/m")
-        logger.info(f"    Points used: {linear_metrics.get('H_window', []).size if hasattr(linear_metrics.get('H_window', []), 'size') else len(linear_metrics.get('H_window', []))}")
+        h_window = linear_metrics.get('H_window', [])
+        points_used = h_window.size if hasattr(h_window, 'size') else len(h_window)
+        logger.info(f"    Points used: {points_used}")
         
         if "electrical_sensitivity" in linear_metrics:
             elec_sens = linear_metrics["electrical_sensitivity"]
@@ -909,7 +916,8 @@ def plot_sensor_data_c(
         logger.info(f"    Max residual: {nonlin_A_per_m:.4g} A/m")
     else:
         logger.info(
-            f"  [WARNING] Case {figure_name}: Insufficient data in ±{window_half_width:.1f} kA/m window to compute sensitivities"
+            f"  [WARNING] Case {figure_name}: Insufficient data in "
+            f"±{window_half_width:.1f} kA/m window to compute sensitivities"
         )
 
     # Set up primary y-axis (left): M/Ms (dimensionless)
@@ -956,7 +964,10 @@ def plot_sensor_data_c(
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     elif linear_metrics and "electrical_sensitivity" in linear_metrics:
         # Both sensitivities available
-        textstr = f"Benchmark Metrics:\nMagnetic: dM/dH = {dM_dH:.4g} (A/m)/(A/m)\nElectrical: dG/dH = {dG_dH:.4g} S/(A/m)"
+        textstr = (
+            f"Benchmark Metrics:\nMagnetic: dM/dH = {dM_dH:.4g} (A/m)/(A/m)\n"
+            f"Electrical: dG/dH = {dG_dH:.4g} S/(A/m)"
+        )
         ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=9,
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
     
@@ -1397,7 +1408,8 @@ Note: auto-concatenation only happens in the full pipeline (no --plot-* flags).
                     file=sys.stderr,
                 )
                 print(
-                    "        Use --sensor-loop-dir to specify the path explicitly, or run this script from within the repository or a subfolder of examples/sensor_loop/",
+                    "        Use --sensor-loop-dir to specify the path explicitly, or run "
+                    "this script from within the repository or a subfolder of examples/sensor_loop/",
                     file=sys.stderr,
                 )
                 return 1

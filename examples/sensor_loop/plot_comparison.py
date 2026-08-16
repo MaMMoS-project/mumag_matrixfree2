@@ -42,7 +42,14 @@ def main():
         # Plot OOMMF Reference
         subset = oommf_df[oommf_df['axis'] == oommf_axis]
         if not subset.empty:
-            plt.plot(mT_to_kAm(subset['bParallel_mT']), subset['mParallel'], 'k--', linewidth=2.5, label='OOMMF Reference', zorder=2)
+            plt.plot(
+                mT_to_kAm(subset['bParallel_mT']),
+                subset['mParallel'],
+                'k--',
+                linewidth=2.5,
+                label='OOMMF Reference',
+                zorder=2,
+            )
         
         # Plot Simulated Data
         mh_path = workspace / mh_file
@@ -53,13 +60,23 @@ def main():
                 m_parallel = data[:, 1] / 1.005 # J_parallel / Js
                 
                 # Use a distinct visual cue as per plotting rules (color + solid line + higher z-order)
-                plt.plot(mT_to_kAm(b_ext_mT), m_parallel, color='#FF5733', linestyle='-', linewidth=2, label='MuMag MatrixFree', alpha=0.9, zorder=3)
+                plt.plot(
+                    mT_to_kAm(b_ext_mT),
+                    m_parallel,
+                    color='#FF5733',
+                    linestyle='-',
+                    linewidth=2,
+                    label='MuMag MatrixFree',
+                    alpha=0.9,
+                    zorder=3,
+                )
             except Exception as e:
                 print(f"Error loading {mh_file}: {e}")
         else:
             print(f"Warning: {mh_file} not found. Skipping simulated data for {title}.")
 
-        # The plotting rule states: You are prohibited from generating plot titles using plt.title(); all descriptions must go in captions.
+        # The plotting rule prohibits generating plot titles with plt.title();
+        # all descriptions must go in captions.
         plt.text(0.5, 1.05, title, ha='center', va='bottom', transform=plt.gca().transAxes, fontsize=16)
         
         plt.xlabel('H$_{parallel}$ [kA/m]')
