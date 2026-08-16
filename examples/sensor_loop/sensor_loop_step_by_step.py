@@ -23,12 +23,12 @@
 # See README.md for detailed options and examples.
 
 
-from pathlib import Path
+import argparse
+import os
 import shutil
 import subprocess
 import sys
-import os
-import argparse
+from pathlib import Path
 
 # Ensure unbuffered output for real-time logging, otherwise output may be delayed
 os.environ["PYTHONUNBUFFERED"] = "1"
@@ -127,8 +127,7 @@ def generate_workspace(sensor_loop_dir: Path):
 
 
 def run_loop(loop_cmd: list[str], cwd: Path) -> None:
-    """
-    Run the packaged ``tommos loop`` command in the specified working directory.
+    """Run the packaged ``tommos loop`` command in the specified working directory.
 
     Args:
         loop_cmd: Base command list containing the packaged CLI and loop subcommand.
@@ -151,8 +150,7 @@ def run_loop(loop_cmd: list[str], cwd: Path) -> None:
 
 
 def standardize_state_file_names(directory: Path, backup_name: str, simulation_name: str = "sensor") -> None:
-    """
-    Standardize state file names to match the simulation name prefix.
+    """Standardize state file names to match the simulation name prefix.
 
     For example, if simulation is called 'sensor', rename files like:
       sensor_backup.0050.state.npz → sensor.0050.state.npz
@@ -201,8 +199,7 @@ def standardize_state_file_names(directory: Path, backup_name: str, simulation_n
 
 
 def standardize_mesh_file_name(directory: Path, backup_mesh_name: str = None, simulation_name: str = "sensor") -> None:
-    """
-    Standardize mesh file name to match the simulation name.
+    """Standardize mesh file name to match the simulation name.
 
     For example, if simulation is called 'sensor', rename:
       sensor_backup.npz → sensor.npz
@@ -232,8 +229,7 @@ def standardize_mesh_file_name(directory: Path, backup_mesh_name: str = None, si
 
 
 def find_last_state_file(directory: Path) -> str:
-    """
-    Find the last state file with format sensor.XXXX.state.npz and highest number XXXX.
+    """Find the last state file with format sensor.XXXX.state.npz and highest number XXXX.
 
     Args:
         directory: Directory to search for state files
@@ -256,8 +252,7 @@ def find_last_state_file(directory: Path) -> str:
 def copy_state(
     src_dir: Path, src_name: str, dst_dir: Path, dst_name: str | None = None
 ) -> None:
-    """
-    Copy a state file between directories, optionally renaming it.
+    """Copy a state file between directories, optionally renaming it.
 
     Args:
         src_dir: Source directory containing the state file
@@ -277,8 +272,7 @@ def copy_state(
 
 
 def set_p2_params(directory: Path, updates: dict[str, str]) -> None:
-    """
-    Force-set parameters in a sensor.p2 file within a directory.
+    """Force-set parameters in a sensor.p2 file within a directory.
 
     Ensures keys like 'ini' and 'hstep' are updated reliably regardless of spacing or order.
 
@@ -291,7 +285,7 @@ def set_p2_params(directory: Path, updates: dict[str, str]) -> None:
         print(f"  [WARNING] sensor.p2 not found in {directory.name}, cannot update {list(updates.keys())}")
         return
 
-    with open(p2_file, "r") as f:
+    with open(p2_file) as f:
         lines = f.readlines()
 
     keys = set(updates.keys())
@@ -318,8 +312,7 @@ def set_p2_params(directory: Path, updates: dict[str, str]) -> None:
 
 
 def update_hstep_in_folders(directories: list[Path], new_hstep_abs: float) -> None:
-    """
-    Update the hstep value in sensor.p2 files across multiple directories.
+    """Update the hstep value in sensor.p2 files across multiple directories.
 
     This function modifies the hstep parameter in sensor.p2 files while preserving
     the original sign (positive or negative). For example, if hstep = -0.00025 and
@@ -346,7 +339,7 @@ def update_hstep_in_folders(directories: list[Path], new_hstep_abs: float) -> No
             print(f"  [WARNING] sensor.p2 not found in {directory.name}, skipping")
             continue
             
-        with open(p2_file, "r") as f:
+        with open(p2_file) as f:
             lines = f.readlines()
         
         modified = False
@@ -379,8 +372,7 @@ def update_hstep_in_folders(directories: list[Path], new_hstep_abs: float) -> No
 
 
 def main() -> int:
-    """
-    Orchestrate the step-by-step sensor loop workflow for MaMMoS Benchmark 2 (Sensor).
+    """Orchestrate the step-by-step sensor loop workflow for MaMMoS Benchmark 2 (Sensor).
 
     Steps:
       0. Mesh selection/generation and cleanup
@@ -859,7 +851,7 @@ Examples:
 
         # Transfer from precompute to down
         print("\n" + "-" * 80)
-        print(f"SENSOR-EXAMPLE, TRANSFER STATE - Precompute → Down")
+        print("SENSOR-EXAMPLE, TRANSFER STATE - Precompute → Down")
         print("-" * 80)
         print(f"[COPY] {precompute_result_state} → case down-{s}")
         copy_state(pdir, precompute_result_state, ddir)
@@ -885,7 +877,7 @@ Examples:
 
         # Transfer from down to up
         print("\n" + "-" * 80)
-        print(f"SENSOR-EXAMPLE, TRANSFER STATE - Down → Up")
+        print("SENSOR-EXAMPLE, TRANSFER STATE - Down → Up")
         print("-" * 80)
         print(f"[COPY] {down_result_state} → case up-{s}")
         copy_state(ddir, down_result_state, udir)

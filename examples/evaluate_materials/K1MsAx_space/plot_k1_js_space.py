@@ -1,14 +1,14 @@
 """Module to calculate, sample, export, and visualize the K1-Js search space corridor."""
 
-from typing import Tuple
+
+import mammos_entity as me
 import matplotlib.pyplot as plt
 import numpy as np
-import mammos_entity as me
 
 
 def compute_corridor_boundaries(
     k1: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Computes the lower and upper saturation polarization boundaries.
 
     Args:
@@ -27,7 +27,7 @@ def sample_corridor_points(
     k1_max: float = 8.5,
     num_k1: int = 12,
     num_js: int = 5,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Generates an evenly spaced grid of (K1, Js) points within the corridor.
 
     Args:

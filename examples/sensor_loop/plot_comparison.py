@@ -1,9 +1,10 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib
 import sys
 from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 plt.rcParams.update({'font.size': 14})
 matplotlib.use('Agg')
@@ -12,6 +13,7 @@ def mT_to_kAm(B_mT):
     return B_mT * 10.0 / (4.0 * np.pi)
 
 import argparse
+
 
 def main():
     parser = argparse.ArgumentParser()

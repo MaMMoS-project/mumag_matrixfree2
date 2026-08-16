@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Sensor Loop Evaluation for MaMMoS Deliverable 6.2 Benchmark
+"""Sensor Loop Evaluation for MaMMoS Deliverable 6.2 Benchmark
 
 This script post-processes hysteresis loop simulations for magnetic field sensors
 and computes benchmark metrics according to MaMMoS D6.2, Chapter 3.
@@ -35,18 +34,17 @@ Benchmark metrics (±2.5 kA/m window):
     - Non-linearity: max |residual| from M(H) linear fit
 """
 
-from typing import Optional
-from pathlib import Path
 import argparse
 import logging
-import sys
-
-import matplotlib.pyplot as plt
-import numpy as np
-import mammos_entity as me
 
 # Ensure unbuffered output for real-time logging
 import os
+import sys
+from pathlib import Path
+
+import mammos_entity as me
+import matplotlib.pyplot as plt
+import numpy as np
 
 os.environ["PYTHONUNBUFFERED"] = "1"
 sys.stdout.reconfigure(line_buffering=True)
@@ -108,7 +106,7 @@ def parse_p2_file(p2_file: Path) -> dict:
     if not p2_file.exists():
         return params
 
-    with open(p2_file, "r") as f:
+    with open(p2_file) as f:
         for line in f:
             line = line.strip()
             # Match lines like "hstep = -0.00025" or "hstep = 0.003"
@@ -130,7 +128,7 @@ def concatenate_sensor_data(down_file: Path, up_file: Path, output_file: Path) -
     down_data = np.loadtxt(down_file, skiprows=1)
     up_data = np.loadtxt(up_file, skiprows=1)
 
-    with open(down_file, "r") as f:
+    with open(down_file) as f:
         header = f.readline().strip()
 
     combined_data = np.vstack((down_data, up_data))
@@ -399,7 +397,7 @@ def plot_sensor_data_a(
                 alpha=0.4,
                 label="OOMMF reference M/Ms",
             )
-            logger.info(f"  [REFERENCE] Successfully plotted OOMMF reference overlay")
+            logger.info("  [REFERENCE] Successfully plotted OOMMF reference overlay")
         except Exception as exc:  # pragma: no cover - defensive
             logger.info(f"  [WARNING] Failed to load OOMMF reference: {exc}")
     
@@ -518,7 +516,7 @@ def plot_sensor_data_b(
                 alpha=0.4,
                 label="OOMMF reference M/Ms",
             )
-            logger.info(f"  [REFERENCE] Successfully plotted OOMMF reference overlay")
+            logger.info("  [REFERENCE] Successfully plotted OOMMF reference overlay")
         except Exception as exc:  # pragma: no cover - defensive
             logger.info(f"  [WARNING] Failed to load OOMMF reference: {exc}")
     
@@ -562,10 +560,10 @@ def extract_linear_range(
     M_over_Ms: np.ndarray,
     Hext_kA_per_m: np.ndarray,
     *,
-    G_H: Optional[np.ndarray] = None,
+    G_H: np.ndarray | None = None,
     window_half_width: float = 2.5,
     min_window_points: int = 5,
-) -> Optional[dict]:
+) -> dict | None:
     """Compute benchmark sensitivities on the fixed ±2.5 kA/m window (MaMMoS D6.2).
 
     Implements the "Extracted parameters" definition from MaMMoS Deliverable 6.2
@@ -639,7 +637,7 @@ def extract_electrical_sensitivity(
     tmr_ratio: float = 1.0,
     ra_kohm_um2: float = 1.0,
     area_um2: float = 2.33,
-) -> Optional[dict]:
+) -> dict | None:
     """Compute Item 4: slope of G(H) in the ±field_window band for sweep (c).
 
     The conductance model follows MaMMoS Deliverable 6.2 (Sec. 3):
@@ -657,7 +655,6 @@ def extract_electrical_sensitivity(
         dict with slope (dG/dH), intercept, windowed H/G arrays, residuals, and G0 metadata,
         or None if insufficient data fall inside the requested field window.
     """
-
     data = np.loadtxt(data_file, skiprows=1)
     if data.shape[1] < 6:
         raise ValueError("Expected Jx/Jy/Jz columns in the .mh file.")
@@ -852,7 +849,7 @@ def plot_sensor_data_c(
                 alpha=0.4,
                 label="OOMMF reference M/Ms",
             )
-            logger.info(f"  [REFERENCE] Successfully plotted OOMMF reference overlay")
+            logger.info("  [REFERENCE] Successfully plotted OOMMF reference overlay")
         except Exception as exc:  # pragma: no cover - defensive
             logger.info(f"  [WARNING] Failed to load OOMMF reference: {exc}")
 
@@ -889,8 +886,8 @@ def plot_sensor_data_c(
         mag_int_A_per_m = mag_int * Ms  # Convert from M/Ms to A/m
         nonlin_A_per_m = linear_metrics['non_linearity'] * Ms  # Convert from M/Ms to A/m
         
-        logger.info(f"\nHard-axis sensitivity (sweep c):")
-        logger.info(f"\n  Magnetic sensitivity:")
+        logger.info("\nHard-axis sensitivity (sweep c):")
+        logger.info("\n  Magnetic sensitivity:")
         logger.info(f"    Fit window: H ∈ [{-window_A_per_m:.4g}, {window_A_per_m:.4g}] A/m")
         logger.info(f"    Slope (dM/dH): {dM_dH:.4g} (A/m)/(A/m)")
         logger.info(f"    Intercept: {mag_int_A_per_m:.4g} A/m")
@@ -901,14 +898,14 @@ def plot_sensor_data_c(
             elec_int = linear_metrics["electrical_intercept"]
             dG_dH = elec_sens / 1000.0  # Convert from S/(kA/m) to S/(A/m)
             
-            logger.info(f"\n  Electrical model (Slonczewski MTJ):")
+            logger.info("\n  Electrical model (Slonczewski MTJ):")
             logger.info(f"    P² (spin polarization): {P2:.4g}")
             logger.info(f"    Rmin: {Rmin:.4g} Ω")
             logger.info(f"    G₀: {G0*1e3:.4g} mS")
             logger.info(f"    Slope (dG/dH): {dG_dH:.4g} S/(A/m)")
             logger.info(f"    Intercept: {elec_int:.4g} S")
         
-        logger.info(f"\n  Non-linearity:")
+        logger.info("\n  Non-linearity:")
         logger.info(f"    Max residual: {nonlin_A_per_m:.4g} A/m")
     else:
         logger.info(
@@ -983,7 +980,6 @@ def plot_sensor_data_c(
 
 def main() -> int:
     """Post-process sensor loop results: concatenate data and create plots."""
-
     # =====================================================================
     # COMMAND-LINE ARGUMENT PARSING
     # =====================================================================

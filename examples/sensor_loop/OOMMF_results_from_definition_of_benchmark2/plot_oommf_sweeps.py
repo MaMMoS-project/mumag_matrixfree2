@@ -2,11 +2,15 @@ import argparse
 import csv
 import math
 from pathlib import Path
+
 import matplotlib
+
 matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
 import json
+
+import matplotlib.pyplot as plt
 import numpy as np
+
 try:
     import yaml
 except ImportError:
@@ -107,8 +111,7 @@ def convert_and_prepare(sets, ms_apm=800000.0):
 
 
 def compute_saturation_field(H_values, M_norm_values, saturation_threshold=0.99):
-    """
-    Compute the reset saturation field Hs on the increasing-H branch
+    """Compute the reset saturation field Hs on the increasing-H branch
     starting from negative saturation (M/Ms ≈ -1).
 
     Hs is defined as the first field value at which magnetization
@@ -167,7 +170,7 @@ def compute_saturation_field(H_values, M_norm_values, saturation_threshold=0.99)
 
     # Fallback: after the last occurrence of negative saturation,
     # take the first index reaching positive saturation.
-    neg_sat_indices = np.where(M <= -saturation_threshold)[0]
+    neg_sat_indices = np.where(-saturation_threshold >= M)[0]
     if neg_sat_indices.size > 0:
         after = int(neg_sat_indices[-1])
         pos_indices = np.where(M[after + 1:] >= saturation_threshold)[0]
@@ -195,8 +198,7 @@ def compute_saturation_field(H_values, M_norm_values, saturation_threshold=0.99)
 
 
 def compute_coercivity_45deg(H_values, M_norm_values):
-    """
-    Compute the coercivity Hc,45° from diagonal (45°) hysteresis loop.
+    """Compute the coercivity Hc,45° from diagonal (45°) hysteresis loop.
     
     Hc,45° is defined as the field where M/Ms crosses zero.
     Uses linear interpolation between adjacent points.
@@ -249,8 +251,7 @@ def compute_coercivity_45deg(H_values, M_norm_values):
 
 
 def compute_benchmark_parameters(prepared):
-    """
-    Compute benchmark parameters Hs and Hc,45° from prepared hysteresis data.
+    """Compute benchmark parameters Hs and Hc,45° from prepared hysteresis data.
     
     Parameters:
     -----------
@@ -325,8 +326,7 @@ def compute_G_slonczewski_hard_axis(
         RA_kOhm_um2: float = 1.0,
         A_um2: float = 2.33,
 ):
-        """
-        Compute G(H) for the hard-axis using the Slonczewski MTJ model.
+        """Compute G(H) for the hard-axis using the Slonczewski MTJ model.
 
         Assumptions per MaMMoS D6.2:
         - Reference layer magnetization along (0, 1, 0) (hard axis)
@@ -364,8 +364,7 @@ def compute_G_slonczewski_hard_axis(
 
 
 def augment_with_G_over_Ms(prepared):
-    """
-    Add G(H)/Ms to prepared data where available per MaMMoS D6.2:
+    """Add G(H)/Ms to prepared data where available per MaMMoS D6.2:
     G(H) = M_x / (\mu_0 M_s) ⇒ normalized G(H) = M_x / M_s.
 
     With the pinned layer along +x (easy axis), the easy-axis sweep's
@@ -384,8 +383,7 @@ def augment_with_G_over_Ms(prepared):
 
 
 def _linear_fit_slope_and_residuals(H_values, Y_values, H_limit_A_per_m=2500.0):
-    """
-    Perform a linear least-squares fit Y(H) = a*H + b within
+    """Perform a linear least-squares fit Y(H) = a*H + b within
     the symmetric field window [-H_limit_A_per_m, +H_limit_A_per_m].
 
     Returns a dict with keys:
@@ -399,7 +397,7 @@ def _linear_fit_slope_and_residuals(H_values, Y_values, H_limit_A_per_m=2500.0):
     H = np.array(H_values, dtype=float)
     Y = np.array(Y_values, dtype=float)
 
-    mask = (H >= -H_limit_A_per_m) & (H <= H_limit_A_per_m)
+    mask = (-H_limit_A_per_m <= H) & (H_limit_A_per_m >= H)
     Hw = H[mask]
     Yw = Y[mask]
 
@@ -433,8 +431,7 @@ def _linear_fit_slope_and_residuals(H_values, Y_values, H_limit_A_per_m=2500.0):
 
 
 def compute_magnetic_sensitivity(H_values, M_values, H_range_limit_kA_per_m=2.5):
-    """
-    Magnetic sensitivity (sweep c): slope of linear fit to M(H)
+    """Magnetic sensitivity (sweep c): slope of linear fit to M(H)
     within -2.5 kA/m < H < 2.5 kA/m.
 
     Inputs should be in SI units: H in A/m, M in same units as provided.
@@ -446,8 +443,7 @@ def compute_magnetic_sensitivity(H_values, M_values, H_range_limit_kA_per_m=2.5)
 
 
 def compute_electrical_sensitivity(H_values, G_values, H_range_limit_kA_per_m=2.5):
-    """
-    Electrical sensitivity (sweep c): slope of linear fit to G(H)
+    """Electrical sensitivity (sweep c): slope of linear fit to G(H)
     within -2.5 kA/m < H < 2.5 kA/m.
 
     Inputs should be in SI units: H in A/m, G in the appropriate electrical unit.
@@ -459,8 +455,7 @@ def compute_electrical_sensitivity(H_values, G_values, H_range_limit_kA_per_m=2.
 
 
 def compute_non_linearity_from_fit(H_values, M_values, H_range_limit_kA_per_m=2.5):
-    """
-    Non-linearity (sweep c): maximum residual from the linear fit to M(H)
+    """Non-linearity (sweep c): maximum residual from the linear fit to M(H)
     within -2.5 kA/m < H < 2.5 kA/m.
 
     Returns a dict with 'max_abs_residual' and the full fit result.
@@ -571,8 +566,7 @@ def write_metadata(prepared, out_dir, source_path, ms_apm, benchmark_params=None
 
 
 def plot_dual_axis_with_components(prepared, out_dir, ms_apm):
-    """
-    Create 3 separate plots (one for each dataset: easy, diagonal, hard).
+    """Create 3 separate plots (one for each dataset: easy, diagonal, hard).
     Each plot shows:
     - Left y-axis: M/Ms (normalized magnetization)
     - Right y-axis: M total and all components (Mx, My, Mz) in A/m
