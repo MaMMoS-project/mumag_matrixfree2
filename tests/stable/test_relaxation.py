@@ -79,4 +79,4 @@ def test_stoner_wohlfarth_switching(loop_bin, mesh_bin, tmp_path, subtests, thet
 
     # extract Bc from loop
     hystloop = me.from_csv(tmp_path / f"hyst_{system_name}" / "mammos_hysteresis.csv")
-    assert np.all(hystloop.J_par_T.value >= 0.99 * Js)
+    assert np.all(0.99 * Js <= hystloop.J_par_T.value <= Js)
