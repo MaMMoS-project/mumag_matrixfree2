@@ -1,6 +1,6 @@
 # MaMMoS-MuMag: Matrix-Free Micromagnetics with JAX
 
-MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a **matrix-free FEM** approach for the Poisson equation (demagnetization field) to enable large-scale simulations on both CPU and GPU architectures without the severe memory overhead of storing global stiffness matrices. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a highly optimized, dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
+MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a highly optimized **assembled sparse matrix FEM approach** for the Poisson equation (demagnetization field) to enable ultra-fast, large-scale simulations on both CPU and GPU architectures. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
 
 ## 1. Prerequisites and Installation
 
@@ -27,9 +27,9 @@ pixi install
 Run the development tasks with:
 
 ```bash
-pixi run test
-pixi run lint
-pixi run build-package
+pixi run -e test test
+pixi run -e lint lint
+pixi run -e build build-package
 ```
 
 After C++, CMake, dependency-metadata, or package-file changes, reinstall the
@@ -41,10 +41,7 @@ pixi reinstall -e test tommos
 
 ## 2. How to Run the Software Locally
 
-> [!WARNING]
-> **Experimental Feature:** The `--operator-mode matrix_free` flag is highly experimental and is **not recommended** for use. It incurs excessively long JAX JIT compilation times on GPUs. Please use the default `--operator-mode assembled` for all workloads.
-
-All operations are executed through `pixi run`. The default environment is `cpu`.
+Commands are run through `pixi run`; use `-e` to select an environment explicitly.
 
 ### Running Locally on CPU
 To run simulations or meshes on the CPU (uses Intel MKL and C++ backend by default on Linux):
@@ -96,7 +93,6 @@ Below are complete end-to-end Slurm pipeline examples. These scripts automatical
 
 echo "=== Running Assembled Test on CPU ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 
 # Force MKL and OpenMP to use exactly the number of cores allocated by Slurm
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -121,7 +117,7 @@ echo "=== JAX simulation finished ==="
 ```
 
 **2. `test_a100.slurm`** (Single GPU)
-- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores, configuring XLA memory allocation safely to prevent out-of-memory errors (`XLA_PYTHON_CLIENT_MEM_FRACTION`).
+- **Hardware**: Reserves 1 A100 GPU and 2 CPU cores.
 - **Workflow**:
   - Sweeps the external field entirely on the extremely fast GPU backend (no C++ compilation required).
 
@@ -130,14 +126,13 @@ echo "=== JAX simulation finished ==="
 #SBATCH --job-name=test_as_a100
 #SBATCH --partition=dissSims
 #SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-gpu=2
 #SBATCH --mem=128G
 #SBATCH --time=00:30:00
 #SBATCH --output=test_a100.log
 
 echo "=== Running Assembled Test on A100 ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
 
 pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
@@ -149,28 +144,27 @@ echo "=== JAX simulation finished ==="
 ```
 
 **3. `test_multi_gpu.slurm`** (Multi-GPU)
-- **Hardware**: Reserves 4 L40s GPUs. 
+- **Hardware**: Reserves 4 L40s GPUs.
 - **Workflow**:
-  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them to prevent Out-Of-Memory errors on massive meshes.
-  - **Crucial Setting**: Includes `export JAX_DISABLE_P2P=1`. When running on multi-GPU nodes that lack NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing), direct GPU-to-GPU memory copies may hang indefinitely or silently fail. This forces JAX to route cross-device memory transfers safely through host RAM.
+  - Automatically detects all available GPUs and dynamically partitions the massive sparse matrix operators (exchange, demag, preconditioner) across them using distributed CSR matrices (`DistributedCSR`). Halo exchange is performed asynchronously via `jax.lax.all_to_all` within `shard_map`.
+- **Troubleshooting**:
+  - **Hangs on PCIe Nodes**: If the simulation hangs indefinitely without an error on nodes lacking NVLink bridges (such as standard PCIe nodes with strict Access Control Services routing, e.g., the Gd or L40s nodes), the hardware is blocking direct GPU-to-GPU memory copies. You must set `export NCCL_P2P_DISABLE=1` to safely route cross-device memory transfers through the host RAM.
+  - **Communication Diagnostics**: To analyze GPU-to-GPU communication topologies and confirm whether P2P or SYS links are being negotiated, set `export NCCL_DEBUG=INFO` to output NCCL diagnostics directly into your log file.
 
 ```bash
 #!/bin/bash
 #SBATCH --job-name=test_multi
 #SBATCH --partition=dissSims
-#SBATCH --gres=gpu:l40s:4
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=128G
+#SBATCH --nodelist=Sm
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-gpu=2
+#SBATCH --mem=80G
 #SBATCH --time=01:30:00
 #SBATCH --output=test_multi_gpu.log
 
 echo "=== Running Assembled Test on l40s multi-gpu ==="
 export JAX_ENABLE_X64=True
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
-
-# Disable direct GPU-to-GPU (P2P) transfers to prevent silent failures
-# or lockups on cluster nodes without NVLink bridges.
-export JAX_DISABLE_P2P=1
+export NCCL_IGNORE_CPU_AFFINITY=1
 
 pixi run -e cuda tommos loop cube \
     --mesh cube_sorted.npz \
@@ -243,18 +237,23 @@ pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm
 pixi run tommos mesh --geom box --extent 20,20,20 --h 2.0 --out-name cube_20nm_with_shell --add-shell
 ```
 
-**3. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
+**3. Create a High Aspect Ratio Eye Mesh with an Auto-Generated Airbox (using default bounding box method):**
+```bash
+pixi run tommos mesh --geom eye --extent 2000,100,10 --h 5.0 --add-shell --out-name eye_mesh_2000
+```
+
+**4. Run a CPU Simulation (Adding an Airbox On-the-Fly):**
 ```bash
 pixi run tommos loop cube_20nm --add-shell
 ```
 
-**4. Run a Full Pipeline Example (Provided):**
+**5. Run a Full Pipeline Example (Provided):**
 ```bash
 pixi run sample
 ```
 *(This automatically meshes a cube, runs a full hysteresis loop, and outputs the results).*
 
-**5. Run the Pipeline on Mac (Apple Silicon / ARM64):**
+**6. Run the Pipeline on Mac (Apple Silicon / ARM64):**
 Because the `pixi run sample` shortcut relies on hardcoded Linux commands, Mac users must execute the simulation step explicitly to append the MKL bypass flags:
 ```bash
 # Generate the mesh
@@ -268,13 +267,23 @@ pixi run tommos loop cube_20nm --add-shell --cpu-spmv-backend scipy --no-cpp-mkl
 ### Energy Minimization Methods (`--method`)
 The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ constraint at every node.
 - **`pcohen_hs` (Default)**: Preconditioned Cohen Conjugate Gradient with Hestenes-Stiefel update. This is the most successful and robust minimizer for micromagnetics across our benchmarks.
-- **`pcohen`**: Preconditioned Cohen CG with Polak-Ribière update.
-- **`tn`**: Truncated Newton-CG.
+- **`tr`**: Trust Region Newton Conjugate Gradient method.
+
+### Convergence Criteria
+The solver employs a multi-tiered convergence criterion to decide when to stop the minimization loop. By default, it terminates when **all** of the following relative stability conditions are met simultaneously:
+1. **Energy Stability**: The energy decrease is smaller than the `--tau-f` tolerance (scaled by absolute energy).
+2. **Magnetization Stability**: The maximum change in magnetization between iterations is smaller than $\sqrt{\tau_f}$ (scaled).
+3. **Torque Bound**: The maximum norm of the tangent gradient (the torque $|m \times h_{eff}|$) is smaller than $\tau_f^{1/3}$ (scaled by absolute energy).
+
+Alternatively, the solver will instantly terminate if the **absolute** torque bound is reached:
+- **Absolute Torque Threshold**: The maximum norm of the tangent gradient strictly falls below the `--eps-a` parameter.
+
+If `--eps-a` is set to `auto` (or left undefined), the solver dynamically computes a "noise floor" by taking the maximum of your Poisson tolerance and the theoretical machine precision accumulation limit, scaled by the initial energy.
 
 ### Poisson Solvers (`--poisson-solver`)
 - **`auto` (Default)**: Intelligently selects the solver based on hardware. Uses `pardiso` if Intel MKL/CPU is detected, and `jax` if a GPU is detected.
 - **`pardiso`**: Direct sparse solver utilizing the C++ Intel MKL backend. Vastly superior for CPU nodes.
-- **`jax`**: Iterative Preconditioned Conjugate Gradient (PCG) matrix-free solver. It uses an algebraic multigrid method for preconditioning the conjugate gradient. Highly parallelized for massive GPU execution.
+- **`jax`**: Iterative preconditioned conjugate-gradient solver using assembled sparse operators. It uses an algebraic multigrid method to precondition the conjugate-gradient iteration and supports parallel GPU execution.
 
 ## 8. CLI Features & Arguments
 
@@ -287,14 +296,15 @@ The package employs Curvilinear Search Methods to strictly enforce the $|m|=1$ c
 | `--KL` | float | Total outermost geometric scale relative to body (default: 10.0). |
 | `--K` | float | Geometric growth factor for shell layer thickness (default: 1.5). |
 | `--hmax` | float | Target edge length at the outermost shell boundary (default: auto scales with magnet size). |
-| `--shell-type`| choice | Outer boundary: `triangles` or `hull` (default: `hull`). |
+| `--shell-type`| choice | Outer boundary: `triangles`, `hull`, or `box` (default: `box`). |
 | `--cpp-mkl` / `--no-cpp-mkl` | flag | Toggle the high-performance C++ backend. Defaults to True on CPU, False on GPU. |
-| `--poisson-solver` | choice | `auto` (default), `jax`, or `pardiso`. |
+| `--poisson-solver` | choice | `auto` (default), `jax`, `jax_mkl`, or `pardiso`. |
 | `--method` | choice | Energy minimizer algorithm (default: `pcohen_hs`). |
-| `--operator-mode` | choice | Mode for execution: `assembled` (default, recommended) or `matrix_free` (experimental, do not use). |
 | `--pc-iters` | int | Inner iterations for preconditioning (default: 10). |
 | `--out-dir` | path | Directory for results (default: `hyst_<modelname>`). |
 | `--verbose` | flag | Print detailed minimizer iterations. |
+| `--ignore-mem-warning` | flag | Bypass the memory safety abort if estimated memory exceeds available RAM. |
+| `--num-devices` | int | Number of accelerator devices to use (default: `0`, meaning all available devices). |
 
 ### `tommos mesh` (Meshing Tool)
 | Parameter | Type | Description |
@@ -316,7 +326,7 @@ The airbox tool can be run independently to add a far-field vacuum region to an 
 | `--in` | string | **Required**. Input `.npz` mesh containing the core body. |
 | `--out-npz` | string | Optional path to save the merged mesh as an `.npz` file. |
 | `--out-vtu` | string | Optional path to save the merged mesh as a `.vtu` file for visualization. |
-| `--shell-type`| choice | Outer boundary geometry: `triangles` or `hull` (default: `hull`). The `hull` mode dramatically reduces element counts. |
+| `--shell-type`| choice | Outer boundary geometry: `triangles`, `hull`, or `box` (default: `box`). The `box` mode dramatically reduces element counts for highly anisotropic shapes. |
 | `--KL` | float | Total outermost expansion distance relative to the core body (default: `10.0`). |
 | `--K` | float | Geometric growth factor for the thickness of each subsequent shell layer (default: `1.5`). |
 | `--hmax` | float | Target edge length at the outermost boundary. Defaults to `None` (intelligently auto-scales to 20% of the expanded airbox bounds to prevent element explosions on large models). |
@@ -340,6 +350,7 @@ Below is an exhaustive list of all command-line arguments accepted by the `tommo
 | `--snapshot-every` | Save VTU snapshots of the vector state every N steps (0 to disable). | `1` |
 | `--verbose` | Print detailed inner minimizer iterations at each field step. | `False` |
 | `--benchmark` | Run a dummy warmup step before the main loop to compile JIT functions ahead of time. | `False` |
+| `--ignore-mem-warning`| Bypass the memory safety abort if estimated memory exceeds available RAM. | `False` |
 
 ### Field Sweep & Initialization
 | Parameter | Description | Default |
@@ -356,7 +367,7 @@ Below is an exhaustive list of all command-line arguments accepted by the `tommo
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `--add-shell` | Automatically add a graded airbox shell around the core mesh. | `False` |
-| `--shell-type`| Outer shell boundary type: copy original 'triangles' or use convex 'hull'. | `hull` |
+| `--shell-type`| Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box'. | `box` |
 | `--KL` | Total outermost geometric scale relative to body ($> 1$). | `10.0` |
 | `--K` | Geometric growth factor for the shell layer thickness ($> 1$). | `1.5` |
 | `--layers` | Number of graded shell layers to generate (if omitted, auto derived from KL and K). | `None` |
@@ -373,30 +384,21 @@ Below is an exhaustive list of all command-line arguments accepted by the `tommo
 ### Solver Backend & Parallelization
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--operator-mode` | SpMV execution mode: `assembled` (default, sparse matrix) or `matrix_free` (experimental, do not use). | `assembled` |
-| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `pardiso`). | `auto` |
+| `--poisson-solver` | Solver for the magnetostatic Poisson problem (`auto`, `jax`, `jax_mkl`, `pardiso`). | `auto` |
 | `--cpu-spmv-backend`| Backend for SpMV when running on CPU in assembled mode (`persistent_mkl`, `dot_product_mkl`, `scipy`, `jax_default`, `custom_jax`). | `persistent_mkl` |
 | `--cpp-mkl` / `--no-cpp-mkl` | Force use of the pure C++ MKL minimizer backend. | True on CPU, False on GPU |
-| `--chunk-elems` | Number of elements processed per chunk to control peak GPU memory. | `200000` |
-| `--geom-backend` | Strategy for providing shape gradients: `stored_JinvT`, `stored_grad_phi`, or `on_the_fly`. | `stored_JinvT` |
+| `--num-devices` | Number of accelerator devices to use; `0` selects all available devices. | `0` |
 
 ### Energy Minimizer Configuration
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
-| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `pcohen`, `tn`). | `pcohen_hs` |
-| `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `2000` |
+| `--method` | Energy minimization algorithm (e.g. `pcohen_hs`, `tr`). | `pcohen_hs` |
+| `--max-iter` | Maximum inner iterations for the energy minimizer per field step. | `8000` |
 | `--tau-f` | Relative energy convergence tolerance for the minimizer. | `1e-8` |
-| `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `1e-12` |
+| `--eps-a` | Absolute tangent gradient norm tolerance for the minimizer. | `auto` |
 | `--tau0` | Initial step size guess for the minimizer line search. | `0.01` |
-| `--tau-min` | Minimum allowed step size (mainly for the BB minimizer). | `1e-6` |
-| `--tau-max` | Maximum allowed step size (mainly for the BB minimizer). | `1.0` |
 | `--L` | Restart frequency for conjugate gradient methods. | Number of nodes |
-| `--memory` | History size ($m$) for L-BFGS and Anderson acceleration. | `5` |
 | `--tn-iters` | Maximum inner iterations for Truncated Newton-CG solvers. | `5` |
-| `--lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` |
-| `--mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` |
-| `--wg-gamma` | Number of steps in convex region before switching to BB (WG method). | `5` |
-| `--wg-threshold` | Convexity threshold for the WG algorithm. | `1e-6` |
 
 ### Preconditioning Configuration
 | Parameter | Description | Default |
@@ -408,14 +410,14 @@ Below is an exhaustive list of all command-line arguments accepted by the `tommo
 | `--pc-force-alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` |
 | `--pc-stagnation-nu`| Relative threshold for detecting quadratic model stagnation. | `0.01` |
 | `--pc-reg` | Diagonal regularization shift for the preconditioner matrix. | `0.0` |
-| `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `2000` |
-| `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` |
+| `--cg-maxiter` | Maximum iterations for the Poisson PCG solver (demagnetization field). | `8000` |
+| `--cg-tol` | Relative residual tolerance for the Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least two orders of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.01)`). | `1e-8` |
 | `--poisson-reg` | Tikhonov regularization constant for the Poisson operator diagonal. | `1e-12` |
 | `--phi-extrapolate` / `--no-phi-extrapolate` | Use linear extrapolation of scalar potential for faster iterative Poisson solves. | `True` |
 
 ## 10. Appendix: `.p2` Configuration Parameters and Overrides
 
-In addition to CLI arguments, you can define simulation parameters permanently using a `<modelname>.p2` INI file. 
+In addition to CLI arguments, you can define simulation parameters permanently using a `<modelname>.p2` INI file.
 
 ### Parameter Resolution Priority
 The code dynamically merges parameters with the following strict priority:
@@ -423,7 +425,7 @@ The code dynamically merges parameters with the following strict priority:
 2. **`.p2` Parameter File** (Overwrites built-in defaults)
 3. **Built-in Defaults** (Lowest priority)
 
-This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run tommos loop my_model --method lbfgs`).
+This means you can set a baseline in your `.p2` file and easily override a specific value for a single run using the CLI (e.g., `pixi run tommos loop my_model --method tr`).
 
 ### Supported `.p2` Parameters
 
@@ -436,6 +438,7 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
 | `mx`, `my`, `mz` | Uniform initial magnetization vector components. | Field direction | `--m0-dir` |
+| `ini` | Restart index. Loads the initial magnetization from `state_cfg{ini:05d}_*.vtu` (searches locally or in `--out-dir`). Takes priority over uniform vectors. Future snapshots resume from `ini+1` to prevent overwrites. | `None` | N/A |
 
 #### `[field]`
 | Parameter | Description | Default | CLI Equivalent |
@@ -452,29 +455,22 @@ This means you can set a baseline in your `.p2` file and easily override a speci
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
 | `method` | Energy minimization algorithm. | `pcohen_hs` | `--method` |
-| `max_iter` | Maximum inner iterations per field step. | `2000` | `--max-iter` |
+| `max_iter` | Maximum inner iterations per field step. | `8000` | `--max-iter` |
 | `tol_fun` | Relative energy convergence tolerance. | `1e-8` | `--tau-f` |
-| `eps_a` | Absolute tangent gradient norm tolerance. | `1e-12` | `--eps-a` |
+| `eps_a` | Absolute tangent gradient norm tolerance. | `auto` | `--eps-a` |
 | `tau0` | Initial step size guess. | `0.01` | `--tau0` |
-| `tau_min` | Minimum allowed step size. | `1e-6` | `--tau-min` |
-| `tau_max` | Maximum allowed step size. | `1.0` | `--tau-max` |
 | `pc_iters` | Inner iteration limit for preconditioning solvers. | `10` | `--pc-iters` |
 | `pc_auto` | Enable automated tuning of preconditioning. | `True` | `--pc-auto` |
 | `pc_force_eta` | Base forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-eta` |
 | `pc_force_alpha`| Exponent forcing parameter for adaptive preconditioning. | `0.5` | `--pc-force-alpha` |
 | `pc_stagnation_nu`| Stagnation threshold for quadratic models. | `0.01` | `--pc-stagnation-nu` |
-| `memory` | History size for L-BFGS and Anderson acceleration. | `5` | `--memory` |
 | `tn_iters` | Maximum inner iterations for Truncated Newton-CG. | `5` | `--tn-iters` |
-| `lr` | Learning rate for Nesterov accelerated gradient methods. | `0.1` | `--lr` |
-| `mu` | Momentum factor for Nesterov accelerated gradient methods. | `0.9` | `--mu` |
-| `wg_gamma` | Steps in convex region before switching to BB. | `5` | `--wg-gamma` |
-| `wg_threshold` | Convexity threshold for the WG algorithm. | `1e-6` | `--wg-threshold` |
 
 #### `[poisson]`
 | Parameter | Description | Default | CLI Equivalent |
 | :--- | :--- | :--- | :--- |
-| `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `2000` | `--cg-maxiter` |
-| `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least an order of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.1)`). | `1e-8` | `--cg-tol` |
+| `cg_maxiter` | Maximum iterations for Poisson PCG solver. | `8000` | `--cg-maxiter` |
+| `cg_tol` | Relative residual tolerance for Poisson PCG solver. The actual value passed to the solver is dynamically capped to be at least two orders of magnitude tighter than the minimizer's relative energy tolerance (`min(cg_tol, tau_f * 0.01)`). | `1e-8` | `--cg-tol` |
 | `reg` | Tikhonov regularization for the Poisson operator. | `1e-12`| `--poisson-reg` |
 
 ## 11. Evaluate Materials Workflow

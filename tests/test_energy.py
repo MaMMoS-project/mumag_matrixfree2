@@ -71,7 +71,6 @@ def test_micromagnetic_energies():
     vol_Js = volume * np.array(Js_lookup[mat_id - 1])
     M_nodal = compute_node_volumes(
         TetGeom(conn=geom.conn, volume=jnp.asarray(vol_Js), mat_id=geom.mat_id),
-        chunk_elems=200_000,
     )
     V_mag_nm = np.sum(volume[mat_id == 1])
     V_mag_si = V_mag_nm * 1e-27
@@ -98,8 +97,54 @@ def test_micromagnetic_energies():
     m_45[:, 2] = 1.0 / np.sqrt(2.0)
     E_an_analytic_si = -K1 * V_mag_si * 0.5  # -K1 * cos^2(45) = -0.5*K1
 
-    # 4. Kernel Creation
-    solve_U = make_solve_U(geom, Js_lookup, cg_tol=1e-12, boundary_mask=boundary_mask, precond_type="amgcl")
+    # 4. Assembled sparse operators setup
+    import scipy.sparse as sp
+
+    from tommos.amg_utils import (
+        assemble_divergence_matrices_cpu,
+        assemble_exchange_anisotropy_matrix_cpu,
+        assemble_poisson_matrix_cpu,
+        make_sparse_operator,
+    )
+
+    A_scipy = assemble_poisson_matrix_cpu(conn32, volume, grad_phi, boundary_mask=np.array(boundary_mask), reg=1e-12)
+    A_sparse = make_sparse_operator(A_scipy)
+    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(
+        conn32, volume, grad_phi, np.array(Js_lookup), mat_id
+    )
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
+    D_sparse = make_sparse_operator(D_scipy)
+
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
+    G_sparse = make_sparse_operator(G_scipy)
+
+    K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+        conn32, volume, grad_phi, np.array(A_lookup), np.array(K1_lookup), np.array(k_easy_lookup), mat_id
+    )
+    K_eff_sparse = make_sparse_operator(K_eff_scipy)
+
+    solve_U, hierarchy_jax = make_solve_U(
+        geom,
+        Js_lookup,
+        cg_tol=1e-12,
+        boundary_mask=boundary_mask,
+        precond_type="amgcl",
+        A_sparse=A_sparse,
+    )
     energy_and_grad, _, _, _ = make_energy_kernels(
         geom,
         A_lookup,
@@ -108,11 +153,18 @@ def test_micromagnetic_energies():
         k_easy_lookup,
         float(V_mag_nm),
         M_nodal,
-        chunk_elems=200_000,
     )
 
     # 5. Verification
-    sparse_ops = {"M_nodal": M_nodal}
+    sparse_ops = {
+        "A_sparse": A_sparse,
+        "D_sparse": D_sparse,
+        "G_sparse": G_sparse,
+        "K_eff_sparse": K_eff_sparse,
+        "M_nodal": M_nodal,
+        "hierarchy_jax": hierarchy_jax,
+        "boundary_mask": boundary_mask,
+    }
 
     # --- Exchange ---
     e_ex, _ = energy_and_grad(m_hel, jnp.zeros(knt.shape[0]), jnp.zeros(3), sparse_ops=sparse_ops)
@@ -135,6 +187,6 @@ def test_micromagnetic_energies():
     # For a cube, N_x \approx 1/3
     # E_dem \approx 0.5 * (1/3) * (Js^2/mu0) * V
     # Dimensionless: E_dem \approx (1/3)
-    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]), sparse_ops={})
+    u = solve_U(m_unif_x, jnp.zeros(knt.shape[0]), sparse_ops=sparse_ops)
     e_dem, _ = energy_and_grad(m_unif_x, u, jnp.zeros(3), sparse_ops=sparse_ops)
     assert abs(float(e_dem) - 1.0 / 3.0) < 0.05

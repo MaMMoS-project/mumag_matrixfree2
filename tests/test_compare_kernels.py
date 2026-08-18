@@ -24,7 +24,8 @@ from tommos.loop import compute_grad_phi_from_JinvT, compute_volume_JinvT, load_
 from tommos.minimizers import tangent_grad
 
 
-def test_compare():
+def test_compare() -> None:
+    """Compare the assembled Python and native MKL kernels."""
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -75,12 +76,12 @@ def test_compare():
     mask_np = np.zeros(knt.shape[0], dtype=np.int32)
     boundary_mask = jnp.asarray(mask_np, dtype=jnp.float64)
 
-    compute_node_volumes(geom, chunk_elems=200_000)
+    compute_node_volumes(geom)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
-    M_nodal = compute_node_volumes(geom_Js, chunk_elems=200_000)
+    M_nodal = compute_node_volumes(geom_Js)
 
     l_grad_phi = compute_grad_phi_from_JinvT(JinvT)
 
@@ -94,16 +95,27 @@ def test_compare():
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
-    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
     D_sparse = make_sparse_operator(
         D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
 
     N = knt.shape[0]
-    Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-    Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-    Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
     G_sparse = make_sparse_operator(
         G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
     )
@@ -116,28 +128,23 @@ def test_compare():
     )
 
     # Preconditioning setup in Python
-    from tommos.energy_kernels import compute_exchange_diagonal
-
-    d_diag = compute_exchange_diagonal(
-        geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
-    )
+    Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+    Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=knt.shape[0])
+    d_diag = jnp.asarray(Kex_diag_cpu * (1.0 / V_mag))
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
 
     # 2. Setup Solve_U
     from tommos.poisson_solve import make_solve_U
 
-    solve_U = make_solve_U(
+    solve_U, _ = make_solve_U(
         geom,
         jnp.asarray(Js_red, dtype=jnp.float64),
         precond_type="amgcl",
         order=1,
-        chunk_elems=200_000,
         cg_maxiter=2000,
         cg_tol=1e-8,
         poisson_reg=1e-12,
-        grad_backend="stored_JinvT",
         boundary_mask=boundary_mask,
-        mode="assembled",
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
         poisson_solver="pardiso",
@@ -151,14 +158,8 @@ def test_compare():
         return_info=True,
         sparse_ops={
             "A_sparse": A_sparse,
-            "Dx_sparse": None,
-            "Dy_sparse": None,
-            "Dz_sparse": None,
             "A_diag": A_diag,
             "K_eff_sparse": K_eff_sparse,
-            "Gx_sparse": None,
-            "Gy_sparse": None,
-            "Gz_sparse": None,
             "D_sparse": D_sparse,
             "G_sparse": G_sparse,
         },
@@ -175,9 +176,6 @@ def test_compare():
         jnp.asarray(k_easy_lookup),
         V_mag,
         M_nodal,
-        mode="assembled",
-        chunk_elems=200_000,
-        grad_backend="stored_JinvT",
     )
 
     B_ext = jnp.array([0.0, 0.0, -0.5], dtype=jnp.float64)  # Applied field
@@ -248,14 +246,8 @@ def test_compare():
         K_val.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
     )
 
-    # Convert G_scipy to interleaved for C++ since C++ expects interleaved output
-    row_indices = np.arange(3 * N, dtype=np.int32)
-    col_indices = np.empty(3 * N, dtype=np.int32)
-    col_indices[0::3] = np.arange(N)
-    col_indices[1::3] = np.arange(N) + N
-    col_indices[2::3] = np.arange(N) + 2 * N
-    P_mat = sp.coo_matrix((np.ones(3 * N, dtype=np.float64), (row_indices, col_indices)), shape=(3 * N, 3 * N)).tocsr()
-    G_scipy_cpp = P_mat @ G_scipy
+    # G_scipy is already natively interleaved
+    G_scipy_cpp = G_scipy
 
     G_csr = G_scipy_cpp
     G_val = np.ascontiguousarray(G_csr.data, dtype=np.float64)
@@ -357,7 +349,6 @@ def test_compare():
 
     from tommos.minimizers import make_preconditioner_op
 
-    np.ascontiguousarray(1.0 / (M_nodal / np.max(M_nodal) + 1e-30), dtype=np.float64)
     apply_P_py, _ = make_preconditioner_op(local_grad_only)
 
     Ap_py = apply_P_py(m, py_g, p_jax, reg=0.0, sparse_ops=sparse_ops_py)

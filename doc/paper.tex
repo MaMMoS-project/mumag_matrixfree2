@@ -9,6 +9,7 @@
 \usepackage{url}
 \usepackage{tabularx}
 \usepackage{booktabs}
+\usepackage{graphicx}
 
 \title{Energy Minimization Methods in Finite Element Micromagnetics: A Comparative Study}
 \author{Author Name}
@@ -185,7 +186,7 @@ While line search methods represent the majority of our evaluated solvers, an en
 \end{algorithmic}
 \end{algorithm}
 
-These two foundational blueprints (Algorithm \ref{alg:generic_minimizer} and Algorithm \ref{alg:generic_trust_region}) form the rigorous basis of the specific solvers implemented in our framework. To evaluate their relative performance, the solvers are categorized into five major mathematical families.
+These two foundational blueprints (Algorithm \ref{alg:generic_minimizer} and Algorithm \ref{alg:generic_trust_region}) form the rigorous basis of the specific solvers implemented in our framework. To evaluate their relative performance, the solvers are categorized into key mathematical families.
 
 \subsection{Conjugate Gradient Methods}
 This class of algorithms utilizes search directions that are conjugate to previous steps with respect to the local energy curvature. Our implementation includes the standard adapted conjugate gradient method for spherical constraints pioneered by Cohen, Lin, and Luskin \cite{Cohen1989}, as well as heavily preconditioned variants (PCG) designed to cluster the stiff exchange eigenspectrum and accelerate convergence in complex microstructures.
@@ -220,29 +221,62 @@ The preconditioned Cohen method utilizing the Hestenes-Stiefel (HS) update rule 
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Accelerated Gradient Methods}
-To overcome the traditionally slow convergence of pure gradient descent, accelerated gradient schemes incorporate historical momentum to propel the system rapidly toward the minimum. We have implemented preconditioned Nesterov Accelerated Gradient (NAG) methods, alongside exact and standard variants of the Accelerated Alternating Projected Gradient (AAPG) method, adapting these powerful convex optimization techniques for the non-convex micromagnetic manifold.
+\subsection{Trust Region Methods}
+For problems requiring rigorous evaluation of the local curvature, we implement a preconditioned Trust Region method. The solver constructs its constrained local quadratic model using the sparse assembled Hessian incorporating local interactions (exchange and crystalline anisotropy energies) and solves the internal subproblem efficiently via Steihaug-Toint preconditioned conjugate gradients.
 
-\subsection{Curvilinear Search Methods}
-Unlike methods that step linearly along tangent planes and rely on post-update renormalizations, curvilinear search algorithms evaluate the objective function directly along curves tracing the spherical manifold. We implement the Wen-Goldfarb curvilinear line search \cite{Wen2009}, which intrinsically preserves the norm constraint at every trial point during the line search phase without suffering from tangent-space distortion.
-
-\subsection{Quasi-Newton Methods}
-Quasi-Newton methods build an approximation of the inverse Hessian matrix using historical gradient information to achieve superlinear convergence. We employ the Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm, carefully adapted for spherical manifolds. To further handle the specific stiffness of the micromagnetic exchange interaction, we implement preconditioned (PL-BFGS) and doubly preconditioned variants, as well as a hybrid approach combining the robustness of Cohen's method with L-BFGS acceleration.
-
-\subsection{Newton-Type and Trust Region Methods}
-For problems requiring rigorous evaluation of the local curvature, we implement both Truncated Newton and Trust Region methods. The standard trust region solver constructs its constrained local model using an approximated sparse Hessian—incorporating only near-field and local interactions such as the exchange and crystalline anisotropy energies. Conversely, our advanced preconditioned trust region method utilizes the exact, full dense Hessian (including the long-range magnetostatic interactions) to build the trust region model, while employing the sparse local near-field Hessian strictly as a preconditioner to solve the internal subproblem efficiently.
 \section{Software Implementation}
 
 \subsection{JAX-Based Framework}
-Our implementation utilizes the JAX library to construct a fully differentiable, matrix-free solver. This allows us to leverage constructs such as Just-In-Time (JIT) compilation, automatic differentiation, and robust hardware acceleration on GPUs for extreme performance.
+Our implementation utilizes the JAX library to construct a GPU-accelerated solver based on pre-assembled sparse matrices. This allows us to leverage constructs such as Just-In-Time (JIT) compilation, automatic differentiation, and highly optimized sparse matrix-vector (SpMV) operations on GPUs for maximum throughput.
 
 \section{Results and Validation}
 
 \subsection{Validation against Existing Solvers}
 % Validation against C++ solver Exl et al. will be presented here.
 
-\subsection{Comparison of Optimization Algorithms}
-% Results from test_matrixfree2 comparing the different algorithms will be presented here.
+\subsection{Comparison with other solver}
+To evaluate the performance of our new solver, we compare it against the traditional \texttt{b4vex} solver \cite{exl2019preconditioned}. This comparison serves two primary purposes. First, it provides rigorous validation, as the \texttt{b4vex} solver has been previously verified against the $\mu$MAG micromagnetic standard problems \#1 and \#3. Second, it allows us to benchmark computational speed, specifically determining whether our new framework can reach a comparable time-to-solution against a highly optimized C++ codebase that utilizes custom OpenCL kernels for sparse linear algebra operations.
+
+Both algorithms fundamentally employ a preconditioned conjugate gradient method utilizing a Hestenes-Stiefel update rule. However, they differ significantly in their line search procedures. The new method utilizes an updated line search (as described previously in this paper) which always begins with a constant initial step size of $1$. In contrast, the traditional \texttt{b4vex} solver computes a finite difference approximation along the search direction to actively determine an optimal initial step length for each iteration.
+
+We compare the computed demagnetization curves and iteration statistics for two representative poly-crystalline $\mathrm{Nd_2Fe_{14}B}$ permanent magnet models with a non-magnetic grain boundary phase. The key characteristics and main results of these benchmarks are summarized in Table \ref{tab:solver_comparison}. 
+
+The first benchmark considers a small geometry consisting of 30 grains. The corresponding computational mesh comprises 8,082,858 tetrahedral elements and 1,347,781 nodes in total. Excluding the surrounding vacuum region (airbox), the magnetic body itself contains 6,523,238 elements and 1,119,192 nodes, forming a cube with a lateral extension of 150 nm. For this test, both the new solver and \texttt{b4vex} were executed on a single NVIDIA A100 GPU. The termination criteria for both solvers were strictly aligned to use the combined relative and absolute conditions described in this work, terminating if the relative conditions \eqref{eq:u1}--\eqref{eq:u3} hold, or if the absolute condition \eqref{eq:u4} is met. The results demonstrate excellent agreement in the computed hysteresis curves.
+
+\begin{figure}[htpb]
+    \centering
+    \includegraphics[width=\columnwidth]{../../test_matrixfree2/slurm/demag_comparison.pdf}
+    \caption{Comparison of the computed demagnetization curves and iteration statistics between the new solver and the traditional \texttt{b4vex} solver for the 30-grain $\mathrm{Nd_2Fe_{14}B}$ permanent magnet model.}
+    \label{fig:comparison_30grains}
+\end{figure}
+
+The second benchmark utilizes a significantly larger geometry consisting of 55 grains. The computational mesh for this problem is massive, containing 167,472,316 elements and 27,809,258 nodes. The magnetic body alone consists of 138,916,134 elements and 23,321,387 nodes, forming a cube with a lateral extension of 500 nm. Due to the high computational demand, the traditional \texttt{b4vex} solver was executed on a cluster of four NVIDIA P100 GPUs, while the new solver was executed on three NVIDIA L40s GPUs. 
+
+\begin{figure}[htpb]
+    \centering
+    \includegraphics[width=\columnwidth]{../../test_matrixfree2/mammos/demag_comparison.pdf}
+    \caption{Comparison of the computed demagnetization curves and iteration statistics for the massive 55-grain $\mathrm{Nd_2Fe_{14}B}$ permanent magnet model.}
+    \label{fig:comparison_55grains}
+\end{figure}
+
+A critical aspect of comparing different minimization codes lies in the rigorous definition of the stopping criteria. The traditional \texttt{b4vex} solver terminates when the normalized magnetic torque drops below a user-defined tolerance: $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|_{\infty} < \tau_F^{1/3}$. In contrast, our new solver normally employs the robust triad of relative conditions \eqref{eq:u1}--\eqref{eq:u3} combined with the absolute fallback condition \eqref{eq:u4}. However, to perform a direct performance comparison for the 55-grain model, we adjusted the stopping criteria of the new Python solver to exactly mimic the traditional \texttt{b4vex} behavior. Because the projected gradient $\mathbf{g}_p$ is mathematically equivalent to the magnetic torque, we can perfectly emulate the condition $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|_{\infty} < \tau_F^{1/3}$ by artificially setting the absolute precision tolerance $\epsilon_A$ to $\tau_F^{1/3}$ and forcing the solver to always exit via condition \eqref{eq:u4}.
+
+\begin{table*}[htpb]
+    \centering
+    \caption{Summary of comparative benchmarks for the 30-grain and 55-grain $\mathrm{Nd_2Fe_{14}B}$ permanent magnet models. Both solvers utilized a preconditioned conjugate gradient algorithm with a Hestenes-Stiefel update, but differed in their line search initialization strategies and termination criteria.}
+    \label{tab:solver_comparison}
+    \begin{tabular}{llclcr}
+        \toprule
+        \textbf{Model} & \textbf{Solver} & \textbf{Hardware} & \textbf{Termination Criteria} & \textbf{Iterations} & \textbf{Total Time (s)} \\
+        \midrule
+        30 grains & \texttt{b4vex} & 1$\times$ A100 & $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|_{\infty} < \tau_F^{1/3}$ & 10,475 & 2,040 \\
+        30 grains & New Solver & 1$\times$ A100 & \eqref{eq:u1}--\eqref{eq:u3} or \eqref{eq:u4} & 13,053 & 659 \\
+        \midrule
+        55 grains & \texttt{b4vex} & 4$\times$ P100 & $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|_{\infty} < \tau_F^{1/3}$ & 11,424 & 32,274 \\
+        55 grains & New Solver & 3$\times$ L40s & emulated $|\mathbf{m} \times \mathbf{H}_{\mathrm{eff}}|_{\infty} < \tau_F^{1/3}$ & 12,065 & 19,928 \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
 
 \subsection{Hardware Acceleration and Memory Bandwidth Analysis}
 
@@ -258,11 +292,11 @@ To establish the theoretical maximum performance of our hardware, we first measu
 
 We evaluated the total time to solution and the average time per minimizer iteration for the large polycrystalline mesh on both platforms. On the 16-core CPU, the minimizer required an average of $1.203$ seconds per iteration. On the A100 GPU, the minimizer required merely $0.0527$ seconds per iteration. 
 
-This yields an empirical performance speedup of $22.8\times$ for the GPU over the CPU. This measured speedup in the minimizer iteration time correlates almost perfectly with the measured $21.2\times$ ratio in hardware memory bandwidth between the two platforms. This correlation confirms that the execution time of the matrix-free minimizer scales with the memory bandwidth. The slight additional advantage of the GPU over the raw bandwidth ratio is likely attributable to the massive $40$ MB L2 cache of the A100, which can capture temporal locality during sparse matrix operations more effectively than the CPU's cache hierarchy.
+This yields an empirical performance speedup of $22.8\times$ for the GPU over the CPU. This measured speedup in the minimizer iteration time correlates almost perfectly with the measured $21.2\times$ ratio in hardware memory bandwidth between the two platforms. This correlation confirms that the execution time of the sparse assembled minimizer scales with the memory bandwidth. The slight additional advantage of the GPU over the raw bandwidth ratio is likely attributable to the massive $40$ MB L2 cache of the A100, which can capture temporal locality during sparse matrix operations more effectively than the CPU's cache hierarchy.
 
 \section{Conclusion}
 
-Future directions in computational micromagnetics must continue to account for architectural memory bandwidth limitations. As demonstrated, the execution speed of energy minimization algorithms using matrix-free methods is bound by memory throughput. Moving forward, as meshes scale to tens of millions of nodes and state vectors exceed the caches of modern GPUs, execution will remain limited by HBM bandwidth limits. Consequently, algorithms designed for the next generation of micromagnetic solvers must prioritize minimizing data movement and maximizing arithmetic intensity to fully exploit modern computational hardware.
+Future directions in computational micromagnetics must continue to account for architectural memory bandwidth limitations. As demonstrated, the execution speed of energy minimization algorithms using sparse assembled GPU methods is bound by memory throughput. Moving forward, as meshes scale to tens of millions of nodes and state vectors exceed the caches of modern GPUs, execution will remain limited by HBM bandwidth limits. Consequently, algorithms designed for the next generation of micromagnetic solvers must prioritize minimizing data movement and maximizing arithmetic intensity to fully exploit modern computational hardware.
 
 \bibliographystyle{plain}
 \bibliography{references}

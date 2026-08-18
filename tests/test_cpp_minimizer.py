@@ -37,7 +37,8 @@ def test_native_mkl_is_available_for_dynamic_defaults() -> None:
     assert _native_mkl_available()
 
 
-def test():
+def test() -> None:
+    """Run the assembled C++ minimizer on a small mesh."""
     # 1. Load mesh
     mesh_path = os.path.join(os.path.dirname(__file__), "single_solid.npz")
     data = np.load(mesh_path)
@@ -86,12 +87,11 @@ def test():
     m = m / np.linalg.norm(m, axis=1, keepdims=True)
     m = jnp.asarray(m)
 
-    compute_node_volumes(geom, chunk_elems=200_000)
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
     geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
-    M_nodal = compute_node_volumes(geom_Js, chunk_elems=200_000)
+    M_nodal = compute_node_volumes(geom_Js)
 
     l_grad_phi = compute_grad_phi_from_JinvT(JinvT)
 
@@ -107,29 +107,33 @@ def test():
     Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
     import scipy.sparse as sp
 
-    D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-    make_sparse_operator(D_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    Dx_coo = Dx_scipy.tocoo()
+    Dy_coo = Dy_scipy.tocoo()
+    Dz_coo = Dz_scipy.tocoo()
+    rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
+    cols = np.concatenate([Dx_coo.col * 3, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
+    data_D = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
+    D_scipy = sp.csr_matrix((data_D, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    D_scipy.sort_indices()
 
     N = knt.shape[0]
-    Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-    Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-    Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-    G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-    make_sparse_operator(G_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy")
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    rows_G = np.concatenate([Gx_coo.row * 3, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
+    cols_G = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
+    data_G = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
+    G_scipy = sp.csr_matrix((data_G, (rows_G, cols_G)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
+    G_scipy.sort_indices()
 
     K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
         conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
     )
-    make_sparse_operator(
-        K_eff_scipy, cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy"
-    )
 
     # Preconditioning setup
-    from tommos.energy_kernels import compute_exchange_diagonal
-
-    d_diag = compute_exchange_diagonal(
-        geom, jnp.asarray(A_red), V_mag, chunk_elems=200_000, assembly="segment_sum", grad_backend="stored_JinvT"
-    )
+    Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+    Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=knt.shape[0])
+    d_diag = jnp.asarray(Kex_diag_cpu * (1.0 / V_mag))
     inv_M_prec = 1.0 / (d_diag + 1e-30)
 
     params = LoopParams(
@@ -151,18 +155,15 @@ def test():
     # Setup Solve_U
     from tommos.poisson_solve import make_solve_U
 
-    solve_U = make_solve_U(
+    solve_U, _ = make_solve_U(
         geom,
         jnp.asarray(Js_red, dtype=jnp.float64),
         precond_type="amgcl",
         order=1,
-        chunk_elems=200_000,
         cg_maxiter=2000,
         cg_tol=1e-8,
         poisson_reg=1e-12,
-        grad_backend="stored_JinvT",
         boundary_mask=None,
-        mode="assembled",
         A_sparse=A_sparse,
         cpu_spmv_backend="persistent_mkl" if sys.platform.startswith("linux") else "scipy",
         poisson_solver="pardiso",

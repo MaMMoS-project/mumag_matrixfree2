@@ -158,8 +158,11 @@ def approx_max_volume_from_edge(h: float) -> float:
     Returns:
         float: Maximum tetrahedron volume constraint.
     """
-    # Practical heuristic for TetGen's max volume from target edge length ~h
-    return 0.1 * (h**3)
+    # We use 0.2 * (h**3) instead of ~0.118 * (h**3) (the volume of an ideal
+    # regular tetrahedron with edge h) because TetGen treats this as a maximum
+    # volume constraint. Setting the max volume to 0.2 ensures the resulting
+    # mean edge length of the tetrahedra closely matches the target h.
+    return 0.2 * (h**3)
 
 
 # ------------------------------- Geometry: BOX -------------------------------
@@ -560,6 +563,199 @@ def build_ellipse_polygon(a: float = 1.0, b: float = 0.5, n: int = 128) -> np.nd
     return polygon
 
 
+# ------------------------------- Backends -------------------------------
+
+
+# Mesh backends for polygon
+def mesh_backend_meshpy_polygon(
+    polygon: np.ndarray,
+    t: float,
+    ex: np.ndarray,
+    ey: np.ndarray,
+    ez: np.ndarray,
+    h: float,
+    minratio: float,
+    verbose: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh the shape described with polygon and thickness.
+
+    Built from two quadratic Bézier arcs using MeshPy/TetGen,
+    without pre-triangulating the caps. The top and bottom faces are passed
+    as single N-gon facets; the side surface is passed as quads between
+    successive boundary vertices.
+
+    Args:
+        polygon (np.ndarray): Polygon vertices (N, 2).
+        t (float): thickness.
+        ex (np.ndarray): Basis vector for the local x-axis.
+        ey (np.ndarray): Basis vector for the local y-axis.
+        ez (np.ndarray): Basis vector for the local z-axis.
+        h (float): target mesh size.
+        minratio (float): quality parameter.
+        verbose (bool): logging.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
+    """
+    if not HAVE_meshpy:
+        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
+
+    # 2) Build 3D vertices for top and bottom in LOCAL coords, then map to WORLD
+    top_z, bottom_z = t / 2.0, -t / 2.0
+    verts_top = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
+    verts_bottom = np.hstack([polygon, np.full((polygon.shape[0], 1), bottom_z)])
+    V_local = np.vstack([verts_top, verts_bottom])
+
+    # Map LOCAL -> WORLD using orthonormal frame (ex, ey, ez)
+    V_world = np.ascontiguousarray(
+        V_local[:, 0:1] * ex[None, :] + V_local[:, 1:2] * ey[None, :] + V_local[:, 2:3] * ez[None, :],
+        dtype=np.float64,
+    )
+
+    # 3) Build facets:
+    #    - Top: one N-gon (0..N-1), keep CCW order for outward normal
+    #    - Bottom: one N-gon (N..2N-1), use reversed order to maintain outward normal
+    #    - Sides: N quads (a,b,c,d) wrapping around the ring
+    facets: list[list[int]] = []
+    N = polygon.shape[0]
+
+    # Top N-gon
+    facets.append(list(range(0, N)))
+
+    # Bottom N-gon (reverse)
+    facets.append(list(range(2 * N - 1, N - 1, -1)))
+
+    # Side quads
+    for i in range(N):
+        ni = (i + 1) % N
+        a = i
+        b = ni
+        c = N + ni
+        d = N + i
+        facets.append([a, b, c, d])
+
+    # 4) TetGen via MeshPy
+    mi = MeshInfo()
+    mi.set_points(V_world.tolist())
+    mi.set_facets(facets)  # polygons & quads; TetGen will triangulate them
+
+    # Region with volume constraint derived from h
+    mi.regions.resize(1)
+    mi.regions[0] = (0.0, 0.0, 0.0, 1.0, approx_max_volume_from_edge(float(h)))
+
+    # TetGen options
+    opts = Options("pqAa")
+    opts.minratio = float(minratio)
+    opts.regionattrib = True
+    opts.verbose = bool(verbose)
+
+    mesh = tet_build(
+        mi,
+        options=opts,
+        attributes=True,
+        volume_constraints=True,
+        verbose=bool(verbose),
+    )
+
+    # Return nodes and tets with mat_id=1
+    knt = np.asarray(mesh.points, dtype=np.float64)
+    tets = np.asarray(mesh.elements, dtype=np.int32)
+    ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
+    return knt, ijk
+
+
+def mesh_backend_grid_polygon(
+    polygon: np.ndarray,
+    t: float,
+    ex: np.ndarray,
+    ey: np.ndarray,
+    ez: np.ndarray,
+    h: float,
+    verbose: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh a shape described with polygon and thickness using a regular grid.
+
+    Args:
+        polygon (np.ndarray): Array of 2D points defining the eye's cross-section.
+        t (float): thickness.
+        ex (np.ndarray): Basis vector for the local x-axis.
+        ey (np.ndarray): Basis vector for the local y-axis.
+        ez (np.ndarray): Basis vector for the local z-axis.
+        h (float): Mesh size.
+        verbose (bool): logging.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
+    """
+    # Build local bounding box for the extruded eye:
+    # x in [-Lx/2,Lx/2], y in [-width,width], z in [-t/2,t/2]
+    Lx = abs(polygon[:, 0].max() - polygon[:, 0].min())
+    Ly = abs(polygon[:, 1].max() - polygon[:, 1].min())
+    Lz = float(t)
+    nx = max(1, int(np.ceil(Lx / h)))
+    ny = max(1, int(np.ceil(Ly / h)))
+    nz = max(1, int(np.ceil(Lz / h)))
+    xs = np.linspace(-Lx / 2, Lx / 2, nx + 1)
+    ys = np.linspace(-Ly / 2, Ly / 2, ny + 1)
+    zs = np.linspace(-Lz / 2, Lz / 2, nz + 1)
+
+    def nidx(i, j, k) -> int:
+        return i + (nx + 1) * (j + (ny + 1) * k)
+
+    Nnodes = (nx + 1) * (ny + 1) * (nz + 1)
+    knt = np.empty((Nnodes, 3), dtype=np.float64)
+    for k in range(nz + 1):
+        z = zs[k]
+        for j in range(ny + 1):
+            y = ys[j]
+            for i in range(nx + 1):
+                x = xs[i]
+                p = oriented_point(x, y, z, ex, ey, ez)
+                knt[nidx(i, j, k), :] = p
+
+    tets: list[tuple] = []
+
+    def to_local(pw: np.ndarray) -> np.ndarray:
+        return np.array([np.dot(pw, ex), np.dot(pw, ey), np.dot(pw, ez)], dtype=np.float64)
+
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                A = nidx(i, j, k)
+                B = nidx(i + 1, j, k)
+                C = nidx(i, j + 1, k)
+                D = nidx(i + 1, j + 1, k)
+                E = nidx(i, j, k + 1)
+                F = nidx(i + 1, j, k + 1)
+                G = nidx(i, j + 1, k + 1)
+                H = nidx(i + 1, j + 1, k + 1)
+                local_tets = [
+                    (A, B, D, H),
+                    (A, B, F, H),
+                    (A, C, D, H),
+                    (A, C, G, H),
+                    (A, E, F, H),
+                    (A, E, G, H),
+                ]
+                for tcell in local_tets:
+                    P_world = knt[list(tcell), :]
+                    ctd_world = P_world.mean(axis=0)
+                    ctd = to_local(ctd_world)
+                    # Test if centroid's (x,y) is inside 2D polygon and
+                    # z within thickness
+                    inside = _points_in_polygon(ctd[None, :2], polygon)[0]
+                    if inside and abs(ctd[2]) <= (Lz / 2.0 + 1e-12):
+                        tets.append(tcell)
+
+    tets = np.asarray(tets, dtype=np.int32)
+    ijk = np.hstack([tets, np.ones((tets.shape[0], 1), dtype=np.int32)])
+    if verbose:
+        msg = f"[info:grid:eye] nx,ny,nz=({nx},{ny},{nz}); nodes={knt.shape[0]}, kept tets={ijk.shape[0]}"
+        print(msg, flush=True)
+    return knt, ijk
+
+
+# Mesh backends for elliptic cylinder
 def mesh_backend_meshpy_elliptic_cylinder(
     a: float,  # semi-axis along local x
     b: float,  # semi-axis along local y
@@ -1085,9 +1281,6 @@ def mesh_backend_grid_eye(
     return knt, ijk
 
 
-# ------------------------------- Backends -------------------------------
-
-
 def mesh_backend_meshpy_box(
     extents: tuple[float, float, float],
     ex: np.ndarray,
@@ -1371,7 +1564,9 @@ def mesh_backend_grid_ellipsoid(
 
 def run_single_solid_mesher(  # noqa: D417
     *,
-    geom: str = "box",  # "box" | "ellipsoid" | "eye" | "elliptic_cylinder" | "poly" | "poly_gb"
+    polygon_file: str = "not set",
+    polygon_thickness: float = 10.0,
+    geom: str = "box",  # "box" | "ellipsoid" | "eye" | "elliptic_cylinder" | "poly" | "poly_gb" | "polygon"
     extent: str | tuple[float, float, float] = "60.0,60.0,60.0",
     h: float = 2.0,
     minratio: float = 1.4,  # meshpy backend only
@@ -1405,7 +1600,7 @@ def run_single_solid_mesher(  # noqa: D417
     shell_max_steiner: int | None = None,
     shell_no_exact: bool = False,
     shell_verbose: bool = False,
-    shell_type: str = "hull",
+    shell_type: str = "box",
     # Neper CVT parameters
     neper_tol: float | None = None,
     neper_timeout: float | None = None,
@@ -1462,8 +1657,8 @@ def run_single_solid_mesher(  # noqa: D417
     ex, ey, ez = orthonormal_frame(dx, dy, dz)
 
     # Dispatch geometry + backend
-    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"):
-        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly' or 'poly_gb'"
+    if geom not in ("box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb", "polygon"):
+        msg = "geom must be 'box' or 'ellipsoid' or 'eye' or 'elliptic_cylinder' or 'poly' or 'poly_gb' or 'polygon'"
         raise ValueError(msg)
     if backend not in ("meshpy", "grid"):
         raise ValueError("backend must be 'meshpy' or 'grid'")
@@ -1589,6 +1784,37 @@ def run_single_solid_mesher(  # noqa: D417
             neper_tol=neper_tol,
             neper_timeout=neper_timeout,
         )
+
+    elif geom == "polygon":
+        if polygon_file == "not set" or polygon_file.strip() == "":
+            raise ValueError("polygon_file must be provided for 'polygon' geometry.")
+        try:
+            polygon = np.loadtxt(polygon_file, delimiter=" ")
+        except FileNotFoundError:
+            print(f"File not found: {polygon_file}")
+            sys.exit(1)
+        if backend == "meshpy":
+            knt, ijk = mesh_backend_meshpy_polygon(
+                polygon=polygon,
+                t=polygon_thickness,
+                ex=ex,
+                ey=ey,
+                ez=ez,
+                h=float(h),
+                minratio=float(minratio),
+                verbose=bool(verbose),
+            )
+        else:
+            knt, ijk = mesh_backend_grid_polygon(
+                polygon=polygon,
+                t=polygon_thickness,
+                ex=ex,
+                ey=ey,
+                ez=ez,
+                h=float(h),
+                verbose=bool(verbose),
+            )
+            print("knt, ijk read")
 
     if add_shell:
         import os
@@ -2060,16 +2286,29 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--geom",
         type=str,
         default="box",
-        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb"],
+        choices=["box", "ellipsoid", "eye", "elliptic_cylinder", "poly", "poly_gb", "polygon"],
         help="Select geometry type: box (parallelepiped), ellipsoid "
         "(symmetric about local z), eye (Bézier arc based), "
-        "elliptic_cylinder, poly (Voronoi grains), or poly_gb (grains with GB phase).",
+        "elliptic_cylinder, poly (Voronoi grains), poly_gb (grains with GB phase), "
+        "or polygon (polygon coordinates from file in nm).",
     )
     ap.add_argument(
         "--extent",
         type=str,
         default="60.0,60.0,60.0",
-        help="Full dimensions Lx,Ly,Lz of the core mesh (mesh units, e.g., nm).",
+        help="Full dimensions Lx,Ly,Lz of the core mesh (mesh units, e.g., nm, ignored for polygon).",
+    )
+    ap.add_argument(
+        "--polygon-thickness",
+        type=float,
+        default=10.0,
+        help="Thickness to convert polygon to a 3D shape (mesh units, e.g., nm).",
+    )
+    ap.add_argument(
+        "--polygon-file",
+        type=str,
+        default=None,
+        help="Path to the file containing polygon coordinates (mesh units, e.g., nm).",
     )
     ap.add_argument(
         "--h",
@@ -2166,9 +2405,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="hull",
-        choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+        default="box",
+        choices=["triangles", "hull", "box"],
+        help=(
+            "Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default)."
+        ),
     )
     ap.add_argument(
         "--layers",
@@ -2286,6 +2527,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Delegate to the programmatic entry point; map CLI types directly.
     try:
         run_single_solid_mesher(
+            polygon_file=args.polygon_file,
+            polygon_thickness=args.polygon_thickness,
             geom=args.geom,
             extent=args.extent,
             h=float(args.h),

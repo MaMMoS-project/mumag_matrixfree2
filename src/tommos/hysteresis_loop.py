@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -28,8 +28,6 @@ from .io_utils import (
 from .minimizers import make_minimizer
 from .poisson_solve import make_solve_U
 
-GradBackend = Literal["stored_grad_phi", "stored_JinvT", "on_the_fly"]
-
 
 @dataclass
 class LoopParams:
@@ -45,7 +43,7 @@ class LoopParams:
         max_iter (int): Maximum minimizer iterations per field step.
         tau_f (float): Energy convergence tolerance.
         eps_a (float): Gradient norm convergence tolerance.
-        tau0, tau_min, tau_max (float): Step size control for the minimizer.
+        tau0 (float): Step size control for the minimizer.
         ls_eta1, ls_eta2, ls_C, ls_c, ls_s0, ls_max_evals: Line search parameters.
         out_dir (str): Directory for output files.
         csv_name (str): Filename for the hysteresis CSV data.
@@ -64,10 +62,7 @@ class LoopParams:
         pc_auto (bool): Enable adaptive preconditioning accuracy.
         pc_force_eta (float): Base constant for adaptive forcing sequence.
         pc_force_alpha (float): Exponent for adaptive forcing sequence.
-        memory (int): History size for L-BFGS and Anderson acceleration.
         tn_iters (int): Inner iterations for Newton-CG solvers.
-        lr (float): Learning rate for Nesterov acceleration.
-        mu (float): Momentum factor for Nesterov acceleration.
     """
 
     h_dir: np.ndarray
@@ -77,12 +72,10 @@ class LoopParams:
     loop: bool = True
 
     gamma: int = 5
-    max_iter: int = 2000
+    max_iter: int = 8000
     tau_f: float = 1e-8
     eps_a: float = 1e-12
     tau0: float = 1e-2
-    tau_min: float = 1e-6
-    tau_max: float = 1.0
 
     ls_eta1: float = 0.1
     ls_eta2: float = 0.1
@@ -96,10 +89,11 @@ class LoopParams:
     snapshot_every: int = 1
     verbose: bool = False
     Js_ref: float = 1.0
-    cg_maxiter: int = 2000
+    cg_maxiter: int = 8000
     cg_tol: float = 1e-8
     poisson_reg: float = 1e-12
     poisson_solver: str = "jax"
+    mesh: jax.sharding.Mesh | None = None
     mfinal: float | None = None
     mstep: float | None = None
     bias_type: str | None = None
@@ -112,14 +106,9 @@ class LoopParams:
     pc_force_eta: float = 0.5
     pc_force_alpha: float = 0.5
     pc_stagnation_nu: float = 0.01
-    memory: int = 5
     tn_iters: int = 5
-    lr: float = 0.1
-    mu: float = 0.9
     pc_reg: float = 0.0
     phi_extrapolate: bool = True
-    wg_gamma: int = 5
-    wg_threshold: float = 1e-6
     benchmark: bool = False
     L: int | None = None
     cpp_mkl: bool = True
@@ -150,76 +139,75 @@ def _field_values(H_start: float, H_end: float, dH: float, loop: bool) -> np.nda
     return np.concatenate([vals_up, vals_up[-2::-1]])
 
 
-@jax.jit
-def jax_compute_volume_averaged_J_parallel(
-    m_nodes: jnp.ndarray,
-    conn: jnp.ndarray,
-    volume: jnp.ndarray,
-    mat_id: jnp.ndarray,
-    Js_lookup: jnp.ndarray,
-    h_dir: jnp.ndarray,
-) -> jnp.ndarray:
-    """Compute volume-averaged magnetic polarization parallel to h_dir (JAX version).
+def cpu_compute_volume_averaged_J_parallel(
+    m_nodes: np.ndarray,
+    conn: np.ndarray,
+    volume: np.ndarray,
+    mat_id: np.ndarray,
+    Js_lookup: np.ndarray,
+    h_dir: np.ndarray,
+) -> float:
+    """Compute volume-averaged magnetic polarization parallel to h_dir (CPU version).
 
     Args:
-        m_nodes (jnp.ndarray): Nodal unit magnetization vectors.
-        conn (jnp.ndarray): Tetrahedron connectivity.
-        volume (jnp.ndarray): Element volumes.
-        mat_id (jnp.ndarray): Element material IDs.
-        Js_lookup (jnp.ndarray): Saturation polarization table.
-        h_dir (jnp.ndarray): Field direction vector.
+        m_nodes (np.ndarray): Nodal unit magnetization vectors.
+        conn (np.ndarray): Tetrahedron connectivity.
+        volume (np.ndarray): Element volumes.
+        mat_id (np.ndarray): Element material IDs.
+        Js_lookup (np.ndarray): Saturation polarization table.
+        h_dir (np.ndarray): Field direction vector.
 
     Returns:
-        jnp.ndarray: Scalar averaged polarization component.
+        float: Scalar averaged polarization component.
     """
-    h = h_dir / (jnp.linalg.norm(h_dir) + 1e-30)
+    h = h_dir / (np.linalg.norm(h_dir) + 1e-30)
 
     # Average m over tets
     m_e = m_nodes[conn]  # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
+    m_avg = np.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties
     Js_e = Js_lookup[mat_id - 1]  # (E,)
     J_e = Js_e[:, None] * m_avg  # (E, 3)
 
     # Magnetic volume (only where Js > 0)
-    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+    Vmag = np.sum(np.where(Js_e > 0, volume, 0.0)) + 1e-30
 
     # Volume average
-    J_avg = jnp.sum(volume[:, None] * J_e, axis=0) / Vmag
-    return jnp.dot(J_avg, h)
+    J_avg = np.sum(volume[:, None] * J_e, axis=0) / Vmag
+    return float(np.dot(J_avg, h))
 
 
-def jax_compute_volume_averaged_m(
-    m_nodes: jnp.ndarray,
-    conn: jnp.ndarray,
-    volume: jnp.ndarray,
-    mat_id: jnp.ndarray,
-    Js_lookup: jnp.ndarray,
-) -> jnp.ndarray:
-    """Compute volume-averaged magnetization components (mx, my, mz) (JAX version).
+def cpu_compute_volume_averaged_m(
+    m_nodes: np.ndarray,
+    conn: np.ndarray,
+    volume: np.ndarray,
+    mat_id: np.ndarray,
+    Js_lookup: np.ndarray,
+) -> np.ndarray:
+    """Compute volume-averaged magnetization components (mx, my, mz) (CPU version).
 
     Only averages over magnetic material regions (Js > 0).
 
     Args:
-        m_nodes (jnp.ndarray): Nodal unit magnetization vectors.
-        conn (jnp.ndarray): Tetrahedron connectivity.
-        volume (jnp.ndarray): Element volumes.
-        mat_id (jnp.ndarray): Element material IDs.
-        Js_lookup (jnp.ndarray): Saturation polarization table.
+        m_nodes (np.ndarray): Nodal unit magnetization vectors.
+        conn (np.ndarray): Tetrahedron connectivity.
+        volume (np.ndarray): Element volumes.
+        mat_id (np.ndarray): Element material IDs.
+        Js_lookup (np.ndarray): Saturation polarization table.
 
     Returns:
-        jnp.ndarray: Average unit vector (3,).
+        np.ndarray: Average unit vector (3,).
     """
     # Average m over tets
     m_e = m_nodes[conn]  # (E, 4, 3)
-    m_avg = jnp.mean(m_e, axis=1)  # (E, 3)
+    m_avg = np.mean(m_e, axis=1)  # (E, 3)
 
     # Material properties: only average over magnetic parts
     Js_e = Js_lookup[mat_id - 1]  # (E,)
-    Vmag = jnp.sum(jnp.where(Js_e > 0, volume, 0.0)) + 1e-30
+    Vmag = np.sum(np.where(Js_e > 0, volume, 0.0)) + 1e-30
 
-    m_vol_avg = jnp.sum(jnp.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
+    m_vol_avg = np.sum(np.where(Js_e[:, None] > 0, volume[:, None] * m_avg, 0.0), axis=0) / Vmag
     return m_vol_avg
 
 
@@ -233,36 +221,26 @@ def run_hysteresis_loop(  # noqa: D417
     m0: np.ndarray,
     params: LoopParams,
     V_mag: float,
-    node_volumes: jnp.ndarray,
     M_nodal: jnp.ndarray,
+    V_mag_nodal: jnp.ndarray,
     B_bias: np.ndarray | None = None,
     precond_type: str = "jacobi",
     order: int = 3,
     energy_assembly: str = "segment_sum",
-    grad_backend: GradBackend = "stored_grad_phi",
-    chunk_elems: int = 200_000,
     boundary_mask: jnp.ndarray | None = None,
-    *,
-    mode: str = "matrix_free",
     A_sparse: Any = None,
-    Dx_sparse: Any = None,
-    Dy_sparse: Any = None,
-    Dz_sparse: Any = None,
     A_diag: Any = None,
+    Kex_diag: Any = None,
     K_eff_sparse: Any = None,
-    Kx_sparse: Any = None,
-    Ky_sparse: Any = None,
-    Kz_sparse: Any = None,
-    num_gpus: int = 1,
-    Gx_sparse: Any = None,
-    Gy_sparse: Any = None,
-    Gz_sparse: Any = None,
     D_sparse: Any = None,
     G_sparse: Any = None,
     K_eff_scipy: Any = None,
     D_scipy: Any = None,
     G_scipy: Any = None,
+    A_scipy: Any = None,
+    mesh: jax.sharding.Mesh | None = None,
     cpu_spmv_backend: str = "persistent_mkl" if __import__("sys").platform.startswith("linux") else "scipy",
+    config_idx_offset: int = 0,
 ) -> dict[str, Any]:
     """Execute the full hysteresis loop simulation.
 
@@ -276,16 +254,13 @@ def run_hysteresis_loop(  # noqa: D417
         m0 (np.ndarray): Initial magnetization vector.
         params (LoopParams): sweep and solver settings.
         V_mag (float): Magnetic volume.
-        node_volumes (Array): Nodal volume vector.
         M_nodal (Array): Nodal magnetic moment scaling.
+        V_mag_nodal (Array): Pure magnetic nodal geometric volume.
         B_bias (np.ndarray | None): Bias field.
         precond_type (str): Preconditioning strategy.
         order (int): Chebyshev preconditioner order.
         energy_assembly (str): Nodal assembly strategy.
-        grad_backend (GradBackend): shape function gradients source.
-        chunk_elems (int): Chunk size for loops.
         boundary_mask (Array | None): Boundary mask.
-        mode (str): Operator mode ('matrix_free' or 'assembled').
         A_sparse: Assembled stiffness matrix.
         Dx_sparse, Dy_sparse, Dz_sparse: Assembled divergence component matrices.
         Dz_sparse: Sparse difference matrix for z direction.
@@ -295,6 +270,8 @@ def run_hysteresis_loop(  # noqa: D417
         Kan_sparse: Assembled anisotropy matrix.
         k_nodes: Precomputed easy axis per node.
         Kex_diag: Precomputed diagonal of Kex.
+        poisson_solver: Solver backend ('jax', 'petsc').
+        mesh: Parallel sharding mesh.
     """
     out_dir = ensure_dir(params.out_dir)
     csv_path = out_dir / params.csv_name
@@ -314,41 +291,37 @@ def run_hysteresis_loop(  # noqa: D417
         k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
         V_mag=V_mag,
         M_nodal=M_nodal,
-        chunk_elems=chunk_elems,
         assembly=energy_assembly,
-        grad_backend=grad_backend,
-        mode=mode,
     )
 
-    solve_U = make_solve_U(
+    solve_U, hierarchy_jax = make_solve_U(
         geom,
         jnp.asarray(Js_lookup, dtype=jnp.float64),
         precond_type=precond_type,
         order=order,
-        chunk_elems=chunk_elems,
         cg_maxiter=params.cg_maxiter,
         cg_tol=params.cg_tol,
         poisson_reg=params.poisson_reg,
-        grad_backend=grad_backend,
         boundary_mask=boundary_mask,
-        mode=mode,
         A_sparse=A_sparse,
         cpu_spmv_backend=cpu_spmv_backend,
         poisson_solver=params.poisson_solver,
+        mesh=mesh,
+        A_scipy=A_scipy,
     )
+
+    if params.poisson_solver != "pardiso":
+        if "A_scipy" in locals():
+            del A_scipy
+        import gc
+
+        gc.collect()
 
     inv_M_rel = jnp.where(M_nodal > 1e-20, V_mag / M_nodal, 0.0)[:, None]
 
-    from .energy_kernels import compute_exchange_diagonal
-
-    d_diag = compute_exchange_diagonal(
-        geom,
-        jnp.asarray(A_lookup, dtype=jnp.float64),
-        V_mag,
-        chunk_elems=chunk_elems,
-        assembly=energy_assembly,
-        grad_backend=grad_backend,
-    )
+    if Kex_diag is None:
+        raise ValueError("Kex_diag is required in assembled mode.")
+    d_diag = Kex_diag * (1.0 / V_mag)
     inv_M_prec = jnp.where(d_diag > 1e-20, 1.0 / d_diag, 1.0)[:, None]
     M_rel = jnp.where(inv_M_rel > 1e-20, 1.0 / inv_M_rel, 0.0)
 
@@ -357,34 +330,49 @@ def run_hysteresis_loop(  # noqa: D417
         A_lookup=jnp.asarray(A_lookup, dtype=jnp.float64),
         K1_lookup=jnp.asarray(K1_lookup, dtype=jnp.float64),
         Js_lookup=jnp.asarray(Js_lookup, dtype=jnp.float64),
-        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
+        k_easy_lookup=k_easy_lookup,
         V_mag=V_mag,
-        node_volumes=node_volumes,
         M_nodal=M_nodal,
         solve_U=solve_U,
         cg_tol=params.cg_tol,
         method=params.method,
         B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
-        chunk_elems=chunk_elems,
         energy_assembly=energy_assembly,
-        grad_backend=grad_backend,
-        mode=mode,
     )
 
     m = jnp.asarray(m0, dtype=jnp.float64)
-    m = m / jnp.linalg.norm(m, axis=1, keepdims=True)
+    norm = jnp.linalg.norm(m, axis=1, keepdims=True)
+    m = m / jnp.where(norm > 0, norm, 1.0)
 
     B_vals = _field_values(params.B_start, params.B_end, params.dB, params.loop)
 
-    config_idx = 0
+    config_idx = config_idx_offset
     J_par_last_saved = None
     history = []
 
     U = jnp.zeros(m.shape[0], dtype=m.dtype)
 
+    warmup_sparse_ops = {
+        "hierarchy_jax": hierarchy_jax,
+        "A_sparse": A_sparse,
+        "A_diag": A_diag,
+        "K_eff_sparse": K_eff_sparse,
+        "inv_M_rel": inv_M_rel,
+        "inv_M_prec": inv_M_prec,
+        "M_rel": M_rel,
+    }
+    if boundary_mask is not None:
+        warmup_sparse_ops["boundary_mask"] = boundary_mask
+
+    if D_sparse is not None:
+        warmup_sparse_ops["D_sparse"] = D_sparse
+    if G_sparse is not None:
+        warmup_sparse_ops["G_sparse"] = G_sparse
+
     if params.benchmark and not getattr(params, "cpp_mkl", False):
         print("Warming up JIT compiler...")
         B_ext_warmup = jnp.asarray(B_vals[0] * h, dtype=jnp.float64)
+
         _m, _U, _ = minimize(
             m,
             B_ext_warmup,
@@ -394,8 +382,6 @@ def run_hysteresis_loop(  # noqa: D417
             tau_f=params.tau_f,
             eps_a=params.eps_a,
             tau0=params.tau0,
-            tau_min=params.tau_min,
-            tau_max=params.tau_max,
             ls_eta1=params.ls_eta1,
             ls_eta2=params.ls_eta2,
             ls_C=params.ls_C,
@@ -411,38 +397,17 @@ def run_hysteresis_loop(  # noqa: D417
             pc_force_eta=params.pc_force_eta,
             pc_force_alpha=params.pc_force_alpha,
             pc_stagnation_nu=params.pc_stagnation_nu,
-            memory=params.memory,
             tn_iters=params.tn_iters,
-            lr=params.lr,
-            mu=params.mu,
             pc_reg=params.pc_reg,
             phi_extrapolate=params.phi_extrapolate,
             L=params.L,
-            sparse_ops={
-                "A_sparse": A_sparse,
-                "Dx_sparse": Dx_sparse,
-                "Dy_sparse": Dy_sparse,
-                "Dz_sparse": Dz_sparse,
-                "A_diag": A_diag,
-                "K_eff_sparse": K_eff_sparse,
-                "Kx_sparse": Kx_sparse,
-                "Ky_sparse": Ky_sparse,
-                "Kz_sparse": Kz_sparse,
-                "num_gpus": num_gpus,
-                "Gx_sparse": Gx_sparse,
-                "Gy_sparse": Gy_sparse,
-                "Gz_sparse": Gz_sparse,
-                "D_sparse": D_sparse,
-                "G_sparse": G_sparse,
-                "inv_M_rel": inv_M_rel,
-                "inv_M_prec": inv_M_prec,
-                "M_rel": M_rel,
-            },
+            sparse_ops=warmup_sparse_ops,
         )
         _m.block_until_ready()
         _U.block_until_ready()
         print("Warmup complete. Starting main loop...")
 
+    global_start_time = time.time()
     total_time = 0.0
     total_iters = 0
     total_preco_iters = 0
@@ -452,6 +417,7 @@ def run_hysteresis_loop(  # noqa: D417
     for step_idx, Bmag in enumerate(B_vals):
         B_ext = jnp.asarray(Bmag * h, dtype=jnp.float64)
 
+        field_start_time = time.time()
         start_step = time.time()
 
         if params.cpp_mkl:
@@ -461,16 +427,6 @@ def run_hysteresis_loop(  # noqa: D417
             params.M_nodal = M_nodal
             params.inv_M_rel = 1.0 / (M_nodal / jnp.max(M_nodal) + 1e-30)
             params.V_mag = V_mag
-            from .energy_kernels import compute_exchange_diagonal
-
-            d_diag = compute_exchange_diagonal(
-                geom,
-                jnp.asarray(A_lookup, dtype=jnp.float64),
-                V_mag,
-                chunk_elems=chunk_elems,
-                assembly=energy_assembly,
-                grad_backend=grad_backend,
-            )
             params.inv_M_prec = 1.0 / (d_diag + 1e-30)
             m, U, info = cpp_minimize(
                 m,
@@ -478,19 +434,10 @@ def run_hysteresis_loop(  # noqa: D417
                 U,
                 params,
                 sparse_ops={
+                    "hierarchy_jax": hierarchy_jax,
                     "A_sparse": A_sparse,
-                    "Dx_sparse": Dx_sparse,
-                    "Dy_sparse": Dy_sparse,
-                    "Dz_sparse": Dz_sparse,
                     "A_diag": A_diag,
                     "K_eff_sparse": K_eff_scipy if K_eff_scipy is not None else K_eff_sparse,
-                    "Kx_sparse": Kx_sparse,
-                    "Ky_sparse": Ky_sparse,
-                    "Kz_sparse": Kz_sparse,
-                    "num_gpus": num_gpus,
-                    "Gx_sparse": Gx_sparse,
-                    "Gy_sparse": Gy_sparse,
-                    "Gz_sparse": Gz_sparse,
                     "D_sparse": D_scipy if D_scipy is not None else D_sparse,
                     "G_sparse": G_scipy if G_scipy is not None else G_sparse,
                     "inv_M_rel": inv_M_rel,
@@ -510,8 +457,6 @@ def run_hysteresis_loop(  # noqa: D417
                 tau_f=params.tau_f,
                 eps_a=params.eps_a,
                 tau0=params.tau0,
-                tau_min=params.tau_min,
-                tau_max=params.tau_max,
                 ls_eta1=params.ls_eta1,
                 ls_eta2=params.ls_eta2,
                 ls_C=params.ls_C,
@@ -527,33 +472,11 @@ def run_hysteresis_loop(  # noqa: D417
                 pc_force_eta=params.pc_force_eta,
                 pc_force_alpha=params.pc_force_alpha,
                 pc_stagnation_nu=params.pc_stagnation_nu,
-                memory=params.memory,
                 tn_iters=params.tn_iters,
-                lr=params.lr,
-                mu=params.mu,
                 pc_reg=params.pc_reg,
                 phi_extrapolate=params.phi_extrapolate,
                 L=params.L,
-                sparse_ops={
-                    "A_sparse": A_sparse,
-                    "Dx_sparse": Dx_sparse,
-                    "Dy_sparse": Dy_sparse,
-                    "Dz_sparse": Dz_sparse,
-                    "A_diag": A_diag,
-                    "K_eff_sparse": K_eff_sparse,
-                    "Kx_sparse": Kx_sparse,
-                    "Ky_sparse": Ky_sparse,
-                    "Kz_sparse": Kz_sparse,
-                    "num_gpus": num_gpus,
-                    "Gx_sparse": Gx_sparse,
-                    "Gy_sparse": Gy_sparse,
-                    "Gz_sparse": Gz_sparse,
-                    "D_sparse": D_sparse,
-                    "G_sparse": G_sparse,
-                    "inv_M_rel": inv_M_rel,
-                    "inv_M_prec": inv_M_prec,
-                    "M_rel": M_rel,
-                },
+                sparse_ops=warmup_sparse_ops,
             )
             # Accurate timing: wait for GPU to finish
             m.block_until_ready()
@@ -561,23 +484,25 @@ def run_hysteresis_loop(  # noqa: D417
         # Accurate timing: wait for GPU to finish
         m.block_until_ready()
         U.block_until_ready()
-        step_duration = time.time() - start_step
-        total_time += step_duration
+        t_gpu = time.time() - start_step
+        # total_time is now global, skipped local sum
         total_iters += info.get("iters", 0)
         total_preco_iters += info.get("preco_iters", 0)
         total_evals += info.get("evals", info.get("nf", 0))
         total_demag_iters += info.get("demag_iters", info.get("icg", 0))
 
-        # Compute volume averages
-        Jpar = jax_compute_volume_averaged_J_parallel(
-            m,
-            geom.conn,
-            geom.volume,
-            geom.mat_id,
-            jnp.asarray(Js_lookup),
-            jnp.asarray(h),
-        )
-        m_avg = jax_compute_volume_averaged_m(m, geom.conn, geom.volume, geom.mat_id, jnp.asarray(Js_lookup))
+        # Compute volume averages instantly on GPU (JAX)
+        J_avg_gpu = jnp.sum(m * M_nodal[:, None], axis=0) / V_mag
+        J_avg = np.array(J_avg_gpu)
+
+        h_dir = np.asarray(h)
+        h_unit = h_dir / (np.linalg.norm(h_dir) + 1e-30)
+        Jpar = float(np.dot(J_avg, h_unit))
+
+        # mx, my, mz are the simple volume-averaged components of m.
+        # We use V_mag_nodal which strictly excludes air elements (like the original CPU code).
+        m_avg_gpu = jnp.sum(m * V_mag_nodal[:, None], axis=0) / jnp.sum(V_mag_nodal)
+        m_avg = np.array(m_avg_gpu)
 
         B_tesla = float(Bmag) * params.Js_ref
         J_tesla = float(Jpar) * params.Js_ref
@@ -589,8 +514,9 @@ def run_hysteresis_loop(  # noqa: D417
 
         # Snapshot trigger logic
         should_save = False
-        if J_par_last_saved is None:
-            # Always save the very first step
+        is_last_step = step_idx == len(B_vals) - 1
+        if J_par_last_saved is None or is_last_step:
+            # Always save the very first and very last step
             should_save = True
         elif params.mstep is not None:
             if abs(Jpar - J_par_last_saved) >= params.mstep:
@@ -610,8 +536,8 @@ def run_hysteresis_loop(  # noqa: D417
                     points,
                     np.array(geom.conn),
                     point_data={
-                        "m": np.array(m).astype(np.float32),
-                        "U": np.array(U).astype(np.float32),
+                        "m": np.array(m[: len(points)]).astype(np.float32),
+                        "U": np.array(U[: len(points)]).astype(np.float32),
                     },
                     cell_data={"mat_id": np.array(geom.mat_id).astype(np.int32)},
                 )
@@ -625,11 +551,14 @@ def run_hysteresis_loop(  # noqa: D417
             float(info.get("gnorm", np.nan)),
         )
 
+        field_end_time = time.time()
+        t_total = field_end_time - field_start_time
+
         print(
             f"step {step_idx:05d}  B={B_tesla:+.6e} T  J_par={J_tesla:+.6e} T  "
-            f"E={info.get('E', float('nan')):.6e}  t={step_duration:.3f}s  "
+            f"E={info.get('E', float('nan')):.6e}  t_gpu={t_gpu:.3f}s  t_total={t_total:.3f}s  "
             f"it={info.get('iters', 0):.0f}  "
-            f"t/it={step_duration / max(1.0, info.get('iters', 1.0)):.3e}s  "
+            f"t/it={t_gpu / max(1.0, info.get('iters', 1.0)):.3e}s  "
             f"nf={info.get('evals', info.get('nf', 0)):.0f}  "
             f"icg_amg={info.get('demag_iters', info.get('icg', 0)):.0f}"
         )
@@ -641,8 +570,9 @@ def run_hysteresis_loop(  # noqa: D417
             )
             break
 
+    global_total_time = time.time() - global_start_time
     print(
-        f"\nHysteresis loop finished in {total_time:.3f} s.\n"
+        f"\nHysteresis loop finished in {global_total_time:.3f} s.\n"
         f"Total minimizer iterations: {total_iters}\n"
         f"Total preconditioner iterations: {total_preco_iters}\n"
         f"Total function evaluations: {total_evals}\n"

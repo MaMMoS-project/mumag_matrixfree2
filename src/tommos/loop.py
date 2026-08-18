@@ -239,6 +239,8 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
 
     if "initial state" in config:
         m_sec = config["initial state"]
+        if "ini" in m_sec:
+            overrides["ini"] = int(m_sec["ini"])
         if all(k in m_sec for k in ("mx", "my", "mz")):
             mx = float(m_sec["mx"])
             my = float(m_sec["my"])
@@ -252,19 +254,20 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
         if "tol_fun" in m_min:
             overrides["tau_f"] = float(m_min["tol_fun"])
         if "eps_a" in m_min:
-            overrides["eps_a"] = float(m_min["eps_a"])
+            val = str(m_min["eps_a"]).strip().lower()
+            overrides["eps_a"] = "auto" if val == "auto" else float(val)
         if "max_iter" in m_min:
             overrides["max_iter"] = int(m_min["max_iter"])
-        if "tau_min" in m_min:
-            overrides["tau_min"] = float(m_min["tau_min"])
         if "tau0" in m_min:
             overrides["tau0"] = float(m_min["tau0"])
-        if "tau_max" in m_min:
-            overrides["tau_max"] = float(m_min["tau_max"])
         if "method" in m_min:
             overrides["method"] = str(m_min["method"])
+        elif "cg_method" in m_min and int(m_min["cg_method"]) == 1004:
+            overrides["method"] = "pcohen_hs"
         if "pc_iters" in m_min:
             overrides["pc_iters"] = int(m_min["pc_iters"])
+        elif "precond_iter" in m_min:
+            overrides["pc_iters"] = int(m_min["precond_iter"])
         if "pc_auto" in m_min:
             overrides["pc_auto"] = m_min.getboolean("pc_auto")
         if "pc_force_eta" in m_min:
@@ -273,20 +276,10 @@ def load_params_p2(p2_path: str | Path) -> dict[str, Any]:
             overrides["pc_force_alpha"] = float(m_min["pc_force_alpha"])
         if "pc_stagnation_nu" in m_min:
             overrides["pc_stagnation_nu"] = float(m_min["pc_stagnation_nu"])
-        if "memory" in m_min:
-            overrides["memory"] = int(m_min["memory"])
         if "tn_iters" in m_min:
             overrides["tn_iters"] = int(m_min["tn_iters"])
-        if "lr" in m_min:
-            overrides["lr"] = float(m_min["lr"])
-        if "mu" in m_min:
-            overrides["mu"] = float(m_min["mu"])
         if "pc_reg" in m_min:
             overrides["pc_reg"] = float(m_min["pc_reg"])
-        if "wg_gamma" in m_min:
-            overrides["wg_gamma"] = int(m_min["wg_gamma"])
-        if "wg_threshold" in m_min:
-            overrides["wg_threshold"] = float(m_min["wg_threshold"])
         if "phi_extrapolate" in m_min:
             overrides["phi_extrapolate"] = m_min.getboolean("phi_extrapolate")
 
@@ -383,9 +376,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     ap.add_argument(
         "--shell-type",
         type=str,
-        default="hull",
-        choices=["triangles", "hull"],
-        help="Outer shell boundary type: copy original 'triangles' or use convex 'hull' (default).",
+        default="box",
+        choices=["triangles", "hull", "box"],
+        help=(
+            "Outer shell boundary type: copy original 'triangles', use convex 'hull', or axis-aligned 'box' (default)."
+        ),
     )
     ap.add_argument("--layers", type=int, default=None, help="Number of graded shell layers (>= 1).")
     ap.add_argument(
@@ -469,35 +464,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Poisson solver preconditioner: amgcl (default), jacobi, chebyshev, or amg.",
     )
 
-    # gradient backend selection
-
-    ap.add_argument(
-        "--geom-backend",
-        type=str,
-        default="stored_JinvT",
-        choices=["stored_JinvT", "stored_grad_phi", "on_the_fly"],
-        help="Strategy for providing gradient info: "
-        "stored_JinvT (efficient storage), stored_grad_phi (precomputed), "
-        "or on_the_fly (recompute from coordinates).",
-    )
-
     # solver settings
-    ap.add_argument(
-        "--chunk-elems",
-        type=int,
-        default=200_000,
-        help="Number of elements processed per loop iteration (chunking to control GPU memory).",
-    )
-    ap.add_argument(
-        "--operator-mode",
-        choices=["matrix_free", "assembled"],
-        default="assembled",
-        help="Solver operator execution mode: matrix_free (on-the-fly) or assembled (sparse matrix SpMV).",
-    )
     ap.add_argument(
         "--cg-maxiter",
         type=int,
-        default=2000,
+        default=8000,
         help="Maximum iterations for the Poisson PCG solver.",
     )
     ap.add_argument(
@@ -508,6 +479,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     ap.add_argument(
         "--poisson-reg",
+        "--reg",
+        dest="poisson_reg",
         type=float,
         default=1e-12,
         help="Tikhonov regularization constant for the Poisson operator diagonal.",
@@ -528,6 +501,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     # loop settings
+    ap.add_argument("--mfinal", type=float, default=None, help="Early stopping threshold.")
+    ap.add_argument("--mstep", type=float, default=None, help="Snapshot trigger threshold.")
+    ap.add_argument("--loop", action=argparse.BooleanOptionalAction, default=True, help="Full hysteresis loop.")
     ap.add_argument(
         "--h-dir",
         type=str,
@@ -536,21 +512,25 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     ap.add_argument(
         "--B-start",
+        "--hstart",
+        dest="B_start",
         type=float,
         default=-1.0,
         help="Starting magnitude of the applied field (Tesla).",
     )
     ap.add_argument(
         "--B-end",
+        "--hfinal",
+        dest="B_end",
         type=float,
         default=1.0,
         help="Final magnitude of the applied field (Tesla).",
     )
-    ap.add_argument("--dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
+    ap.add_argument("--dB", "--hstep", dest="dB", type=float, default=0.05, help="Field step size magnitude (Tesla).")
     ap.add_argument(
         "--max-iter",
         type=int,
-        default=2000,
+        default=8000,
         help="Maximum iterations for the energy minimizer per field step.",
     )
     ap.add_argument(
@@ -561,33 +541,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     ap.add_argument(
         "--tau-f",
+        "--tol_fun",
+        "--tol-fun",
+        dest="tau_f",
         type=float,
         default=1e-8,
         help="Relative energy convergence tolerance for the minimizer.",
     )
     ap.add_argument(
         "--eps-a",
-        type=float,
-        default=1e-12,
-        help="Absolute tangent gradient norm tolerance for the minimizer (reduced units).",
+        type=str,
+        default="auto",
+        help="Absolute tangent gradient norm tolerance (float) or 'auto' (default).",
     )
     ap.add_argument(
         "--tau0",
         type=float,
         default=1e-2,
         help="Initial step size guess for minimizers.",
-    )
-    ap.add_argument(
-        "--tau-min",
-        type=float,
-        default=1e-6,
-        help="Minimum step size allowed for the BB minimizer.",
-    )
-    ap.add_argument(
-        "--tau-max",
-        type=float,
-        default=1.0,
-        help="Maximum step size allowed for the BB minimizer.",
     )
     ap.add_argument(
         "--bias-type",
@@ -606,31 +577,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     # advanced minimizer options
     ap.add_argument(
         "--method",
+        "--cg_method",
+        dest="method",
         type=str,
         default="pcohen_hs",
-        choices=[
-            "cohen",
-            "pcg",
-            "pcohen",
-            "pcohen_hs",
-            "pcohen_exact",
-            "pcohen_hs_exact",
-            "lbfgs",
-            "plbfgs",
-            "dplbfgs",
-            "tn_split",
-            "wg_np",
-            "tr",
-            "aapg",
-            "aapg_exact",
-            "pnag",
-            "pcohen_lbfgs",
-            "ptr",
-        ],
-        help="Energy minimizer algorithm (default: pcohen).",
+        choices=["pcohen_hs", "tr"],
+        help="Energy minimizer algorithm (default: pcohen_hs).",
     )
     ap.add_argument(
         "--pc-iters",
+        "--precond_iter",
+        dest="pc_iters",
         type=int,
         default=10,
         help="Inner iterations for preconditioning (default: 10).",
@@ -666,28 +623,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Relative threshold for quadratic model stagnation detection (default: 0.01).",
     )
     ap.add_argument(
-        "--memory",
-        type=int,
-        default=5,
-        help="Memory/History size for L-BFGS and Anderson acceleration (default: 5).",
-    )
-    ap.add_argument(
         "--tn-iters",
         type=int,
         default=5,
         help="Inner iterations for Newton-CG solvers (default: 5).",
-    )
-    ap.add_argument(
-        "--lr",
-        type=float,
-        default=0.1,
-        help="Learning rate for Nesterov acceleration (default: 0.1).",
-    )
-    ap.add_argument(
-        "--mu",
-        type=float,
-        default=0.9,
-        help="Momentum factor for Nesterov acceleration (default: 0.9).",
     )
 
     ap.add_argument(
@@ -695,18 +634,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=float,
         default=0.0,
         help="Diagonal regularization shift for the preconditioner (default: 0.0).",
-    )
-    ap.add_argument(
-        "--wg-gamma",
-        type=int,
-        default=5,
-        help="Number of steps in convex region before switching to BB (default: 5).",
-    )
-    ap.add_argument(
-        "--wg-threshold",
-        type=float,
-        default=1e-6,
-        help="Convexity threshold (sty) for WG algorithm (default: 1e-6).",
     )
     ap.add_argument(
         "--phi-extrapolate",
@@ -725,12 +652,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_false",
         dest="phi_extrapolate",
         help="Disable linear extrapolation of scalar potential.",
-    )
-    ap.add_argument(
-        "--data-parallel",
-        action="store_true",
-        default=False,
-        help="Use SPMD Data Parallelism for multi-GPU instead of Operator Parallelism (default: False).",
     )
     ap.add_argument(
         "--out-dir",
@@ -760,6 +681,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Run a dummy warmup step before the hysteresis loop to compile JIT functions.",
     )
+    ap.add_argument(
+        "--num-devices",
+        type=int,
+        default=0,
+        help="Number of GPUs/devices to distribute across (defaults to 0, meaning all available).",
+    )
+
+    ap.add_argument(
+        "--ignore-mem-warning",
+        "--ignore-memory-warning",
+        action="store_true",
+        dest="ignore_mem_warning",
+        help="Bypass the memory safety abort if estimated memory exceeds available RAM.",
+    )
 
     args = ap.parse_args(cli_arguments)
 
@@ -776,6 +711,18 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.poisson_solver == "auto":
         args.poisson_solver = "pardiso" if (not has_gpu and has_mkl) else "jax"
+
+    num_devices = args.num_devices if args.num_devices > 0 else len(jax.devices())
+    print(f"[config] JAX initialized with {len(jax.devices())} total devices.")
+
+    if num_devices > 1:
+        devices = jax.devices()[:num_devices]
+        print(f"[config] Distributing arrays across {num_devices} active devices: {devices}")
+        if len(devices) < num_devices:
+            raise RuntimeError(f"Requested {num_devices} devices, but only found {len(jax.devices())}")
+        mesh = jax.sharding.Mesh(np.array(devices), ("devices",))
+    else:
+        mesh = None
 
     # Automatic file discovery if modelname is provided
     modelname = args.modelname
@@ -851,6 +798,43 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     G = int(mat_id.max())
 
+    from .memory_profiler import estimate_cpu_memory
+
+    Nnodes = len(knt)
+    Nelements = len(conn)
+    peak_mb = estimate_cpu_memory(Nnodes, Nelements, args)
+
+    try:
+        import psutil
+
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+    except Exception as e:
+        print(f"[WARNING] Could not check available memory with psutil: {e}")
+        available_mb = float("inf")
+
+    num_dev = len(jax.devices())
+    platform = jax.devices()[0].platform.upper()
+    hardware_str = f"{platform} ({num_dev} device{'s' if num_dev > 1 else ''})"
+
+    print("\n======================================================================")
+    print("=== HARDWARE & MEMORY ANALYSIS ===")
+    print(f"Hardware       : {hardware_str}")
+    print(f"Mesh Nodes     : {Nnodes:,}")
+    print(f"Mesh Elements  : {Nelements:,}")
+    print(f"Available RAM  : {available_mb:,.1f} MB")
+    print(f"Estimated Peak : {peak_mb:,.1f} MB")
+    print("======================================================================\n")
+
+    if peak_mb > available_mb:
+        if not args.ignore_mem_warning:
+            print("[CRITICAL WARNING] Not enough system RAM to complete the simulation!")
+            print("Aborting to prevent system crash. Use --ignore-mem-warning to bypass.")
+            sys.exit(1)
+        else:
+            print(
+                "[WARNING] Memory peak exceeds available RAM, but bypass flag is active. Proceeding at your own risk..."
+            )
+
     # Load .p2 overrides early to get mesh_unit
     p2_overrides = {}
     if modelname:
@@ -891,47 +875,50 @@ def main(argv: Sequence[str] | None = None) -> None:
     K1_red = K1_lookup / Kd_ref
     Js_red = Js_lookup / Js_ref
 
-    # Build TetGeom depending on backend
-    grad_backend = args.geom_backend
-
-    if grad_backend == "on_the_fly":
-        geom = TetGeom(
-            conn=jnp.asarray(conn32, dtype=jnp.int32),
-            volume=jnp.asarray(volume, dtype=jnp.float64),
-            mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-            x_nodes=jnp.asarray(knt, dtype=jnp.float64),
-        )
-    else:
-        if grad_backend == "stored_grad_phi":
-            grad_phi = compute_grad_phi_from_JinvT(JinvT)
-            geom = TetGeom(
-                conn=jnp.asarray(conn32, dtype=jnp.int32),
-                volume=jnp.asarray(volume, dtype=jnp.float64),
-                mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-                grad_phi=jnp.asarray(grad_phi, dtype=jnp.float64),
-                JinvT=None,
-                x_nodes=None,
-            )
-        else:
-            geom = TetGeom(
-                conn=jnp.asarray(conn32, dtype=jnp.int32),
-                volume=jnp.asarray(volume, dtype=jnp.float64),
-                mat_id=jnp.asarray(mat_id, dtype=jnp.int32),
-                JinvT=jnp.asarray(JinvT, dtype=jnp.float64),
-                grad_phi=None,
-                x_nodes=None,
-            )
+    # Build TetGeom (always with precomputed shape function gradients for assembly)
+    grad_phi = compute_grad_phi_from_JinvT(JinvT)
+    geom = TetGeom(
+        conn=conn32.astype(np.int32),
+        volume=volume.astype(np.float64),
+        mat_id=mat_id.astype(np.int32),
+        grad_phi=grad_phi.astype(np.float64),
+        JinvT=None,
+        x_nodes=None,
+    )
 
     # Initial magnetization
-    # Priority: p2 override > CLI --m0-dir > CLI --h-dir
+    # Priority: p2 ini > p2 override > CLI --m0-dir > CLI --h-dir
+    ini_val = p2_overrides.get("ini", None)
     m0_str = p2_overrides.get("m0_dir", args.m0_dir)
-    if m0_str:
-        m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
-    else:
-        m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
 
-    m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
-    m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
+    if ini_val is not None:
+        import glob
+
+        import meshio
+
+        pattern = f"state_cfg{ini_val:05d}_*.vtu"
+        matches = glob.glob(pattern) + glob.glob(str(Path(args.out_dir) / pattern))
+        if not matches:
+            raise FileNotFoundError(f"Initial state VTU file not found for ini={ini_val}. Looked for {pattern}")
+        vtu_path = matches[0]
+        print(f"[materials] Loading initial magnetization from {vtu_path}")
+
+        mesh_data = meshio.read(vtu_path)
+        if "m" not in mesh_data.point_data:
+            raise ValueError(f"No 'm' vector found in point_data of {vtu_path}")
+        m0 = mesh_data.point_data["m"].astype(np.float64)
+        if m0.shape[0] != knt.shape[0]:
+            raise ValueError(f"Number of points in VTU ({m0.shape[0]}) does not match mesh ({knt.shape[0]}).")
+        config_idx_offset = ini_val + 1
+    else:
+        if m0_str:
+            m0_vec = np.array([float(x) for x in m0_str.split(",")], dtype=np.float64)
+        else:
+            m0_vec = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
+
+        m0_vec = m0_vec / (np.linalg.norm(m0_vec) + 1e-30)
+        m0 = np.tile(m0_vec[None, :], (knt.shape[0], 1))
+        config_idx_offset = 0
 
     h_dir = np.array([float(x) for x in args.h_dir.split(",")], dtype=np.float64)
     h_dir = h_dir / (np.linalg.norm(h_dir) + 1e-30)
@@ -943,15 +930,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Preconditioning: compute lumped node volumes and magnetic moments M_nodal
     from .fem_utils import compute_node_volumes
 
-    node_vols = compute_node_volumes(geom, chunk_elems=int(args.chunk_elems))
-
     # Precompute nodal moments M (M_i = sum_e Js_red[e] * Ve / 4)
     # This is used for Zeeman energy/gradient and as a physical preconditioner
     vol_Js = volume * Js_red[mat_id - 1]
     from dataclasses import replace
 
-    geom_Js = replace(geom, volume=jnp.asarray(vol_Js))
-    M_nodal = compute_node_volumes(geom_Js, chunk_elems=int(args.chunk_elems))
+    geom_Js = replace(geom, volume=vol_Js)
+    M_nodal = compute_node_volumes(geom_Js)
+
+    # Precompute pure magnetic nodal volumes (V_mag_i = sum_e (Js_red[e]>0) * Ve / 4)
+    # This strictly excludes air elements for accurate mx, my, mz averaging
+    vol_mag = volume * (Js_red[mat_id - 1] > 0).astype(np.float64)
+    geom_mag = replace(geom, volume=vol_mag)
+    V_mag_nodal = compute_node_volumes(geom_mag)
 
     # 1. Start with defaults and CLI values
     param_sources = {}
@@ -962,10 +953,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "dB": float(args.dB) / Js_ref,
         "max_iter": int(args.max_iter),
         "tau_f": float(args.tau_f),
-        "eps_a": float(args.eps_a),
+        "eps_a": args.eps_a,
         "tau0": float(args.tau0),
-        "tau_min": float(args.tau_min),
-        "tau_max": float(args.tau_max),
         "cg_maxiter": int(args.cg_maxiter),
         "cg_tol": float(args.cg_tol),
         "poisson_reg": float(args.poisson_reg),
@@ -982,17 +971,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         "pc_force_eta": float(args.pc_force_eta),
         "pc_force_alpha": float(args.pc_force_alpha),
         "pc_stagnation_nu": float(args.pc_stagnation_nu),
-        "memory": int(args.memory),
         "tn_iters": int(args.tn_iters),
-        "lr": float(args.lr),
-        "mu": float(args.mu),
         "pc_reg": float(args.pc_reg),
-        "wg_threshold": float(args.wg_threshold),
         "phi_extrapolate": bool(args.phi_extrapolate),
         "cpp_mkl": bool(args.cpp_mkl),
         "benchmark": bool(args.benchmark),
         "poisson_solver": str(args.poisson_solver),
-        "data_parallel": bool(args.data_parallel),
     }
     for k in params_dict:
         param_sources[k] = "default"
@@ -1047,17 +1031,48 @@ def main(argv: Sequence[str] | None = None) -> None:
             if dest in ["B_start", "B_end", "dB", "mfinal", "mstep"] and params_dict[dest] is not None:
                 params_dict[dest] /= Js_ref
 
+    # Resolve eps_a string/float logic to allow 'auto' overrides
+    final_eps_a = params_dict.get("eps_a", "auto")
+    if str(final_eps_a).lower() == "auto" or final_eps_a is None:
+        params_dict["eps_a"] = None
+    else:
+        params_dict["eps_a"] = float(final_eps_a)
+
     # Clean up params_dict to only include LoopParams fields
     import dataclasses
 
     loop_param_names = {f.name for f in dataclasses.fields(LoopParams)}
+    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
+    params = LoopParams(**params_dict)
 
-    # Save parameter log
+    # Save parameter log with true initialized values
     out_dir_path = Path(args.out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
 
-    log_dict = vars(args).copy()
-    log_dict.update(params_dict)
+    log_dict = dataclasses.asdict(params)
+
+    # Inject orchestrator settings that govern the solver but aren't in LoopParams
+    log_dict["precond_type"] = args.precond_type
+    log_dict["cpu_spmv_backend"] = args.cpu_spmv_backend
+
+    ini_val = p2_overrides.get("ini", None)
+    if ini_val is not None:
+        log_dict["ini"] = ini_val
+        param_sources["ini"] = ".p2"
+    elif "m0_dir" in p2_overrides:
+        log_dict["m0_dir"] = p2_overrides["m0_dir"]
+        param_sources["m0_dir"] = ".p2"
+    elif args.m0_dir:
+        log_dict["m0_dir"] = args.m0_dir
+        param_sources["m0_dir"] = "cli"
+    else:
+        log_dict["m0_dir"] = args.h_dir
+        param_sources["m0_dir"] = "default"
+
+    # Re-scale external fields back to Tesla for human-readable logging
+    for field_key in ["B_start", "B_end", "dB", "mfinal", "mstep"]:
+        if field_key in log_dict and log_dict[field_key] is not None:
+            log_dict[field_key] *= Js_ref
 
     with open(out_dir_path / "params.log", "w") as f:
         f.write("| Parameter | Value | Source |\n")
@@ -1066,14 +1081,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             if "extrapolate" in k:
                 continue
             source = param_sources.get(k, "cli" if k in explicit_cli_args else "default")
-            f.write(f"| {k} | {log_dict[k]} | {source} |\n")
+
+            val = log_dict[k]
+            if isinstance(val, np.ndarray):
+                val = val.tolist()
+
+            f.write(f"| {k} | {val} | {source} |\n")
             if k == "cg_tol":
-                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.1))
+                phi_tol = float(min(log_dict["cg_tol"], log_dict["tau_f"] * 0.01))
                 f.write(f"| phi_tol | {phi_tol} | derived |\n")
-
-    params_dict = {k: v for k, v in params_dict.items() if k in loop_param_names}
-
-    params = LoopParams(**params_dict)
 
     # Compute per-node bias field
     B_bias = np.zeros((knt.shape[0], 3))
@@ -1096,166 +1112,205 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Scale by strength relative to saturation (dimensionless in our code)
     B_bias *= params.bias_strength
 
-    mode = args.operator_mode
     assembled_kwargs = {}
     cpu_spmv_backend = args.cpu_spmv_backend
 
-    if mode == "assembled":
-        print("Assembling global sparse operators on CPU...")
-        from .amg_utils import (
-            assemble_divergence_matrices_cpu,
-            assemble_poisson_matrix_cpu,
-            get_gpu_assignments,
-            make_sparse_operator,
-        )
+    print("Assembling global sparse operators on CPU...")
+    from .amg_utils import (
+        assemble_divergence_matrices_cpu,
+        assemble_poisson_matrix_cpu,
+        make_sparse_operator,
+    )
 
-        # Ensure grad_phi is computed
-        l_grad_phi = grad_phi if "grad_phi" in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
+    # Ensure grad_phi is computed
+    l_grad_phi = grad_phi if "grad_phi" in locals() and grad_phi is not None else compute_grad_phi_from_JinvT(JinvT)
 
-        A_scipy = assemble_poisson_matrix_cpu(
-            conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
-        )
-        A_diag_cpu = A_scipy.diagonal()
-        A_diag = jnp.asarray(A_diag_cpu)
+    # Compute exact pure exchange diagonal on CPU
+    Ke_diag = 2.0 * A_red[mat_id - 1, None] * volume[:, None] * np.sum(l_grad_phi**2, axis=-1)
+    N_nodes = int(np.max(conn32)) + 1
+    Kex_diag_cpu = np.bincount(conn32.flatten(), weights=Ke_diag.flatten(), minlength=N_nodes)
 
-        # GPU device detection and assignment
-        from .poisson_solve import safe_device_put
+    A_scipy = assemble_poisson_matrix_cpu(
+        conn32, volume, l_grad_phi, boundary_mask=mask_np, reg=float(args.poisson_reg)
+    )
 
-        try:
-            gpus = jax.devices("gpu")
-            num_gpus = len(gpus)
-        except Exception:
-            gpus = []
-            num_gpus = 0
+    from .amg_utils import pad_scipy_csr
 
-        if num_gpus >= 2:
-            assignments = get_gpu_assignments(num_gpus, gpus)
-            print(f"[multi-gpu] Found {num_gpus} GPUs. Device assignments: {assignments}")
-            dev_amg = assignments["AMG"]
-            dev_d = assignments["D"]
-            dev_g = assignments["G"]
-        else:
-            dev_amg = dev_d = dev_g = jax.devices()[0]
+    if mesh is not None:
+        num_dev = mesh.shape["devices"]
+        A_scipy = pad_scipy_csr(A_scipy, num_dev)
 
-        A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend)
-        A_sparse = safe_device_put(A_sparse, dev_amg)
+    A_diag_cpu = A_scipy.diagonal()
+    A_diag = jnp.asarray(A_diag_cpu)
 
-        Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
+    dev_main = mesh if mesh is not None else jax.devices()[0]
 
-        import scipy.sparse as sp
+    A_sparse = make_sparse_operator(A_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
-        if args.cpp_mkl:
-            Dx_coo = Dx_scipy.tocoo()
-            Dy_coo = Dy_scipy.tocoo()
-            Dz_coo = Dz_scipy.tocoo()
-            rows = np.concatenate([Dx_coo.row, Dy_coo.row, Dz_coo.row])
-            cols = np.concatenate([Dx_coo.col * 3 + 0, Dy_coo.col * 3 + 1, Dz_coo.col * 3 + 2])
-            data = np.concatenate([Dx_coo.data, Dy_coo.data, Dz_coo.data])
-            D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
-            D_scipy.sort_indices()
-            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            D_sparse = safe_device_put(D_sparse, dev_d)
+    Dx_scipy, Dy_scipy, Dz_scipy = assemble_divergence_matrices_cpu(conn32, volume, l_grad_phi, Js_red, mat_id)
 
-            Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
-            Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
-            Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
-            rows_g = np.concatenate([Gx_coo.row * 3 + 0, Gy_coo.row * 3 + 1, Gz_coo.row * 3 + 2])
-            cols_g = np.concatenate([Gx_coo.col, Gy_coo.col, Gz_coo.col])
-            data_g = np.concatenate([Gx_coo.data, Gy_coo.data, Gz_coo.data])
-            G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Gx_coo.shape[0], Gx_coo.shape[1]))
-            G_scipy.sort_indices()
-            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            G_sparse = safe_device_put(G_sparse, dev_g)
-        else:
-            D_scipy = sp.hstack([Dx_scipy, Dy_scipy, Dz_scipy]).tocsr()
-            D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            D_sparse = safe_device_put(D_sparse, dev_d)
-            N = knt.shape[0]
-            Gx_scipy = 2.0 * D_scipy[:, :N].transpose()
-            Gy_scipy = 2.0 * D_scipy[:, N : 2 * N].transpose()
-            Gz_scipy = 2.0 * D_scipy[:, 2 * N :].transpose()
-            G_scipy = sp.vstack([Gx_scipy, Gy_scipy, Gz_scipy]).tocsr()
-            G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            G_sparse = safe_device_put(G_sparse, dev_g)
-            del Gx_scipy, Gy_scipy, Gz_scipy
+    import gc
 
-        del Dx_scipy, Dy_scipy, Dz_scipy
-        Dx_sparse = Dy_sparse = Dz_sparse = None
-        Gx_sparse = Gy_sparse = Gz_sparse = None
+    import scipy.sparse as sp
 
-        from .amg_utils import assemble_exchange_anisotropy_matrix_cpu
+    Dx_coo = Dx_scipy.tocoo()
+    Dx_row, Dx_col, Dx_data = Dx_coo.row, Dx_coo.col * 3 + 0, Dx_coo.data
+    del Dx_coo
+    gc.collect()
 
-        K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
-            conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
-        )
+    Dy_coo = Dy_scipy.tocoo()
+    Dy_row, Dy_col, Dy_data = Dy_coo.row, Dy_coo.col * 3 + 1, Dy_coo.data
+    del Dy_coo
+    gc.collect()
 
-        Kx_sparse = Ky_sparse = Kz_sparse = None
-        if num_gpus >= 3:
-            K_eff_coo = K_eff_scipy.tocoo()
-            N = knt.shape[0]
-            P_idx_row = (K_eff_coo.row % 3) * N + (K_eff_coo.row // 3)
-            P_idx_col = (K_eff_coo.col % 3) * N + (K_eff_coo.col // 3)
-            K_eff_blocked = sp.csr_matrix((K_eff_coo.data, (P_idx_row, P_idx_col)), shape=(3 * N, 3 * N))
-            Kx_scipy = K_eff_blocked[:N, :]
-            Ky_scipy = K_eff_blocked[N : 2 * N, :]
-            Kz_scipy = K_eff_blocked[2 * N :, :]
+    Dz_coo = Dz_scipy.tocoo()
+    Dz_row, Dz_col, Dz_data = Dz_coo.row, Dz_coo.col * 3 + 2, Dz_coo.data
+    del Dz_coo
+    gc.collect()
 
-            Kx_sparse = make_sparse_operator(Kx_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            Kx_sparse = safe_device_put(Kx_sparse, assignments["Kx"])
+    rows = np.concatenate([Dx_row, Dy_row, Dz_row])
+    del Dx_row, Dy_row, Dz_row
+    cols = np.concatenate([Dx_col, Dy_col, Dz_col])
+    del Dx_col, Dy_col, Dz_col
+    data = np.concatenate([Dx_data, Dy_data, Dz_data])
+    del Dx_data, Dy_data, Dz_data
+    gc.collect()
+    D_scipy = sp.csr_matrix((data, (rows, cols)), shape=(Dx_scipy.shape[0], 3 * Dx_scipy.shape[1]))
+    del rows, cols, data
+    gc.collect()
+    D_scipy.sort_indices()
+    if mesh is not None:
+        p_rows = (num_dev - (Dx_scipy.shape[0] % num_dev)) % num_dev
+        if p_rows > 0:
+            D_scipy = sp.bmat(
+                [
+                    [D_scipy, sp.csr_matrix((Dx_scipy.shape[0], 3 * p_rows))],
+                    [sp.csr_matrix((p_rows, 3 * Dx_scipy.shape[0])), sp.csr_matrix((p_rows, 3 * p_rows))],
+                ]
+            ).tocsr()
+    D_sparse = make_sparse_operator(D_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
 
-            Ky_sparse = make_sparse_operator(Ky_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            Ky_sparse = safe_device_put(Ky_sparse, assignments["Ky"])
+    Dx_shape_0 = Dx_scipy.shape[0]
+    Dx_shape_1 = Dx_scipy.shape[1]
 
-            Kz_sparse = make_sparse_operator(Kz_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            Kz_sparse = safe_device_put(Kz_sparse, assignments["Kz"])
+    Gx_coo = (2.0 * Dx_scipy.transpose()).tocoo()
+    del Dx_scipy
+    Gx_row, Gx_col, Gx_data = Gx_coo.row * 3 + 0, Gx_coo.col, Gx_coo.data
+    del Gx_coo
+    gc.collect()
 
-            K_eff_sparse = None
-        else:
-            K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend)
-            if num_gpus == 2:
-                K_eff_sparse = safe_device_put(K_eff_sparse, assignments["Keff"])
+    Gy_coo = (2.0 * Dy_scipy.transpose()).tocoo()
+    del Dy_scipy
+    Gy_row, Gy_col, Gy_data = Gy_coo.row * 3 + 1, Gy_coo.col, Gy_coo.data
+    del Gy_coo
+    gc.collect()
 
-        assembled_kwargs = {
-            "A_sparse": A_sparse,
-            "Dx_sparse": None,
-            "Dy_sparse": None,
-            "Dz_sparse": None,
-            "A_diag": A_diag,
-            "K_eff_sparse": K_eff_sparse,
-            "Kx_sparse": Kx_sparse,
-            "Ky_sparse": Ky_sparse,
-            "Kz_sparse": Kz_sparse,
-            "num_gpus": num_gpus,
-            "Gx_sparse": None,
-            "Gy_sparse": None,
-            "Gz_sparse": None,
-            "D_sparse": D_sparse,
-            "G_sparse": G_sparse,
-            "K_eff_scipy": K_eff_scipy,
-            "D_scipy": D_scipy,
-            "G_scipy": G_scipy,
-        }
-        print("[ok] Finished assembly and GPU transfer.")
+    Gz_coo = (2.0 * Dz_scipy.transpose()).tocoo()
+    del Dz_scipy
+    Gz_row, Gz_col, Gz_data = Gz_coo.row * 3 + 2, Gz_coo.col, Gz_coo.data
+    del Gz_coo
+    gc.collect()
+
+    rows_g = np.concatenate([Gx_row, Gy_row, Gz_row])
+    del Gx_row, Gy_row, Gz_row
+    cols_g = np.concatenate([Gx_col, Gy_col, Gz_col])
+    del Gx_col, Gy_col, Gz_col
+    data_g = np.concatenate([Gx_data, Gy_data, Gz_data])
+    del Gx_data, Gy_data, Gz_data
+
+    G_scipy = sp.csr_matrix((data_g, (rows_g, cols_g)), shape=(3 * Dx_shape_1, Dx_shape_0))
+    del rows_g, cols_g, data_g
+    gc.collect()
+    G_scipy.sort_indices()
+    if mesh is not None and p_rows > 0:
+        G_scipy = sp.bmat(
+            [
+                [G_scipy, sp.csr_matrix((3 * Dx_shape_0, p_rows))],
+                [sp.csr_matrix((3 * p_rows, Dx_shape_0)), sp.csr_matrix((3 * p_rows, p_rows))],
+            ]
+        ).tocsr()
+    G_sparse = make_sparse_operator(G_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
+
+    if not args.cpp_mkl:
+        del D_scipy, G_scipy
+
+    from .amg_utils import assemble_exchange_anisotropy_matrix_cpu
+
+    K_eff_scipy = assemble_exchange_anisotropy_matrix_cpu(
+        conn32, volume, l_grad_phi, A_red, K1_red, k_easy_lookup, mat_id
+    )
+
+    if mesh is not None:
+        N = knt.shape[0]
+        p_rows = (num_dev - (N % num_dev)) % num_dev
+        if p_rows > 0:
+            K_eff_scipy = sp.bmat(
+                [
+                    [K_eff_scipy, sp.csr_matrix((3 * N, 3 * p_rows))],
+                    [sp.csr_matrix((3 * p_rows, 3 * N)), sp.csr_matrix((3 * p_rows, 3 * p_rows))],
+                ]
+            ).tocsr()
+    K_eff_sparse = make_sparse_operator(K_eff_scipy, cpu_spmv_backend=cpu_spmv_backend, device=dev_main)
+
+    if not args.cpp_mkl:
+        del K_eff_scipy
+
+    from .jax_utils import distribute_array
+
+    assembled_kwargs = {
+        "A_sparse": A_sparse,
+        "A_diag": distribute_array(A_diag, mesh),
+        "K_eff_sparse": K_eff_sparse,
+        "Kex_diag": distribute_array(jnp.asarray(Kex_diag_cpu, dtype=jnp.float64), mesh),
+        "D_sparse": D_sparse,
+        "G_sparse": G_sparse,
+        "K_eff_scipy": locals().get("K_eff_scipy"),
+        "D_scipy": locals().get("D_scipy"),
+        "G_scipy": locals().get("G_scipy"),
+        "A_scipy": A_scipy,
+    }
+    print("[ok] Finished assembly and GPU transfer.")
+
+    A_lookup_jax = jnp.asarray(A_red, dtype=jnp.float64)
+    K1_lookup_jax = jnp.asarray(K1_red, dtype=jnp.float64)
+    Js_lookup_jax = jnp.asarray(Js_red, dtype=jnp.float64)
+    k_easy_lookup_jax = jnp.asarray(k_easy_lookup, dtype=jnp.float64)
+    m0_jax = distribute_array(jnp.asarray(m0, dtype=jnp.float64), mesh)
+    M_nodal_jax = distribute_array(jnp.asarray(M_nodal, dtype=jnp.float64), mesh)
+    V_mag_nodal_jax = distribute_array(jnp.asarray(V_mag_nodal, dtype=jnp.float64), mesh)
+    B_bias_jax = distribute_array(jnp.asarray(B_bias, dtype=jnp.float64), mesh) if B_bias is not None else None
+    boundary_mask_jax = (
+        distribute_array(jnp.asarray(boundary_mask, dtype=jnp.float64), mesh) if boundary_mask is not None else None
+    )
+
+    if not args.cpp_mkl:
+        del A_red, K1_red, Js_red, k_easy_lookup
+        del m0, M_nodal, V_mag_nodal, B_bias, boundary_mask
+        import gc
+
+        gc.collect()
+
+    A_scipy_val = assembled_kwargs.pop("A_scipy", None)
 
     res = run_hysteresis_loop(
         points=knt,
         geom=geom,
-        A_lookup=jnp.asarray(A_red, dtype=jnp.float64),
-        K1_lookup=jnp.asarray(K1_red, dtype=jnp.float64),
-        Js_lookup=jnp.asarray(Js_red, dtype=jnp.float64),
-        k_easy_lookup=jnp.asarray(k_easy_lookup, dtype=jnp.float64),
-        m0=jnp.asarray(m0, dtype=jnp.float64),
+        A_lookup=A_lookup_jax,
+        K1_lookup=K1_lookup_jax,
+        Js_lookup=Js_lookup_jax,
+        k_easy_lookup=k_easy_lookup_jax,
+        m0=m0_jax,
         params=params,
         V_mag=float(V_mag),
-        node_volumes=jnp.asarray(node_vols, dtype=jnp.float64),
-        M_nodal=jnp.asarray(M_nodal, dtype=jnp.float64),
-        B_bias=jnp.asarray(B_bias, dtype=jnp.float64) if B_bias is not None else None,
+        M_nodal=M_nodal_jax,
+        V_mag_nodal=V_mag_nodal_jax,
+        B_bias=B_bias_jax,
         precond_type=args.precond_type,
-        grad_backend=grad_backend,
-        chunk_elems=int(args.chunk_elems),
-        boundary_mask=jnp.asarray(boundary_mask, dtype=jnp.float64) if boundary_mask is not None else None,
-        mode=mode,
+        boundary_mask=boundary_mask_jax,
         cpu_spmv_backend=cpu_spmv_backend,
+        mesh=mesh,
+        config_idx_offset=config_idx_offset,
+        A_scipy=A_scipy_val,
         **assembled_kwargs,
     )
 

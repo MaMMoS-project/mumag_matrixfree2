@@ -11,7 +11,7 @@ ENV_NAME="mfree-mumag-cpu"
 
 echo "=== Micromagnetics Performance Benchmark (Hysteresis Loop) ==="
 echo "Core Mesh: ${L}x${L}x${L} nm cube, h=${H} nm"
-echo "Airbox: ${LAYERS} layers, K=${K}, h0_air=${H0_AIR} nm"
+echo "Airbox: Default Settings"
 echo "Environment: ${ENV_NAME}"
 echo "Parameters from cube_20nm.p2"
 
@@ -24,7 +24,7 @@ echo "Step 2: Running hysteresis loop simulation..."
 mkdir -p ${OUT_DIR}
 tommos loop cube_${L}nm \
     --out-dir ${OUT_DIR} \
-    --add-shell --layers ${LAYERS} --K ${K} --h0 ${H0_AIR} \
+    --add-shell \
     --benchmark \
     --verbose "$@" 2>&1 | tee ${OUT_DIR}/simulation.log
 
