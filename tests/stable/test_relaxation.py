@@ -54,7 +54,7 @@ def _write_krn_file(filename, Js):
 
 @pytest.mark.parametrize("theta_deg", [15, 30, 45, 60, 75])
 @pytest.mark.parametrize("phi_deg", np.random.randint(0, 359, 5))
-def test_stoner_wohlfarth_switching(loop_bin, mesh_bin, tmp_path, subtests, theta_deg, phi_deg):
+def test_stoner_wohlfarth_zero_field_relaxation(loop_bin, mesh_bin, tmp_path, subtests, theta_deg, phi_deg):
     """Test switch in Stoner-Wohlfarth model."""
     system_name = f"sw_{theta_deg}_{phi_deg}"
     theta = np.deg2rad(theta_deg)
