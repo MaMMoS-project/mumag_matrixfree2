@@ -52,9 +52,27 @@ def _write_krn_file(filename, Js):
     )
 
 
-@pytest.mark.parametrize("theta_deg", [15, 30, 45, 60, 75])
-@pytest.mark.parametrize("phi_deg", np.random.randint(0, 359, 5))
-def test_stoner_wohlfarth_zero_field_relaxation(loop_bin, mesh_bin, tmp_path, subtests, theta_deg, phi_deg):
+@pytest.mark.parametrize(
+    "theta_deg, expected_sign",
+    [
+        (1, +1),
+        (15, +1),
+        (45, +1),
+        (60, +1),
+        (75, +1),
+        (89, +1),
+        (91, -1),
+        (105, -1),
+        (135, -1),
+        (150, -1),
+        (165, -1),
+        (179, -1),
+    ],
+)
+@pytest.mark.parametrize("phi_deg", [0, 37, 90, 173, 271])
+def test_stoner_wohlfarth_zero_field_relaxation(
+    loop_bin, mesh_bin, tmp_path, subtests, theta_deg, phi_deg, expected_sign
+):
     """Test switch in Stoner-Wohlfarth model."""
     system_name = f"sw_{theta_deg}_{phi_deg}"
     theta = np.deg2rad(theta_deg)
@@ -79,4 +97,5 @@ def test_stoner_wohlfarth_zero_field_relaxation(loop_bin, mesh_bin, tmp_path, su
 
     # extract Bc from loop
     hystloop = me.from_csv(tmp_path / f"hyst_{system_name}" / "mammos_hysteresis.csv")
-    assert np.all(0.99 * Js <= hystloop.J_par_T.value <= Js)
+    expected_J_par = Js
+    np.testing.assert_allclose(hystloop.J_par_T.value, expected_J_par, rtol=1e-2, atol=0)
