@@ -16,11 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         persist-credentials: false
     - name: Setup Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
     - name: Install cibuildwheel
       run: python -m pip install cibuildwheel==4.1.1
     - name: Build and test repaired wheels
@@ -83,7 +83,7 @@ jobs:
         done
     - name: Retain repaired wheels
       if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: tommos-manylinux_2_28-x86_64-wheels
         path: wheelhouse/*.whl

@@ -19,9 +19,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
     - name: Setup Pixi
-      uses: prefix-dev/setup-pixi@v0.9.4
+      uses: prefix-dev/setup-pixi@v0.10.1
     - name: Build Python distributions
       run: pixi run -e build build-package
     - name: Verify macOS wheel imports outside checkout
@@ -55,7 +55,7 @@ jobs:
     # - name: Test examples
     #   run: pixi run test-notebooks
     - name: Keep pixi.lock artifact for debugging
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         path: pixi.lock
       if: ${{ matrix.os == 'ubuntu-latest' && !cancelled() }}
