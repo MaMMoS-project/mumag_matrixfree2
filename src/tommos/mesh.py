@@ -582,9 +582,6 @@ def mesh_backend_meshpy_polygon(
     Returns:
         tuple[np.ndarray, np.ndarray]: (Nodes, Connectivity).
     """
-    if not HAVE_meshpy:
-        raise RuntimeError("meshpy is not installed. Install with: pip install meshpy")
-
     # 2) Build 3D vertices for top and bottom in LOCAL coords, then map to WORLD
     top_z, bottom_z = t / 2.0, -t / 2.0
     verts_top = np.hstack([polygon, np.full((polygon.shape[0], 1), top_z)])
