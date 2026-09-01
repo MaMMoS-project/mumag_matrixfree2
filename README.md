@@ -1,6 +1,6 @@
-# MaMMoS-MuMag: Matrix-Free Micromagnetics with JAX
+# Tommos: Micromagnetics with JAX
 
-MaMMoS-MuMag is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a highly optimized **assembled sparse matrix FEM approach** for the Poisson equation (demagnetization field) to enable ultra-fast, large-scale simulations on both CPU and GPU architectures. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
+Tommos is a high-performance micromagnetic simulation package built on **JAX** and **C++**. It utilizes a highly optimized **assembled sparse matrix FEM approach** for the Poisson equation (demagnetization field) to enable ultra-fast, large-scale simulations on both CPU and GPU architectures. The architecture elegantly bridges Python's expressiveness (via JAX) for rapid GPU development with a dynamically compiled C++ and Intel MKL backend for uncompromising bare-metal CPU performance on large clusters.
 
 ## 1. Prerequisites and Installation
 
@@ -19,8 +19,8 @@ portable paths.
 Clone the repository and install the development environments:
 
 ```bash
-git clone git@github.com:MaMMoS-project/mumag_matrixfree2.git
-cd mumag_matrixfree2
+git clone git@github.com:MaMMoS-project/tommos.git
+cd tommos
 pixi install
 ```
 
