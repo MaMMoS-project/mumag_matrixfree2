@@ -20,13 +20,19 @@ import pytest
 
 
 def _eval_volume_mesh(mesh):
+    """Calculation of tetrahedral mesh volume.
+
+    For each tetrahedron defined from the points {p0, p1, p2, p3}, the volume
+    can be evaluated as `V = 1/6 * det(p1-p0, p2-p0, p3-p0)`.
+    The determinant can also be written as
+    `det(p1-p0, p2-p0, p3-p0) = (p1-p0) · [(p2-p0) × (p3-p0)]`.
+    """
     p0 = mesh["knt"][mesh["ijk"][:, 0]]
     p1 = mesh["knt"][mesh["ijk"][:, 1]]
     p2 = mesh["knt"][mesh["ijk"][:, 2]]
     p3 = mesh["knt"][mesh["ijk"][:, 3]]
-    cross12 = np.cross(p1 - p0, p2 - p0)
-    triple = np.einsum("ij,ij", cross12, p3 - p0)
-    vols = np.abs(triple) / 6.0
+    det = np.einsum("ij,ij", p1 - p0, np.cross(p2 - p0, p3 - p0))
+    vols = det / 6
     return vols
 
 
