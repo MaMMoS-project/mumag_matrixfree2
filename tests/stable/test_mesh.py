@@ -82,9 +82,14 @@ def test_mesh_box(mesh_bin, tmp_path, Lx, Ly, Lz):
 def test_mesh_ellipsoid(mesh_bin, tmp_path, Lx, Ly, Lz):
     """Test volume of mesh 'ellipsoid'.
 
-    Points (Px, Py, Pz) satisfy: `(Px/(Lx/2))^2 + (Py/(Ly/2))^2 + (Pz/(Lz/2))^2 <= 1`.
+    Points (Px, Py, Pz) satisfy: `(Px/a)^2 + (Py/b)^2 + (Pz/c))^2 <= 1`.
 
-    Volume is `(Lx/2) * (Ly/2) * (Lz/2) * π * 4 / 3`.
+    Semiaxes (a, b, c) as defined as:
+    - `a = (Lx + Ly) / 4`,
+    - `b = (Lx + Ly) / 4`,
+    - `c = Lz / 4`.
+
+    Volume is `a * b * c * π * 4 / 3`.
     """
     # generate mesh
     cmd = shlex.split(f"{mesh_bin} --geom ellipsoid --extent {Lx},{Ly},{Lz} --h 1 --out-name ellipsoid")
