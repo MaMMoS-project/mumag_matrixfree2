@@ -39,6 +39,9 @@ Before providing any URL to the user, you must verify that the link is valid and
 ## Rule 12: Resolve Contradictions
 Before making any new argument or claim, you must verify it against your own previous arguments in the chat. If there is a contradiction, you must explicitly resolve it and honestly tell the user which of the previous assumptions was wrong. Always follow the evidence and maintain logical consistency.
 
+## Rule 13: Never change stable tests
+Tests in the directory `tests/stable` are supposed to guarantee that the CLI always stay valid and that physical behavior is reproduced. Never change or delete them.
+
 
 
 ## LaTeX Paper Writing Rules
